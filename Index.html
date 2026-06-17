@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <base target="_top">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800;900&family=Outfit:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <?!= include('Style_App'); ?>
+
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.css" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.5.13/cropper.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <script>
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+    }
+  </script>
+</head>
+
+<body style="background-color: #2d2d3f; color: #e8e8f0; font-family: 'Plus Jakarta Sans', sans-serif;">
+
+  <!-- ================================================================
+       TELA DE SEGURANÇA PREMIUM (Glassmorphism)
+       ================================================================ -->
+  <div id="tela-seguranca" style="position:fixed;inset:0;background:radial-gradient(circle at center, rgba(15,23,42,0.85) 0%, rgba(2,6,23,0.98) 100%);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);z-index:60000;transition:opacity 0.5s ease;">
+    <div style="width:100%;height:100%;display:flex;justify-content:center;align-items:center;padding:16px;">
+      <div class="painel-seguranca-box" style="padding:40px;max-width:440px;width:100%;display:flex;flex-direction:column;align-items:center;background:var(--bg-surface);border:var(--glass-border);border-radius:24px;box-shadow:0 12px 48px rgba(0,0,0,0.6);backdrop-filter:var(--glass-blur);">
+
+        <!-- Estado: Carregando -->
+        <div id="seg-estado-carregando" style="width:100%;">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;">
+            <div style="width:48px;height:48px;border:4px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin-bottom:16px;"></div>
+            <p id="txt-status-carregamento" style="color:var(--text-secondary);font-weight:600;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;">Verificando credenciais...</p>
+          </div>
+        </div>
+        <style>@keyframes spin { to { transform: rotate(360deg); } }</style>
+
+        <!-- Estado: Cadastro (não cadastrado) -->
+        <div id="seg-estado-cadastro" style="display:none;width:100%;">
+          <div style="display:flex;flex-direction:column;align-items:center;text-align:center;width:100%;">
+            <span class="material-symbols-outlined" style="font-size:48px;color:var(--warning);margin-bottom:8px;">admin_panel_settings</span>
+            <h2 style="font-size:18px;font-weight:900;color:var(--text-primary);margin-bottom:6px;">SOLICITAÇÃO DE ACESSO</h2>
+            <p style="font-size:11px;color:var(--text-secondary);margin-bottom:20px;">O e-mail logado não possui autorização.</p>
+
+            <div class="neu-card-pressed" style="margin-bottom:16px;width:100%;text-align:left;">
+              <span style="font-size:9px;color:var(--text-muted);text-transform:uppercase;font-weight:800;letter-spacing:1px;display:block;margin-bottom:4px;">E-mail Detectado:</span>
+              <span id="lbl-email-google" style="font-family:var(--font-mono);font-size:13px;color:var(--accent);word-break:break-all;font-weight:700;">...</span>
+            </div>
+
+            <input type="text" id="txt-nome-guerra" placeholder="NOME DE GUERRA (EX: CB SILVA)" class="neu-input" style="text-transform:uppercase;font-size:13px;margin-bottom:10px;" />
+            <input type="text" id="txt-batalhao-cad" placeholder="UNIDADE (EX: 8º BPM/I)" class="neu-input" style="text-transform:uppercase;font-size:13px;margin-bottom:20px;" />
+            <button class="neu-btn neu-btn-accent" style="width:100%;padding:14px;" onclick="executarCadastroTatico()">
+              <span class="material-symbols-outlined" style="font-size:18px;">send</span> CADASTRAR OPERADOR
+            </button>
+          </div>
+        </div>
+
+        <!-- Estado: Mensagem (pendente/bloqueado) -->
+        <div id="seg-estado-mensagem" style="display:none;width:100%;">
+          <div style="display:flex;flex-direction:column;align-items:center;text-align:center;width:100%;">
+            <span class="material-symbols-outlined" style="font-size:48px;color:var(--danger);margin-bottom:8px;">lock</span>
+            <h2 id="msg-seg-titulo" style="font-size:18px;font-weight:900;color:var(--text-primary);margin-bottom:6px;">Acesso Restrito</h2>
+            <p id="msg-seg-texto" style="font-size:13px;color:var(--text-secondary);margin-bottom:24px;">Aguarde a liberação do comando.</p>
+            <button class="neu-btn" style="width:100%;" onclick="reiniciarVerificacaoSeguranca()">ATUALIZAR STATUS</button>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       HEADER (Glassmorphism)
+       ================================================================ -->
+  <header id="topHeader" style="position:fixed;top:0;right:0;height:64px;z-index:30;display:flex;align-items:center;justify-content:space-between;padding:0 24px;background:rgba(15,23,42,0.5);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid rgba(255,255,255,0.05);transition:left 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button onclick="toggleSidebar()" class="header-icon-btn" style="display:none;" id="btnMenuMobile">
+        <span class="material-symbols-outlined" style="font-size:24px;">menu</span>
+      </button>
+
+      <div class="search-box" style="width:340px;display:none;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.1);border-radius:99px;padding:8px 16px;align-items:center;gap:8px;box-shadow:inset 0 2px 4px rgba(0,0,0,0.2);transition:all 0.3s;" id="desktopSearch">
+        <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);">search</span>
+        <input type="text" id="filtroNome" placeholder="Pesquisar alvos..." oninput="filtrarNoMapa()" style="background:transparent;border:none;color:white;width:100%;outline:none;font-family:var(--font-sans);font-size:14px;">
+      </div>
+      
+      <div id="desktopFiltersContainer" style="display:none;align-items:center;gap:8px;">
+        <select id="filtroCPI" class="modern-select" onchange="montarFiltrosBatalhao(); filtrarNoMapa()">
+          <option value="TODOS">CPI</option>
+        </select>
+        <select id="filtroBatalhao" class="modern-select" onchange="montarFiltrosCIA(); filtrarNoMapa()">
+          <option value="TODOS">Batalhão</option>
+        </select>
+        <select id="filtroCIA" class="modern-select" onchange="filtrarNoMapa()">
+          <option value="TODOS">CIA</option>
+        </select>
+        <button onclick="limparTodosFiltros()" class="modern-select" style="cursor:pointer;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);font-weight:700;padding:6px 12px;" title="Limpar todos os filtros">
+          <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">filter_alt_off</span>
+        </button>
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:6px;">
+      <button onclick="toggleTheme()" class="header-icon-btn" title="Alternar Tema Escuro/Claro" id="btnThemeToggle">
+        <span class="material-symbols-outlined">light_mode</span>
+      </button>
+
+      <button onclick="toggleMobileSearch()" class="header-icon-btn" id="btnMobileSearch" style="display:none;">
+        <span class="material-symbols-outlined">search</span>
+      </button>
+
+    </div>
+  </header>
+
+  <!-- Busca Mobile Overlay -->
+  <div id="mobileSearchOverlay" style="position:fixed;top:56px;left:0;right:0;background:#0f172a;z-index:20;border-bottom:1px solid var(--border);display:none;flex-direction:column;padding:12px;gap:12px;transform:translateY(-100%);transition:transform 0.3s ease;box-shadow:0 8px 24px rgba(0,0,0,0.6);">
+    <div style="display:flex;width:100%;gap:8px;">
+      <div class="search-box" style="flex:1;background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.1);border-radius:99px;padding:8px 16px;display:flex;align-items:center;gap:8px;">
+        <span class="material-symbols-outlined" style="font-size:20px;color:var(--text-muted);">search</span>
+        <input type="text" id="filtroNomeMobile" placeholder="Buscar alvo ou mandado..." oninput="filtrarNoMapaMobile()" style="background:transparent;border:none;color:white;width:100%;outline:none;font-size:13px;font-family:var(--font-sans);">
+      </div>
+      <button onclick="toggleMobileSearch()" style="background:var(--bg-depressed);border:1px solid var(--border);border-radius:50%;color:var(--text-muted);font-size:12px;cursor:pointer;width:36px;height:36px;display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        <span class="material-symbols-outlined" style="font-size:18px;">close</span>
+      </button>
+    </div>
+    
+    <div style="display:flex;width:100%;gap:8px;overflow-x:auto;padding-bottom:4px;" class="custom-scrollbar hide-scrollbar">
+      <select id="filtroCPIMobile" class="modern-select" onchange="montarFiltrosBatalhao(true); filtrarNoMapaMobile()" style="flex-shrink:0;">
+        <option value="TODOS">CPI</option>
+      </select>
+      <select id="filtroBatalhaoMobile" class="modern-select" onchange="montarFiltrosCIA(true); filtrarNoMapaMobile()" style="flex-shrink:0;">
+        <option value="TODOS">Batalhão</option>
+      </select>
+      <select id="filtroCIAMobile" class="modern-select" onchange="filtrarNoMapaMobile()" style="flex-shrink:0;">
+        <option value="TODOS">CIA</option>
+      </select>
+      <button onclick="limparTodosFiltros()" style="flex-shrink:0;cursor:pointer;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:6px 10px;font-size:11px;font-weight:700;" title="Limpar">
+        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">filter_alt_off</span>
+      </button>
+    </div>
+
+    <!-- Filtros avançados mobile (segunda linha) -->
+    <div style="display:flex;width:100%;gap:6px;overflow-x:auto;padding-bottom:4px;" class="custom-scrollbar hide-scrollbar">
+      <select id="filtroCrimeMobile" class="modern-select" style="flex-shrink:0;font-size:10px;padding:4px 6px;" onchange="filtrarNoMapaMobile()">
+        <option value="TODOS">Crime</option>
+        <option value="Alimentícia">Alimentícia</option>
+        <option value="Ameaça">Ameaça</option>
+        <option value="Estelionato">Estelionato</option>
+        <option value="Estupro">Estupro</option>
+        <option value="Fiscal">Fiscal</option>
+        <option value="Furto">Furto</option>
+        <option value="Homicídio">Homicídio</option>
+        <option value="Organização Crim.">Organização Crim.</option>
+        <option value="Porte de Arma">Porte de Arma</option>
+        <option value="Receptação">Receptação</option>
+        <option value="Roubo">Roubo</option>
+        <option value="Tráfico">Tráfico</option>
+        <option value="Trânsito">Trânsito</option>
+        <option value="V. Doméstica">V. Doméstica</option>
+        <option value="Outros">Outros</option>
+      </select>
+      <select id="filtroSexoMobile" class="modern-select" style="flex-shrink:0;font-size:10px;padding:4px 6px;" onchange="filtrarNoMapaMobile()">
+        <option value="TODOS">Sexo</option>
+        <option value="MASCULINO">M</option>
+        <option value="FEMININO">F</option>
+      </select>
+      <select id="filtroTipoMandadoMobile" class="modern-select" style="flex-shrink:0;font-size:10px;padding:4px 6px;" onchange="filtrarNoMapaMobile()">
+        <option value="TODOS">Mandado</option>
+        <option value="MANDADO DE PRISÃO">Prisão</option>
+        <option value="MANDADO DE RECAPTURA">Recaptura</option>
+        <option value="MANDADO DE INTERNAÇÃO">Internação</option>
+        <option value="MANDADO DE INTERNAÇÃO RECAPTURA">Int. Recap.</option>
+      </select>
+      <button onclick="filtrarNoMapaMobile(); toggleMobileSearch();" style="flex-shrink:0;cursor:pointer;background:rgba(99,102,241,0.8);color:white;border:none;border-radius:8px;padding:4px 12px;font-size:10px;font-weight:800;font-family:var(--font-sans);">
+        FILTRAR
+      </button>
+      <button onclick="limparFiltrosAvancados(true)" style="flex-shrink:0;cursor:pointer;background:rgba(239,68,68,0.15);color:#ef4444;border:1px solid rgba(239,68,68,0.3);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;" title="Limpar Filtros Avançados">
+        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">close</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       SIDEBAR (Navegação)
+       ================================================================ -->
+  <div id="drawerBackdrop" style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:40;display:none;opacity:0;transition:opacity 0.3s;" onclick="toggleSidebar()"></div>
+  <aside id="navSidebar" style="position:fixed;top:0;left:0;bottom:0;z-index:50;display:flex;flex-direction:column;">
+
+    <!-- Logo -->
+    <div class="sidebar-header-area" onclick="toggleSidebar()">
+      <div class="logo-icon-container">
+        <img id="appLogoImg" src="" class="app-logo-img" style="display:none;" />
+        <span class="material-symbols-outlined logo-icon" id="appIconEl">local_police</span>
+        <h1 class="logo-text" id="appNameEl">Sentinela</h1>
+        <span class="sidebar-text" id="appSloganEl" style="font-size:9px;color:var(--text-muted);font-weight:600;letter-spacing:0.5px;display:block;margin-top:-2px;">Sistema Tático de Inteligência</span>
+      </div>
+      <span class="material-symbols-outlined toggle-icon-center">right_panel_open</span>
+      <button class="toggle-icon-right">
+        <span class="material-symbols-outlined" style="font-size:20px;">left_panel_close</span>
+      </button>
+      <div class="header-tooltip">Abrir menu lateral</div>
+    </div>
+
+    <!-- Perfil do Usuário -->
+    <div class="sidebar-profile-box" onclick="alternarVisaoTatica('perfil')">
+      <div class="perfil-avatar" id="sidebarAvatarContainer">
+        <span class="material-symbols-outlined" style="color:var(--text-muted);">shield_person</span>
+      </div>
+      <div class="sidebar-profile-info" id="sidebarProfileInfo">
+        <div class="sidebar-profile-name" id="sidebarNomeEl">Operador</div>
+        <div class="sidebar-profile-role" id="sidebarPerfilEl">—</div>
+      </div>
+    </div>
+
+    <!-- Navegação -->
+    <nav style="flex:1;padding:12px;padding-top:24px;display:flex;flex-direction:column;gap:6px;" class="custom-scrollbar">
+      <span class="sidebar-text" style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:2px;padding:0 12px;margin-bottom:4px;">Operacional</span>
+
+      <button id="nav-btn-mapa" onclick="alternarVisaoTatica('mapa')" class="nav-item active" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);overflow:visible;position:relative;">
+        <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">map</span>
+        <span class="sidebar-text" style="font-size:13px;font-weight:700;">Mapa Tático</span>
+        <div class="sidebar-tooltip">Mapa Tático</div>
+      </button>
+
+      <button id="nav-btn-lista" onclick="alternarVisaoTatica('lista')" class="nav-item" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);color:var(--text-secondary);background:transparent;overflow:visible;position:relative;">
+        <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">list_alt</span>
+        <span class="sidebar-text" style="font-size:13px;font-weight:700;">Lista Mandados</span>
+        <div class="sidebar-tooltip">Lista de Mandados</div>
+      </button>
+
+      <button id="nav-btn-relatorios" onclick="alternarVisaoTatica('relatorios')" class="nav-item" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);color:var(--text-secondary);background:transparent;overflow:visible;position:relative;">
+        <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">monitoring</span>
+        <span class="sidebar-text" style="font-size:13px;font-weight:700;">Inteligência</span>
+        <div class="sidebar-tooltip">Painel de Inteligência</div>
+      </button>
+
+      <button id="nav-btn-ranking" onclick="alternarVisaoTatica('ranking')" class="nav-item" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);color:var(--text-secondary);background:transparent;overflow:visible;position:relative;">
+        <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">military_tech</span>
+        <span class="sidebar-text" style="font-size:13px;font-weight:700;">Ranking</span>
+        <div class="sidebar-tooltip">Ranking de Operadores</div>
+      </button>
+
+      <span class="sidebar-text" style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:2px;padding:0 12px;margin-top:20px;margin-bottom:4px;">Gestão</span>
+
+      <div id="btnMenuAdmin" style="display:none;width:100%;">
+        <button id="nav-btn-usuarios" onclick="alternarVisaoTatica('usuarios')" class="nav-item" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);color:var(--text-secondary);background:transparent;overflow:visible;position:relative;">
+          <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">group</span>
+          <span class="sidebar-text" style="font-size:13px;font-weight:700;">Usuários</span>
+          <span id="badgeUsuariosPendentes" style="display:none;background:var(--danger);color:white;font-size:9px;font-weight:900;padding:2px 6px;border-radius:99px;margin-left:auto;">0</span>
+          <div class="sidebar-tooltip">Gerir Usuários</div>
+        </button>
+      </div>
+
+      <div id="btnMenuConferencia" style="display:none;width:100%;">
+        <button id="nav-btn-conferencia" onclick="alternarVisaoTatica('conferencia')" class="nav-item" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);color:var(--text-secondary);background:transparent;overflow:visible;position:relative;">
+          <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">fact_check</span>
+          <span class="sidebar-text" style="font-size:13px;font-weight:700;">Conferência</span>
+          <div class="sidebar-tooltip">Conferência de Mandados</div>
+        </button>
+      </div>
+
+      <div id="btnMenuAjustes" style="display:none;width:100%;">
+        <button id="nav-btn-ajustes" onclick="alternarVisaoTatica('ajustes')" class="nav-item" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);color:var(--text-secondary);background:transparent;overflow:visible;position:relative;">
+          <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">tune</span>
+          <span class="sidebar-text" style="font-size:13px;font-weight:700;">Ajustes</span>
+          <div class="sidebar-tooltip">Configurações do Sistema</div>
+        </button>
+      </div>
+
+      <button id="nav-btn-perfil" onclick="alternarVisaoTatica('perfil')" class="nav-item" style="width:100%;display:flex;align-items:center;border:none;cursor:pointer;font-family:var(--font-sans);color:var(--text-secondary);background:transparent;overflow:visible;position:relative;">
+        <span class="material-symbols-outlined" style="font-size:20px;flex-shrink:0;">person</span>
+        <span class="sidebar-text" style="font-size:13px;font-weight:700;">Meu Perfil</span>
+        <div class="sidebar-tooltip">Meu Perfil</div>
+      </button>
+
+    </nav>
+
+    <select id="filtroBatalhao" style="display:none;" onchange="filtrarNoMapa()"><option value="TODOS">TODOS</option></select>
+  </aside>
+
+  <!-- ================================================================
+       CONTEÚDO PRINCIPAL (Views)
+       ================================================================ -->
+  <main id="mainContent" style="position:fixed;right:0;bottom:0;overflow:hidden;display:flex;flex-direction:column;z-index:0;background:var(--bg-base);">
+
+    <!-- VIEW: MAPA -->
+    <div id="view-mapa" style="position:absolute;inset:0;z-index:0;display:flex;">
+      <div id="mapa" style="position:absolute;inset:0;z-index:0;"></div>
+      <button id="btnConfirmarPreview" class="btn-confirmar-mapa" style="position:absolute;bottom:24px;left:50%;transform:translateX(-50%);z-index:30;background:var(--success);color:white;font-weight:800;padding:16px 32px;border-radius:var(--radius-full);display:none;align-items:center;gap:8px;font-size:14px;cursor:pointer;" onclick="salvarMandadoConfirmado()">
+        <span class="material-symbols-outlined">my_location</span> CONFIRMAR NO BANCO
+      </button>
+    </div>
+
+    <!-- VIEW: LISTA -->
+    <div id="view-lista" style="position:absolute;inset:0;z-index:10;display:none;flex-direction:column;overflow-y:auto;padding:16px;" class="custom-scrollbar">
+      <div style="max-width:1400px;margin:0 auto;width:100%;">
+        <div style="border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:12px;">
+          <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;">Lista de Mandados</h2>
+          <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Gerenciamento de registros do banco de dados.</p>
+        </div>
+
+        <!-- CONTADORES -->
+        <div id="contadoresMandados" style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap;">
+          <div class="contador-badge" style="background:var(--accent)20;border:1px solid var(--accent)40;color:var(--accent);">
+            <span class="material-symbols-outlined" style="font-size:14px;">format_list_numbered</span>
+            <span>Total: <b id="cntTotal">0</b></span>
+          </div>
+          <div class="contador-badge" style="background:var(--danger)20;border:1px solid var(--danger)40;color:var(--danger);">
+            <span class="material-symbols-outlined" style="font-size:14px;">person_search</span>
+            <span>Procurados: <b id="cntProcurados">0</b></span>
+          </div>
+          <div class="contador-badge" style="background:var(--success)20;border:1px solid var(--success)40;color:var(--success);">
+            <span class="material-symbols-outlined" style="font-size:14px;">check_circle</span>
+            <span>Capturados: <b id="cntCapturados">0</b></span>
+          </div>
+          <div class="contador-badge" style="background:var(--warning)20;border:1px solid var(--warning)40;color:var(--warning);">
+            <span class="material-symbols-outlined" style="font-size:14px;">warning</span>
+            <span>Sem Endereço: <b id="cntSemEndereco">0</b></span>
+          </div>
+        </div>
+
+        <!-- BARRA DE FILTROS -->
+        <div id="filtroBarMandados" style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="filtroListaNome" placeholder="Buscar Procurado, CPF, RG, Mandado..." oninput="aplicarFiltrosLista()" style="flex:2;min-width:220px;padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);outline:none;" />
+          
+          <select id="filtroListaBatalhao" onchange="aplicarFiltrosLista()" style="flex:1;min-width:120px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);cursor:pointer;">
+            <option value="TODOS" style="background:var(--bg-base)">Todos Batalhões</option>
+          </select>
+
+          <select id="filtroListaCpi" onchange="aplicarFiltrosLista()" style="flex:1;min-width:100px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);cursor:pointer;">
+            <option value="TODOS" style="background:var(--bg-base)">Todos CPI</option>
+          </select>
+
+          <select id="filtroListaCia" onchange="aplicarFiltrosLista()" style="flex:1;min-width:100px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);cursor:pointer;">
+            <option value="TODOS" style="background:var(--bg-base)">Todas CIA</option>
+          </select>
+
+          <select id="filtroListaEndereco" onchange="aplicarFiltrosLista()" style="flex:1;min-width:100px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);cursor:pointer;">
+            <option value="TODOS" style="background:var(--bg-base)">Todos Endereços</option>
+            <option value="COM" style="background:var(--bg-base)">Com Endereço</option>
+            <option value="SEM" style="background:var(--bg-base)">Sem Endereço</option>
+          </select>
+
+          <select id="filtroListaSexo" onchange="aplicarFiltrosLista()" style="flex:1;min-width:90px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);cursor:pointer;">
+            <option value="TODOS" style="background:var(--bg-base)">Todos Sexos</option>
+            <option value="Masculino" style="background:var(--bg-base)">Masculino</option>
+            <option value="Feminino" style="background:var(--bg-base)">Feminino</option>
+          </select>
+
+          <select id="ordenacaoLista" onchange="aplicarFiltrosLista()" style="flex:1;min-width:140px;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:rgba(99,102,241,0.1);color:var(--accent);font-size:11px;font-family:var(--font-sans);cursor:pointer;font-weight:700;">
+            <option value="RECENTES" style="background:var(--bg-base);color:white;">Mais Recentes</option>
+            <option value="ANTIGOS" style="background:var(--bg-base);color:white;">Mais Antigos</option>
+            <option value="ALFABETICA" style="background:var(--bg-base);color:white;">Ordem Alfabética</option>
+            <option value="DISTANCIA" style="background:var(--bg-base);color:white;">Mais Próximos (GPS)</option>
+            <option value="VENCIMENTO" style="background:var(--bg-base);color:white;">Vencimento Próximo</option>
+          </select>
+
+          <button onclick="limparFiltrosLista()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:rgba(239,68,68,0.08);color:var(--danger);font-size:10px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;">
+            <span class="material-symbols-outlined" style="font-size:14px;">filter_alt_off</span> LIMPAR
+          </button>
+        </div>
+
+        <div id="tabelaMandados" class="neu-card" style="overflow-x:auto;">
+          <div style="padding:32px;text-align:center;color:var(--text-muted);">
+            <span class="material-symbols-outlined" style="font-size:40px;opacity:0.5;">table_view</span>
+            <p style="font-size:13px;margin-top:8px;">Carregando dados...</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- MODAL: EDITAR MANDADO -->
+    <div id="modalEditarMandado" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.8);backdrop-filter:blur(8px);justify-content:center;align-items:center;padding:20px;">
+      <div class="neu-card" style="width:100%;max-width:600px;margin:auto;position:relative;display:flex;flex-direction:column;max-height:90vh;overflow:hidden;padding:0;">
+        
+        <!-- HEADER FIXO -->
+        <div style="padding:24px 24px 16px 24px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg-surface);backdrop-filter:blur(10px);z-index:10;border-radius:12px 12px 0 0;">
+          <button onclick="fecharModalEditar()" style="position:absolute;top:20px;right:20px;background:transparent;border:none;cursor:pointer;color:var(--text-muted);font-size:24px;">✕</button>
+          <h3 style="font-weight:900;font-size:18px;display:flex;align-items:center;gap:8px;">
+            <span class="material-symbols-outlined" style="color:var(--accent);">edit_note</span> EDITAR MANDADO
+          </h3>
+        </div>
+
+        <!-- CONTEUDO ROLAVEL -->
+        <div style="padding:24px;overflow-y:auto;" class="custom-scrollbar">
+          <input type="hidden" id="editIdLinha" />
+          <input type="hidden" id="editMandadoNum" />
+
+          <!-- Tela de Recorte (Reaproveitada para a Edição) -->
+          <div id="edit-tela-de-recorte" style="display:none;flex-direction:column;width:100%;margin-bottom:20px;">
+            <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:16px;">
+              <span class="material-symbols-outlined" style="color:var(--accent);">crop_free</span>
+              <h3 style="font-size:13px;font-weight:800;letter-spacing:0.5px;">Ajuste o foco no rosto</h3>
+            </div>
+            <div id="edit-container-crop-admin" style="width:100%;max-height:50vh;background:black;border:3px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden;">
+              <img id="edit-imagem-para-crop" style="display:block;max-width:100%;">
+            </div>
+            <button id="edit-btn-confirmar-crop" class="neu-btn neu-btn-accent" style="width:100%;padding:14px;">
+              <span class="material-symbols-outlined">cut</span> CONFIRMAR RECORTE DA EDIÇÃO
+            </button>
+          </div>
+
+          <!-- Formulário Normal de Edição -->
+          <div id="edit-wrapper-ficha" style="display:flex;flex-direction:column;gap:20px;">
+            <div style="display:flex;gap:16px;align-items:flex-start;">
+              <!-- Upload Foto -->
+              <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+                <input type="file" id="edit-input-foto-admin" accept="image/*" style="display:none;" />
+                <label for="edit-input-foto-admin" class="foto-upload-area" style="width:110px;height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;position:relative;cursor:pointer;">
+                  <div id="edit-foto-texto-upload" style="text-align:center;position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                    <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-muted);">add_a_photo</span>
+                    <span style="font-size:9px;font-weight:900;color:var(--text-muted);margin-top:6px;letter-spacing:1px;">FOTO</span>
+                  </div>
+                  <img id="edit-preview-foto-admin" style="display:none;width:100%;height:100%;object-fit:cover;position:relative;z-index:10;" />
+                </label>
+                <div style="font-size:9px;color:var(--text-muted);margin-top:8px;text-align:center;font-weight:700;background:var(--bg-depressed);padding:6px 10px;border-radius:var(--radius-sm);box-shadow:var(--neu-pressed-sm);">Toque ou Ctrl+V</div>
+              </div>
+
+              <!-- Instruções -->
+              <div style="flex:1;">
+                <p style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.4;">Altere os dados do mandado abaixo. Edições confirmadas aqui refletirão em todos os patrulheiros.</p>
+              </div>
+            </div>
+
+            <!-- ========== SEÇÃO: DADOS PESSOAIS ========== -->
+            <div style="background:var(--bg-depressed);border-radius:10px;padding:14px;border:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;color:var(--accent);font-weight:800;font-size:11px;letter-spacing:0.5px;">
+                <span class="material-symbols-outlined" style="font-size:16px;">person</span> DADOS PESSOAIS
+              </div>
+              <div class="edit-grid">
+                <div class="edit-field" style="grid-column:1/-1;">
+                  <label>Nome do Procurado</label>
+                  <input type="text" id="editNome" />
+                </div>
+                <div class="edit-field">
+                  <label>CPF</label>
+                  <input type="text" id="editCpf" />
+                </div>
+                <div class="edit-field">
+                  <label>RG</label>
+                  <input type="text" id="editRg" />
+                </div>
+                <div class="edit-field">
+                  <label>Nascimento</label>
+                  <input type="text" id="editNascimento" />
+                </div>
+                <div class="edit-field">
+                  <label>Naturalidade</label>
+                  <input type="text" id="editNaturalidade" />
+                </div>
+                <div class="edit-field">
+                  <label>Sexo</label>
+                  <select id="editSexo">
+                    <option value="Masculino">Masculino</option>
+                    <option value="Feminino">Feminino</option>
+                    <option value="N/A">N/A</option>
+                  </select>
+                </div>
+                <div class="edit-field">
+                  <label>Cor</label>
+                  <input type="text" id="editCor" />
+                </div>
+                <div class="edit-field" style="grid-column:1/-1;">
+                  <label>Filiação (Mãe/Pai)</label>
+                  <input type="text" id="editFiliacao" />
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== SEÇÃO: STATUS E LOCALIZAÇÃO ========== -->
+            <div style="background:var(--bg-depressed);border-radius:10px;padding:14px;border:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;color:var(--warning);font-weight:800;font-size:11px;letter-spacing:0.5px;">
+                <span class="material-symbols-outlined" style="font-size:16px;">location_on</span> STATUS E LOCALIZAÇÃO
+              </div>
+              <div class="edit-grid">
+                <div class="edit-field">
+                  <label>Status</label>
+                  <select id="editStatus">
+                    <option value="Procurado">Procurado</option>
+                    <option value="Capturado">Capturado</option>
+                    <option value="Suspenso">Suspenso</option>
+                  </select>
+                </div>
+                <div class="edit-field">
+                  <label>Validade</label>
+                  <input type="text" id="editValidade" />
+                </div>
+                <div class="edit-field">
+                  <label>Batalhão Responsável</label>
+                  <input type="text" id="editBatalhao" />
+                </div>
+                <div class="edit-field">
+                  <label>CPI</label>
+                  <input type="text" id="editCpi" />
+                </div>
+                <div class="edit-field">
+                  <label>CIA</label>
+                  <input type="text" id="editCia" />
+                </div>
+                <div class="edit-field">
+                  <label>Cidade</label>
+                  <input type="text" id="editCidade" />
+                </div>
+                <div class="edit-field" style="grid-column:1/-1;">
+                  <label>Endereço Principal <span style="font-size:9px;color:var(--warning);">(geocodificado no mapa)</span></label>
+                  <input type="text" id="editEnderecoPrincipal" />
+                </div>
+                
+                <div class="edit-field" style="grid-column:1/-1;background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;border:1px dashed var(--border);">
+                  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <label style="margin:0;">Endereços Adicionais</label>
+                    <button type="button" onclick="adicionarCampoEnderecoEdit()" style="background:var(--accent)20;color:var(--accent);border:1px solid var(--accent)40;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:800;cursor:pointer;display:inline-flex;align-items:center;gap:4px;">
+                      <span class="material-symbols-outlined" style="font-size:12px;">add</span> ADICIONAR
+                    </button>
+                  </div>
+                  <div id="containerMultiEnderecos" style="display:flex;flex-direction:column;gap:8px;">
+                    <!-- Campos dinâmicos entram aqui -->
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ========== SEÇÃO: INFORMAÇÕES PROCESSUAIS ========== -->
+            <div style="background:rgba(108,99,255,0.04);border-radius:10px;padding:14px;border:1px solid rgba(108,99,255,0.15);">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;color:var(--accent);font-weight:800;font-size:11px;letter-spacing:0.5px;">
+                <span class="material-symbols-outlined" style="font-size:16px;">gavel</span> INFORMAÇÕES PROCESSUAIS
+              </div>
+              <div class="edit-grid">
+                <div class="edit-field" style="grid-column:1/-1;">
+                  <label>Órgão Judicial</label>
+                  <input type="text" id="editOrgaoJudicial" />
+                </div>
+                <div class="edit-field" style="grid-column:1/-1;">
+                  <label>Espécie de Prisão</label>
+                  <input type="text" id="editEspeciePrisao" />
+                </div>
+                <div class="edit-field">
+                  <label>Lei</label>
+                  <input type="text" id="editLei" />
+                </div>
+                <div class="edit-field">
+                  <label>Artigo</label>
+                  <input type="text" id="editArtigo" />
+                </div>
+                <div class="edit-field">
+                  <label>Parágrafo</label>
+                  <input type="text" id="editParagrafo" />
+                </div>
+                <div class="edit-field">
+                  <label>Pena Restante</label>
+                  <input type="text" id="editPenaRestante" />
+                </div>
+                <div class="edit-field">
+                  <label>Regime Prisional</label>
+                  <input type="text" id="editRegime" />
+                </div>
+                <div class="edit-field">
+                  <label>Motivo</label>
+                  <input type="text" id="editMotivo" />
+                </div>
+                <div class="edit-field">
+                  <label>Crime Tentado</label>
+                  <input type="text" id="editCrimeTentado" />
+                </div>
+                <div class="edit-field">
+                  <label>Violência Doméstica</label>
+                  <input type="text" id="editViolenciaDom" />
+                </div>
+              </div>
+              <!-- Campo hidden para montar o infoProcessuais na hora de salvar -->
+              <input type="hidden" id="editInfoProcessuais" />
+            </div>
+
+            <!-- ========== SEÇÃO: OBSERVAÇÕES ========== -->
+            <div style="background:var(--bg-depressed);border-radius:10px;padding:14px;border:1px solid var(--border);">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:12px;color:var(--text-secondary);font-weight:800;font-size:11px;letter-spacing:0.5px;">
+                <span class="material-symbols-outlined" style="font-size:16px;">description</span> OBSERVAÇÕES
+              </div>
+              <div class="edit-grid">
+                <div class="edit-field" style="grid-column:1/-1;">
+                  <label>Observações da Operação</label>
+                  <textarea id="editObservacoes" rows="3" style="resize:vertical;"></textarea>
+                </div>
+              </div>
+            </div>
+          </div> <!-- FIM edit-wrapper-ficha -->
+        </div>
+
+        <!-- FOOTER FIXO COM BOTOES -->
+        <div style="padding:16px 24px;border-top:1px solid var(--border);position:sticky;bottom:0;background:var(--bg-surface);backdrop-filter:blur(10px);z-index:10;border-radius:0 0 12px 12px;">
+          <div style="display:flex;gap:10px;margin-bottom:10px;">
+            <button id="btnSalvarEdicao" class="neu-btn" onclick="salvarEdicaoMandado()" style="flex:2;padding:12px;font-size:12px;font-weight:800;background:var(--accent);color:white;border:none;">
+              <span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> SALVAR ALTERAÇÕES
+            </button>
+            <button class="neu-btn" onclick="fecharModalEditar()" style="flex:1;padding:12px;font-size:12px;font-weight:800;">CANCELAR</button>
+          </div>
+          <button id="btnExcluirMandado" class="neu-btn" onclick="confirmarExclusaoMandado()" style="width:100%;padding:10px;font-size:11px;font-weight:800;background:rgba(239,68,68,0.1);color:var(--danger);border:1px solid rgba(239,68,68,0.2);">
+            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">delete_forever</span> EXCLUIR REGISTRO PERMANENTEMENTE
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: RELATÓRIOS -->
+    <div id="view-relatorios" style="position:absolute;inset:0;z-index:10;display:none;flex-direction:column;overflow-y:auto;padding:16px;" class="custom-scrollbar">
+      <div style="max-width:1400px;margin:0 auto;width:100%;">
+        <div style="border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;">
+          <div>
+            <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;"><span class="material-symbols-outlined" style="font-size:24px;vertical-align:middle;color:var(--accent);margin-right:6px;">monitoring</span>Inteligência Operacional</h2>
+            <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Análise de dados e indicadores do sistema.</p>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <select id="filtroTemporalGraficos" onchange="atualizarGraficosComFiltro()" style="padding:8px 12px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);cursor:pointer;">
+              <option value="TODOS">Todos os períodos</option>
+              <option value="7">Última semana</option>
+              <option value="30" selected>Último mês</option>
+              <option value="90">Último trimestre</option>
+              <option value="180">Último semestre</option>
+              <option value="365">Último ano</option>
+            </select>
+            <button onclick="atualizarGraficosComFiltro()" style="padding:8px;border-radius:8px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-secondary);cursor:pointer;" title="Atualizar"><span class="material-symbols-outlined" style="font-size:16px;">refresh</span></button>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;" id="statsCards">
+          <div class="neu-card" style="padding:16px;"><span style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;">Total Procurados</span><span style="font-size:24px;font-weight:900;display:block;margin-top:4px;" id="statTotal">—</span></div>
+          <div class="neu-card" style="padding:16px;"><span style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;">Capturados</span><span style="font-size:24px;font-weight:900;display:block;margin-top:4px;color:var(--success);" id="statCaptura">—</span></div>
+          <div class="neu-card" style="padding:16px;"><span style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;">Vencendo</span><span style="font-size:24px;font-weight:900;display:block;margin-top:4px;color:var(--warning);" id="statVencendo">—</span></div>
+          <div class="neu-card" style="padding:16px;"><span style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;">Vencidos</span><span style="font-size:24px;font-weight:900;display:block;margin-top:4px;color:var(--danger);" id="statVencido">—</span></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;">
+          <div class="neu-card" style="padding:16px;"><h3 style="font-size:11px;font-weight:800;color:var(--text-secondary);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">bar_chart</span> Lançamentos por Mês</h3><div style="width:100%;height:220px;position:relative;"><canvas id="graficoLancamentos"></canvas></div></div>
+          <div class="neu-card" style="padding:16px;"><h3 style="font-size:11px;font-weight:800;color:var(--text-secondary);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">show_chart</span> Capturas por Mês</h3><div style="width:100%;height:220px;position:relative;"><canvas id="graficoCapturas"></canvas></div></div>
+        </div>
+        <div style="display:flex;gap:12px;margin-top:12px;flex-wrap:wrap;">
+          <div class="neu-card" style="padding:16px;width:300px;flex-shrink:0;"><h3 style="font-size:11px;font-weight:800;color:var(--text-secondary);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">donut_large</span> Crimes por Tipo</h3><div style="width:100%;height:200px;position:relative;"><canvas id="graficoCrimes"></canvas></div></div>
+          <div class="neu-card" style="padding:16px;flex:1;min-width:250px;"><h3 style="font-size:11px;font-weight:800;color:var(--text-secondary);text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">area_chart</span> Distribuição por Área</h3><div style="width:100%;height:200px;position:relative;"><canvas id="graficoAreas"></canvas></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: RANKING (Gamificação) -->
+    <div id="view-ranking" style="position:absolute;inset:0;z-index:10;display:none;flex-direction:column;overflow-y:auto;padding:16px;" class="custom-scrollbar">
+      <div style="max-width:800px;margin:0 auto;width:100%;">
+        <div style="border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:20px;text-align:center;">
+          <span class="material-symbols-outlined" style="font-size:40px;color:var(--warning);">military_tech</span>
+          <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;">Ranking de Operadores</h2>
+          <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Classificação por mérito operacional.</p>
+        </div>
+        <div id="rankingContainer">
+          <div style="text-align:center;color:var(--text-muted);padding:32px;">Carregando ranking...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: PERFIL DO USUÁRIO -->
+    <div id="view-perfil" style="position:absolute;inset:0;z-index:10;display:none;flex-direction:column;overflow-y:auto;padding:16px;" class="custom-scrollbar">
+      <div style="max-width:600px;margin:0 auto;width:100%;">
+        <div style="border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:20px;text-align:center;">
+          <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;">Meu Perfil</h2>
+        </div>
+
+        <div class="neu-card" style="text-align:center;padding:32px;">
+          <div style="width:100px;height:100px;border-radius:50%;margin:0 auto 16px;overflow:hidden;background:var(--bg-depressed);box-shadow:var(--neu-raised);display:flex;align-items:center;justify-content:center;cursor:pointer;position:relative;" id="perfilFotoContainer" onclick="document.getElementById('input-foto-perfil').click()">
+            <span class="material-symbols-outlined" style="font-size:40px;color:var(--text-muted);" id="perfilFotoPlaceholder">account_circle</span>
+            <img id="perfilFotoImg" style="display:none;width:100%;height:100%;object-fit:cover;position:absolute;inset:0;" />
+            <div style="position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,0.6);padding:4px;font-size:9px;font-weight:700;color:white;">ALTERAR</div>
+          </div>
+          <input type="file" id="input-foto-perfil" accept="image/*" style="display:none;" />
+
+          <div style="font-size:18px;font-weight:900;margin-bottom:4px;" id="perfilNomeDisplay">—</div>
+          <div style="font-size:12px;color:var(--accent);font-weight:700;text-transform:uppercase;letter-spacing:1px;" id="perfilPerfilDisplay">—</div>
+          <div style="font-size:11px;color:var(--text-secondary);margin-top:4px;" id="perfilUnidadeDisplay">—</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono);" id="perfilEmailDisplay">—</div>
+
+          <div style="display:flex;justify-content:center;gap:16px;margin-top:20px;">
+            <div class="neu-card-pressed" style="padding:12px 20px;text-align:center;">
+              <div style="font-size:22px;font-weight:900;color:var(--accent);" id="perfilPontosDisplay">0</div>
+              <div style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">Pontos</div>
+            </div>
+            <div class="neu-card-pressed" style="padding:12px 20px;text-align:center;">
+              <div style="font-size:14px;" id="perfilBadgesDisplay">—</div>
+              <div style="font-size:9px;font-weight:700;color:var(--text-muted);text-transform:uppercase;">Badges</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="neu-card" style="margin-top:16px;">
+          <div style="font-size:12px;font-weight:800;color:var(--text-primary);margin-bottom:12px;text-transform:uppercase;">Editar Nome de Guerra</div>
+          <input type="text" id="perfilNomeInput" class="neu-input" placeholder="Seu nome de guerra..." style="margin-bottom:12px;" />
+          <button class="neu-btn neu-btn-accent" style="width:100%;" onclick="salvarNomePerfil()">
+            <span class="material-symbols-outlined" style="font-size:16px;">save</span> SALVAR NOME
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: USUÁRIOS (Admin Only) -->
+    <div id="view-usuarios" style="position:absolute;inset:0;z-index:10;display:none;flex-direction:column;overflow-y:auto;padding:16px;" class="custom-scrollbar">
+      <div style="max-width:1200px;margin:0 auto;width:100%;">
+        <div style="border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:20px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;">
+          <div>
+            <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;"><span class="material-symbols-outlined" style="font-size:24px;vertical-align:middle;color:var(--accent);margin-right:6px;">shield_person</span>Gestão de Operadores</h2>
+            <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Controle de acesso, aprovações e estatísticas dos operadores.</p>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="neu-btn neu-btn-accent" style="padding:10px 16px;font-size:12px;" onclick="aprovarTodosPendentes()">
+              <span class="material-symbols-outlined" style="font-size:16px;">done_all</span> APROVAR TODOS
+            </button>
+            <button class="neu-btn" style="padding:10px 16px;font-size:12px;" onclick="carregarListaUsuarios()">
+              <span class="material-symbols-outlined" style="font-size:16px;">refresh</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Stats Cards -->
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px;" id="statsUsuarios">
+          <div class="neu-card" style="padding:12px;text-align:center;"><span style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;">Total</span><span style="font-size:22px;font-weight:900;display:block;margin-top:2px;" id="statUsuTotal">0</span></div>
+          <div class="neu-card" style="padding:12px;text-align:center;"><span style="font-size:9px;font-weight:800;color:var(--success);text-transform:uppercase;">Ativos</span><span style="font-size:22px;font-weight:900;display:block;margin-top:2px;color:var(--success);" id="statUsuAtivos">0</span></div>
+          <div class="neu-card" style="padding:12px;text-align:center;"><span style="font-size:9px;font-weight:800;color:var(--warning);text-transform:uppercase;">Pendentes</span><span style="font-size:22px;font-weight:900;display:block;margin-top:2px;color:var(--warning);" id="statUsuPendentes">0</span></div>
+          <div class="neu-card" style="padding:12px;text-align:center;"><span style="font-size:9px;font-weight:800;color:var(--danger);text-transform:uppercase;">Bloqueados</span><span style="font-size:22px;font-weight:900;display:block;margin-top:2px;color:var(--danger);" id="statUsuBloqueados">0</span></div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(320px, 1fr));gap:20px;" id="usuariosGrid">
+          <!-- Coluna Pendentes -->
+          <div>
+            <h3 style="font-size:13px;font-weight:800;color:var(--warning);margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+              <span class="material-symbols-outlined">pending_actions</span> Solicitações Pendentes
+            </h3>
+            <div id="containerUsuariosPendentes" style="display:flex;flex-direction:column;gap:10px;"></div>
+          </div>
+          <!-- Coluna Ativos -->
+          <div>
+            <h3 style="font-size:13px;font-weight:800;color:var(--success);margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+              <span class="material-symbols-outlined">verified_user</span> Operadores Ativos
+            </h3>
+            <div id="containerUsuariosAtivos" style="display:flex;flex-direction:column;gap:10px;"></div>
+          </div>
+          <!-- Coluna Bloqueados -->
+          <div>
+            <h3 style="font-size:13px;font-weight:800;color:var(--danger);margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+              <span class="material-symbols-outlined">block</span> Bloqueados / Inativos
+            </h3>
+            <div id="containerUsuariosBloqueados" style="display:flex;flex-direction:column;gap:10px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- VIEW: AJUSTES (Admin Only) -->
+    <div id="view-ajustes" style="position:absolute;inset:0;z-index:10;display:none;flex-direction:column;overflow-y:auto;padding:16px;" class="custom-scrollbar">
+      <div style="max-width:900px;margin:0 auto;width:100%;">
+        <div style="border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:20px;">
+          <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;"><span class="material-symbols-outlined" style="font-size:24px;vertical-align:middle;color:var(--accent);margin-right:6px;">tune</span>Ajustes do Sistema</h2>
+          <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Configurações gerais do aplicativo. Apenas administradores.</p>
+        </div>
+
+        <!-- Identidade -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--accent);">badge</span> Identidade do App</div>
+          <div class="ajustes-field"><label class="ajustes-label">Nome do Aplicativo</label><input type="text" id="cfg_app_nome" class="neu-input" /><div class="ajustes-desc">Nome exibido no header e na sidebar.</div></div>
+          <div class="ajustes-field"><label class="ajustes-label">Slogan</label><input type="text" id="cfg_app_slogan" class="neu-input" /><div class="ajustes-desc">Texto abaixo do nome.</div></div>
+          
+          <div style="display:flex;gap:16px;align-items:flex-end;">
+            <div class="ajustes-field" style="flex:1;">
+              <label class="ajustes-label">Logo / Imagem (opcional)</label>
+              <div style="display:flex;align-items:center;gap:12px;">
+                <input type="file" id="inputLogoApp" accept="image/*" style="display:none;" />
+                <label for="inputLogoApp" class="neu-btn" style="cursor:pointer;padding:8px 12px;font-size:11px;"><span class="material-symbols-outlined" style="font-size:14px;">upload</span> UPLOAD IMAGEM</label>
+                <button class="neu-btn" style="padding:8px 12px;font-size:11px;color:var(--danger);border:1px solid rgba(239,68,68,0.2);" onclick="excluirLogoApp()"><span class="material-symbols-outlined" style="font-size:14px;">delete</span> EXCLUIR</button>
+                <div id="nomeArquivoLogo" style="font-size:11px;color:var(--accent);font-weight:700;">Nenhuma imagem.</div>
+              </div>
+            </div>
+            <div class="ajustes-field" style="flex:1;">
+              <label class="ajustes-label">Ícone (Material Symbols)</label>
+              <input type="text" id="cfg_app_icone" class="neu-input" style="margin-bottom:8px;" placeholder="local_police" />
+              <div class="ajustes-desc">Clique para selecionar:</div>
+              <div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;">
+                <button onclick="document.getElementById('cfg_app_icone').value='local_police'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="local_police"><span class="material-symbols-outlined" style="font-size:20px;">local_police</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='shield'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="shield"><span class="material-symbols-outlined" style="font-size:20px;">shield</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='security'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="security"><span class="material-symbols-outlined" style="font-size:20px;">security</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='gavel'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="gavel"><span class="material-symbols-outlined" style="font-size:20px;">gavel</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='fingerprint'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="fingerprint"><span class="material-symbols-outlined" style="font-size:20px;">fingerprint</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='radar'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="radar"><span class="material-symbols-outlined" style="font-size:20px;">radar</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='visibility'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="visibility"><span class="material-symbols-outlined" style="font-size:20px;">visibility</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='monitoring'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="monitoring"><span class="material-symbols-outlined" style="font-size:20px;">monitoring</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='military_tech'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="military_tech"><span class="material-symbols-outlined" style="font-size:20px;">military_tech</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='verified_user'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="verified_user"><span class="material-symbols-outlined" style="font-size:20px;">verified_user</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='detective'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="detective"><span class="material-symbols-outlined" style="font-size:20px;">detective</span></button>
+                <button onclick="document.getElementById('cfg_app_icone').value='policy'" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);cursor:pointer;color:var(--text-primary);" title="policy"><span class="material-symbols-outlined" style="font-size:20px;">policy</span></button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Aparência -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title" style="display:flex;justify-content:space-between;width:100%;">
+            <div><span class="material-symbols-outlined" style="color:var(--accent);">palette</span> Aparência</div>
+            <button class="neu-btn" style="padding:6px 12px;font-size:10px;text-transform:none;" onclick="restaurarCoresPadrao()"><span class="material-symbols-outlined" style="font-size:14px;">restore</span> Restaurar Padrão</button>
+          </div>
+
+          <!-- Paletas Pré-definidas -->
+          <div style="margin-bottom:16px;">
+            <label class="ajustes-label">Temas Rápidos</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+              <button onclick="aplicarPaletaRapida('#6c63ff','#2d2d3f','#353548','#e8e8f0')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#6c63ff 50%,#2d2d3f 50%);cursor:pointer;" title="Roxo Padrão"></button>
+              <button onclick="aplicarPaletaRapida('#3b82f6','#1e293b','#334155','#e2e8f0')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#3b82f6 50%,#1e293b 50%);cursor:pointer;" title="Azul Profundo"></button>
+              <button onclick="aplicarPaletaRapida('#10b981','#1a2332','#243447','#d1fae5')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#10b981 50%,#1a2332 50%);cursor:pointer;" title="Verde Tático"></button>
+              <button onclick="aplicarPaletaRapida('#f59e0b','#1c1917','#292524','#fef3c7')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#f59e0b 50%,#1c1917 50%);cursor:pointer;" title="Âmbar Dark"></button>
+              <button onclick="aplicarPaletaRapida('#ef4444','#1f1215','#2d1b1f','#fee2e2')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#ef4444 50%,#1f1215 50%);cursor:pointer;" title="Vermelho Alerta"></button>
+              <button onclick="aplicarPaletaRapida('#8b5cf6','#1e1b2e','#2e2945','#ede9fe')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#8b5cf6 50%,#1e1b2e 50%);cursor:pointer;" title="Violeta Escuro"></button>
+              <button onclick="aplicarPaletaRapida('#06b6d4','#0f172a','#1e293b','#cffafe')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#06b6d4 50%,#0f172a 50%);cursor:pointer;" title="Ciano Noturno"></button>
+              <button onclick="aplicarPaletaRapida('#64748b','#f8fafc','#e2e8f0','#1e293b')" style="width:36px;height:36px;border-radius:8px;border:2px solid var(--border);background:linear-gradient(135deg,#64748b 50%,#f8fafc 50%);cursor:pointer;" title="Cinza Light"></button>
+            </div>
+            <label class="ajustes-label" style="margin-top:10px;">Tons Pastel / Suaves</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;">
+              <button class="paleta-fraca" onclick="aplicarPaletaRapida('#818cf8','#1e1b4b','#312e81','#e0e7ff')" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#818cf8 50%,#1e1b4b 50%);cursor:pointer;" title="Lavanda"></button>
+              <button class="paleta-fraca" onclick="aplicarPaletaRapida('#a78bfa','#2e1065','#3b0764','#f5f3ff')" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#a78bfa 50%,#2e1065 50%);cursor:pointer;" title="Violeta Suave"></button>
+              <button class="paleta-fraca" onclick="aplicarPaletaRapida('#67e8f9','#083344','#164e63','#ecfeff')" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#67e8f9 50%,#083344 50%);cursor:pointer;" title="Ciano Pastel"></button>
+              <button class="paleta-fraca" onclick="aplicarPaletaRapida('#86efac','#052e16','#14532d','#f0fdf4')" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#86efac 50%,#052e16 50%);cursor:pointer;" title="Verde Menta"></button>
+              <button class="paleta-fraca" onclick="aplicarPaletaRapida('#fda4af','#4c0519','#881337','#fff1f2')" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#fda4af 50%,#4c0519 50%);cursor:pointer;" title="Rosa Pastel"></button>
+              <button class="paleta-fraca" onclick="aplicarPaletaRapida('#93c5fd','#1e3a5f','#1e40af','#dbeafe')" style="width:36px;height:36px;border-radius:8px;background:linear-gradient(135deg,#93c5fd 50%,#1e3a5f 50%);cursor:pointer;" title="Azul Suave"></button>
+            </div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div class="ajustes-field"><label class="ajustes-label">Cor Primária</label><input type="color" id="cfg_cor_primaria" class="neu-input" style="height:44px;padding:4px;cursor:pointer;" oninput="aplicarCorLivePreview('cor_primaria')" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Cor de Fundo</label><input type="color" id="cfg_cor_fundo" class="neu-input" style="height:44px;padding:4px;cursor:pointer;" oninput="aplicarCorLivePreview('cor_fundo')" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Cor Superfície</label><input type="color" id="cfg_cor_superficie" class="neu-input" style="height:44px;padding:4px;cursor:pointer;" oninput="aplicarCorLivePreview('cor_superficie')" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Cor Texto</label><input type="color" id="cfg_cor_texto" class="neu-input" style="height:44px;padding:4px;cursor:pointer;" oninput="aplicarCorLivePreview('cor_texto')" /></div>
+          </div>
+        </div>
+
+        <!-- Validade -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--warning);">timer</span> Intervalos de Validade (dias)</div>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;">
+            <div class="ajustes-field"><label class="ajustes-label">Verde (seguro)</label><input type="number" id="cfg_validade_verde_dias" class="neu-input" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Amarelo</label><input type="number" id="cfg_validade_amarelo_dias" class="neu-input" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Laranja</label><input type="number" id="cfg_validade_laranja_dias" class="neu-input" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Vermelho</label><input type="number" id="cfg_validade_vermelho_dias" class="neu-input" /></div>
+          </div>
+        </div>
+
+        <!-- Mapa -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--accent);">map</span> Configurações do Mapa</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="ajustes-field"><label class="ajustes-label">Zoom Padrão</label><input type="number" id="cfg_mapa_zoom_padrao" class="neu-input" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Lat Padrão</label><input type="text" id="cfg_mapa_lat_padrao" class="neu-input" /></div>
+            <div class="ajustes-field"><label class="ajustes-label">Lng Padrão</label><input type="text" id="cfg_mapa_lng_padrao" class="neu-input" /></div>
+          </div>
+          <div class="ajustes-field" style="margin-top:12px;"><label class="ajustes-label">API Key Google Maps</label><input type="password" id="cfg_mapa_api_key" class="neu-input" /><div class="ajustes-desc">⚠️ Protegida. Altere apenas se necessário.</div></div>
+        </div>
+
+        <!-- WhatsApp -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--success);">chat</span> WhatsApp</div>
+          <div class="ajustes-field"><label class="ajustes-label">Número do Admin</label><input type="text" id="cfg_whatsapp_numero" class="neu-input" placeholder="+55 (11) 99999-9999" oninput="formatarWhatsApp(this)" /><div class="ajustes-desc">Formato: +55 (XX) XXXXX-XXXX</div></div>
+          <div class="ajustes-field" style="display:flex;align-items:center;gap:12px;margin-top:8px;">
+            <label class="ajustes-label" style="margin-bottom:0;">WhatsApp Ativo</label>
+            <label class="neu-toggle"><input type="checkbox" id="cfg_whatsapp_ativo" /><span class="neu-toggle-slider"></span></label>
+          </div>
+        </div>
+
+        <!-- Permissões -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--danger);">shield</span> Permissões do Patrulheiro</div>
+          <div style="display:grid;gap:10px;" id="permissoesContainer"></div>
+        </div>
+
+        <!-- Gamificação -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--warning);">military_tech</span> Gamificação</div>
+          <div class="ajustes-field" style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+            <label class="ajustes-label" style="margin-bottom:0;">Gamificação Ativa</label>
+            <label class="neu-toggle"><input type="checkbox" id="cfg_gamif_ativo" /><span class="neu-toggle-slider"></span></label>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div class="ajustes-field">
+              <label class="ajustes-label">Pts Relato</label>
+              <input type="number" id="cfg_gamif_pontos_relato" class="neu-input" />
+              <div class="ajustes-desc">Pontos por registrar observações sobre o procurado.</div>
+            </div>
+            <div class="ajustes-field">
+              <label class="ajustes-label">Pts Captura</label>
+              <input type="number" id="cfg_gamif_pontos_captura" class="neu-input" />
+              <div class="ajustes-desc">Pontos por confirmar a captura de um alvo.</div>
+            </div>
+            <div class="ajustes-field">
+              <label class="ajustes-label">Pts Intel</label>
+              <input type="number" id="cfg_gamif_pontos_intel" class="neu-input" />
+              <div class="ajustes-desc">Pontos por fornecer informações de inteligência (localização, movimentação).</div>
+            </div>
+          </div>
+          <div style="margin-top:12px;padding:12px;background:var(--bg-depressed);border-radius:var(--radius-md);border-left:3px solid var(--warning);">
+            <div style="font-size:11px;font-weight:800;color:var(--warning);margin-bottom:6px;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">auto_awesome</span> MULTIPLICADORES</div>
+            <div style="font-size:10px;color:var(--text-secondary);line-height:1.8;">
+              <div><b>×2</b> — Múltiplas capturas no mesmo dia</div>
+              <div><b>×1.5</b> — Captura de mandado próximo ao vencimento (≤15 dias)</div>
+              <div><b>×1.3</b> — Primeira captura do mês</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tooltips -->
+        <div class="ajustes-section">
+        <!-- Leis / Categorias de Crimes -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title" style="display:flex;justify-content:space-between;width:100%;">
+            <div><span class="material-symbols-outlined" style="color:var(--danger);">gavel</span> Categorias de Crimes</div>
+            <button class="neu-btn" style="padding:6px 12px;font-size:10px;" onclick="adicionarNovaLei()"><span class="material-symbols-outlined" style="font-size:14px;">add</span> NOVA</button>
+          </div>
+          <div class="ajustes-desc" style="margin-bottom:12px;">Categorias editáveis usadas nos pinos do mapa e na classificação de crimes. Campos: <b>Categoria</b> · <b>Palavras-chave</b> (separadas por |) · <b>Texto do Pino</b> (curto, ex: ROUBO) · <b>Cor</b> · <b>Ordem</b>. Crimes não identificados aparecerão em amarelo na lista e no mapa.</div>
+          <div id="containerLeis" style="display:flex;flex-direction:column;gap:8px;">
+            <!-- Populado via JS -->
+          </div>
+        </div>
+
+        <!-- Tooltips -->
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--accent);">help</span> Textos dos Tooltips</div>
+          <div id="tooltipsContainer"></div>
+        </div>
+
+
+        <button class="neu-btn neu-btn-accent" style="width:100%;padding:16px;font-size:14px;margin-bottom:24px;" onclick="salvarTodosAjustes()">
+          <span class="material-symbols-outlined" style="font-size:20px;">save</span> SALVAR TODAS AS CONFIGURAÇÕES
+        </button>
+      </div>
+    </div>
+
+    <!-- VIEW: CONFERÊNCIA DE MANDADOS (Separada dos Ajustes) -->
+    <div id="view-conferencia" style="position:absolute;inset:0;z-index:10;display:none;flex-direction:column;overflow-y:auto;padding:16px;" class="custom-scrollbar">
+      <div style="max-width:900px;margin:0 auto;width:100%;">
+        <div style="border-bottom:1px solid var(--border);padding-bottom:16px;margin-bottom:20px;">
+          <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;"><span class="material-symbols-outlined" style="font-size:24px;vertical-align:middle;color:var(--success);margin-right:6px;">fact_check</span>Conferência de Mandados</h2>
+          <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Importe o relatório CSV oficial do BNMP para cruzar com a base do Sentinela e identificar mandados que sofreram baixa.</p>
+        </div>
+
+        <div class="ajustes-section">
+          <div class="ajustes-section-title"><span class="material-symbols-outlined" style="color:var(--success);">upload_file</span> Importar Relatório CSV</div>
+          <p style="font-size:12px;color:var(--text-secondary);margin-bottom:16px;">Selecione o arquivo CSV exportado do BNMP. O sistema cruzará automaticamente com a base de dados atual.</p>
+          <div style="display:flex;gap:12px;align-items:center;">
+            <input type="file" id="inputCsvBNMP" accept=".csv" style="display:none;" />
+            <label for="inputCsvBNMP" class="neu-btn" style="cursor:pointer;flex:1;text-align:center;"><span class="material-symbols-outlined" style="font-size:18px;">upload_file</span> ESCOLHER RELATORIO.CSV</label>
+            <button class="neu-btn neu-btn-accent" style="flex:1;" onclick="processarUploadCSV()" id="btnProcessarCsv" disabled>CRUZAR DADOS</button>
+          </div>
+          <div id="statusCsv" style="font-size:11px;color:var(--text-muted);margin-top:8px;">Nenhum arquivo selecionado.</div>
+          <div id="resultadoConferencia" style="display:none;margin-top:16px;padding:12px;background:var(--bg-depressed);border-radius:var(--radius-md);border-left:4px solid var(--success);"></div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ================================================================
+       FAB (Floating Action Button) — Admin Only
+       ================================================================ -->
+  <button id="btnAdminNovo" class="fab-admin-novo" style="display:none;" onclick="abrirModalSuperBloco()">
+    <span class="material-symbols-outlined" style="font-size:28px;">add</span>
+    <div class="fab-tooltip">Importar PDF</div>
+  </button>
+
+  <!-- VIEW: REVISÃO DE IMPORTAÇÃO (Fila) -->
+  <div id="view-revisao-importacao" style="position:absolute;inset:0;z-index:35;display:none;flex-direction:column;overflow-y:auto;background:var(--bg-base);" class="custom-scrollbar view-revisao-container">
+    <div style="max-width:1400px;margin:0 auto;width:100%;">
+      <div style="border-bottom:1px solid var(--border);padding:16px 0;margin-bottom:12px;">
+        <div>
+          <h2 style="font-size:22px;font-weight:900;letter-spacing:-0.5px;color:var(--warning);">Conferência de Importação</h2>
+          <p style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Revise os dados extraídos dos PDFs antes de enviar para o banco de dados.</p>
+        </div>
+      </div>
+      
+      <div id="gridFilaRevisao" class="mandados-grid" style="padding:16px 0;">
+        <!-- Preenchido via JS (Cards de Revisão) -->
+      </div>
+    </div>
+    
+    <!-- FOOTER FIXO DE AÇÃO -->
+    <div id="revisao-action-bar" class="revisao-action-bar">
+      <button class="neu-btn" style="background:rgba(239,68,68,0.1);color:var(--danger);border:1px solid rgba(239,68,68,0.2);padding:12px 24px;font-weight:900;opacity:0.8;" onclick="cancelarImportacaoFila()" id="btnCancelarFila">
+        <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;">close</span> CANCELAR
+      </button>
+      <button class="neu-btn" style="background:var(--success);color:white;border:none;padding:12px 24px;font-weight:900;" onclick="confirmarImportacaoFila()" id="btnConfirmarFila">
+        <span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;">cloud_upload</span> CONFIRMAR IMPORTAÇÃO
+      </button>
+    </div>
+
+  </div>
+
+  <!-- (Menu Lateral de Usuários removido e substituído por view-usuarios) -->
+
+  <!-- ================================================================
+       MODAL — Dossiê de Inteligência (Cadastro de Mandado)
+       ================================================================ -->
+  <div id="modalSuperBloco" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <div class="modal-header">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div style="width:36px;height:36px;border-radius:50%;background:rgba(108,99,255,0.2);display:flex;align-items:center;justify-content:center;color:var(--accent);"><span class="material-symbols-outlined" style="font-size:20px;">person_add</span></div>
+          <h2 style="font-weight:900;font-size:13px;text-transform:uppercase;letter-spacing:1px;">Importação de Mandados</h2>
+        </div>
+        <button onclick="fecharModalSuperBloco()" class="modal-close-btn"><span class="material-symbols-outlined" style="font-size:18px;">close</span></button>
+      </div>
+
+      <div class="modal-body custom-scrollbar">
+        <!-- Tela de Recorte -->
+        <div id="tela-de-recorte" style="display:none;flex-direction:column;width:100%;">
+          <div style="display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:16px;">
+            <span class="material-symbols-outlined" style="color:var(--accent);">crop_free</span>
+            <h3 style="font-size:13px;font-weight:800;letter-spacing:0.5px;">Ajuste o foco no rosto</h3>
+          </div>
+          <div id="container-crop-admin" style="width:100%;max-height:50vh;background:black;border:3px solid var(--border);border-radius:var(--radius-lg);margin-bottom:16px;overflow:hidden;">
+            <img id="imagem-para-crop" style="display:block;max-width:100%;">
+          </div>
+          <button id="btn-confirmar-crop" class="neu-btn neu-btn-accent" style="width:100%;padding:14px;">
+            <span class="material-symbols-outlined">cut</span> CONFIRMAR RECORTE
+          </button>
+        </div>
+
+        <!-- Ficha Normal -->
+        <div id="wrapper-ficha-normal" style="display:flex;flex-direction:column;gap:20px;">
+          <div style="display:flex;flex-direction:column;gap:16px;">
+
+            <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap;">
+              <!-- Foto Upload -->
+              <div style="display:flex;flex-direction:column;align-items:center;flex-shrink:0;">
+                <input type="file" id="input-foto-admin" accept="image/*" style="display:none;" />
+                <label for="input-foto-admin" class="foto-upload-area" style="width:110px;height:140px;display:flex;flex-direction:column;align-items:center;justify-content:center;overflow:hidden;position:relative;cursor:pointer;">
+                  <div id="foto-texto-upload" style="text-align:center;position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+                    <span class="material-symbols-outlined" style="font-size:36px;color:var(--text-muted);">add_a_photo</span>
+                    <span style="font-size:9px;font-weight:900;color:var(--text-muted);margin-top:6px;letter-spacing:1px;">FOTO</span>
+                  </div>
+                  <img id="preview-foto-admin" style="display:none;width:100%;height:100%;object-fit:cover;position:relative;z-index:10;" />
+                </label>
+                <div style="font-size:9px;color:var(--text-muted);margin-top:8px;text-align:center;font-weight:700;background:var(--bg-depressed);padding:6px 10px;border-radius:var(--radius-sm);box-shadow:var(--neu-pressed-sm);">Dispositivo: Toque<br>PC: Ctrl+V</div>
+              </div>
+
+              <!-- Textarea PDF e Upload -->
+              <div style="flex:1;min-width:250px;display:flex;flex-direction:column;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <span class="material-symbols-outlined" style="color:var(--danger);font-size:16px;">description</span>
+                    <h3 style="font-size:11px;font-weight:900;color:var(--danger);letter-spacing:1px;">DADOS DO BNMP (PDF)</h3>
+                  </div>
+                  <div>
+                    <input type="file" id="inputPdfUpload" accept="application/pdf" multiple style="display:none;" />
+                    <label for="inputPdfUpload" class="neu-btn" style="cursor:pointer;padding:10px 16px;font-size:12px;display:flex;align-items:center;gap:8px;background:linear-gradient(135deg, var(--accent), #4f46e5);color:white;border:none;font-weight:900;border-radius:12px;box-shadow:0 4px 15px rgba(108,99,255,0.4);animation:pulseGlow 2s infinite;">
+                      <span class="material-symbols-outlined" style="font-size:18px;">upload_file</span> IMPORTAR PDF(S)
+                    </label>
+                  </div>
+                </div>
+                <style>
+                  @keyframes pulseGlow {
+                    0% { box-shadow: 0 0 0 0 rgba(108,99,255,0.7); }
+                    70% { box-shadow: 0 0 0 15px rgba(108,99,255,0); }
+                    100% { box-shadow: 0 0 0 0 rgba(108,99,255,0); }
+                  }
+                </style>
+                <p style="font-size:11px;color:var(--text-secondary);margin-bottom:10px;line-height:1.4;">Faça o upload de UM OU MAIS PDFs oficiais do mandado, ou cole o texto integral abaixo:</p>
+                <div id="loadingPdfMsg" style="display:none;font-size:11px;color:var(--warning);margin-bottom:8px;font-weight:700;"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;animation:spin 1s linear infinite;">sync</span> Extraindo texto dos PDFs...</div>
+                <textarea id="textoPdfBruto" class="neu-textarea" style="flex:1;min-height:160px;" placeholder="Cole o texto integral do mandado aqui..."></textarea>
+              </div>
+            </div>
+
+            <!-- UI Progresso de Lote (Escondido por padrão) -->
+            <div id="painelProgressoLote" style="display:none;flex-direction:column;align-items:center;padding:32px 16px;background:var(--bg-depressed);border-radius:var(--radius-md);margin-top:20px;border:1px solid var(--border);">
+              <div style="width:48px;height:48px;border:4px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin-bottom:16px;"></div>
+              <h3 style="font-size:14px;font-weight:800;color:var(--text-primary);letter-spacing:0.5px;" id="lblProgressoLoteTitulo">Processando Lote...</h3>
+              <p style="font-size:12px;color:var(--text-secondary);margin-top:8px;text-align:center;" id="lblProgressoLoteSub">Lendo e geocodificando endereços</p>
+              
+              <!-- Barra de Progresso -->
+              <div style="width:100%;max-width:300px;height:8px;background:var(--border);border-radius:99px;margin-top:16px;overflow:hidden;position:relative;">
+                <div id="barraProgressoLote" style="height:100%;width:0%;background:var(--success);transition:width 0.3s ease;"></div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <button id="btnProcessarTexto" class="neu-btn neu-btn-accent" style="width:100%;padding:14px;margin-top:20px;font-size:13px;" onclick="processarSuperBloco()">
+          <span class="material-symbols-outlined">radar</span> EXTRAIR DADOS E PREVER ALVOS
+        </button>
+
+        <!-- Painel Preview -->
+        <div id="painelPreview" style="display:none;margin-top:20px;" class="neu-card-pressed">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;border-bottom:1px solid var(--border);padding-bottom:10px;">
+            <span class="material-symbols-outlined" style="color:var(--success);">check_circle</span>
+            <h3 style="font-size:12px;font-weight:900;color:var(--success);letter-spacing:1px;">EXTRAÇÃO CONCLUÍDA</h3>
+          </div>
+          <div id="dadosExtraidosHtml" style="font-size:12px;color:var(--text-secondary);font-family:var(--font-mono);line-height:1.6;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       MODAL — Alerta Tático
+       ================================================================ -->
+  <div id="modalAlertaTatico" style="position:fixed;inset:0;background:rgba(30,30,46,0.85);backdrop-filter:blur(6px);z-index:99999;display:none;justify-content:center;align-items:center;padding:16px;">
+    <div class="alert-modal-box">
+      <span class="material-symbols-outlined" style="font-size:52px;color:var(--warning);margin-bottom:12px;">warning</span>
+      <h3 id="alerta-titulo" style="font-size:16px;font-weight:900;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Aviso</h3>
+      <p id="alerta-mensagem" style="font-size:13px;color:var(--text-secondary);margin-bottom:24px;white-space:pre-wrap;line-height:1.5;">Mensagem.</p>
+      <div id="alerta-botoes" style="display:flex;gap:10px;width:100%;justify-content:center;"></div>
+    </div>
+  </div>
+
+  <!-- ================================================================
+       SCRIPTS
+       ================================================================ -->
+  <?!= include('JS_UI'); ?>
+
+  <script>
+    // Injetar API Key do Maps de forma segura via backend
+    google.script.run.withSuccessHandler(function(apiKey) {
+      if (apiKey) {
+        var script = document.createElement('script');
+        script.src = 'https://maps.googleapis.com/maps/api/js?key=' + apiKey + '&libraries=marker&v=weekly&callback=iniciarMapa';
+        script.async = true;
+        script.defer = true;
+        document.body.appendChild(script);
+      }
+    }).obterApiKeyMaps();
+  </script>
+
+  <!-- Biblioteca MarkerClusterer para Otimização de Performance -->
+  <script src="https://unpkg.com/@googlemaps/markerclusterer/dist/index.min.js"></script>
+
+  <?!= include('JS_Auth'); ?>
+  <?!= include('JS_Map'); ?>
+  <?!= include('JS_Card'); ?>
+  <?!= include('JS_Parser'); ?>
+
+</body>
+</html>
