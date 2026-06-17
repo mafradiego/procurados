@@ -1,0 +1,2084 @@
+<script>
+  /* ================================================================
+     SENTINELA v2.0 — JS_UI: Controles de Interface Responsiva
+     ================================================================ */
+
+  // ---- SIDEBAR TOGGLE ----
+  function toggleSidebar() {
+    if (window.innerWidth >= 768) {
+      document.body.classList.toggle('desktop-open');
+      setTimeout(() => { if (mapaPrincipal) google.maps.event.trigger(mapaPrincipal, 'resize'); }, 350);
+    } else {
+      document.body.classList.toggle('mobile-open');
+      const backdrop = document.getElementById('drawerBackdrop');
+      if (document.body.classList.contains('mobile-open')) {
+        backdrop.style.display = 'block';
+        setTimeout(() => backdrop.style.opacity = '1', 10);
+      } else {
+        backdrop.style.opacity = '0';
+        setTimeout(() => backdrop.style.display = 'none', 300);
+      }
+    }
+  }
+
+  // ---- BUSCA MOBILE ----
+  function toggleMobileSearch() {
+    const overlay = document.getElementById('mobileSearchOverlay');
+    if (overlay.style.display === 'none' || !overlay.style.display) {
+      overlay.style.display = 'flex';
+      setTimeout(() => overlay.style.transform = 'translateY(0)', 10);
+    } else {
+      overlay.style.transform = 'translateY(-100%)';
+      setTimeout(() => overlay.style.display = 'none', 300);
+    }
+  }
+
+  function filtrarNoMapaMobile() {
+    document.getElementById('filtroNome').value = document.getElementById('filtroNomeMobile').value;
+    
+    // Sincroniza os dropdowns do mobile com os filtros globais (Desktop)
+    const syncFiltro = (idMobile, idDesktop) => {
+      const elMobile = document.getElementById(idMobile);
+      const elDesktop = document.getElementById(idDesktop);
+      if (elMobile && elDesktop) {
+        elDesktop.value = elMobile.value;
+      }
+    };
+    
+    syncFiltro('filtroCPIMobile', 'filtroCPI');
+    syncFiltro('filtroBatalhaoMobile', 'filtroBatalhao');
+    syncFiltro('filtroCIAMobile', 'filtroCIA');
+    syncFiltro('filtroCrimeMobile', 'filtroCrime');
+    syncFiltro('filtroSexoMobile', 'filtroSexo');
+    syncFiltro('filtroTipoMandadoMobile', 'filtroTipoMandado');
+    
+    filtrarNoMapa();
+  }
+
+  // ---- ALTERNÂNCIA DE VIEWS ----
+  function alternarVisaoTatica(visao) {
+    if (window.innerWidth >= 768) {
+      document.body.classList.add('desktop-open');
+    } else {
+      if (document.body.classList.contains('mobile-open')) toggleSidebar();
+    }
+    if (visao) alternarVisaoGlobal(visao);
+  }
+
+  function alternarVisaoGlobal(visaoDesejada) {
+    const viewIds = ['view-mapa', 'view-lista', 'view-relatorios', 'view-ranking', 'view-perfil', 'view-ajustes', 'view-usuarios', 'view-conferencia'];
+    const btnIds = ['nav-btn-mapa', 'nav-btn-lista', 'nav-btn-relatorios', 'nav-btn-ranking', 'nav-btn-perfil', 'nav-btn-ajustes', 'nav-btn-usuarios', 'nav-btn-conferencia'];
+
+    // Esconder todas as views
+    viewIds.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.style.display = 'none'; }
+    });
+
+    // Desativar todos os botões
+    btnIds.forEach(id => {
+      const btn = document.getElementById(id);
+      if (btn) {
+        btn.classList.remove('active');
+        btn.style.background = 'transparent';
+        btn.style.color = 'var(--text-secondary)';
+        btn.style.boxShadow = 'none';
+      }
+    });
+
+    // Ativar a view selecionada
+    const viewEl = document.getElementById('view-' + visaoDesejada);
+    if (viewEl) viewEl.style.display = 'flex';
+
+    const btnEl = document.getElementById('nav-btn-' + visaoDesejada);
+    if (btnEl) {
+      btnEl.classList.add('active');
+      btnEl.style.background = 'var(--accent)';
+      btnEl.style.color = 'white';
+      btnEl.style.boxShadow = '4px 4px 10px rgba(108,99,255,0.3), -2px -2px 6px var(--shadow-light)';
+    }
+
+    // Ações especiais por view
+    if (visaoDesejada === 'mapa') {
+      setTimeout(() => { if (mapaPrincipal) google.maps.event.trigger(mapaPrincipal, 'resize'); }, 100);
+    }
+    if (visaoDesejada === 'relatorios') atualizarGraficosComFiltro();
+    if (visaoDesejada === 'ranking') carregarRanking();
+    if (visaoDesejada === 'perfil') carregarPerfil();
+    if (visaoDesejada === 'ajustes') carregarAjustes();
+    if (visaoDesejada === 'conferencia' && typeof carregarConferencia === 'function') carregarConferencia();
+    if (visaoDesejada === 'usuarios') {
+      if (typeof carregarUsuariosGrade === 'function') carregarUsuariosGrade();
+    }
+
+    // Módulo 2: Desabilitar filtros do topo quando lista ativa
+    var desktopSearch = document.getElementById('desktopSearch');
+    var desktopFilters = document.getElementById('desktopFiltersContainer');
+    if (visaoDesejada === 'lista') {
+      if (desktopSearch) desktopSearch.style.display = 'none';
+      if (desktopFilters) desktopFilters.style.display = 'none';
+    } else if (window.innerWidth >= 768) {
+      if (desktopSearch) desktopSearch.style.display = 'flex';
+      if (desktopFilters) desktopFilters.style.display = 'flex';
+    }
+  }
+
+  // ---- TABELA DE MANDADOS E FOCO ----
+  function focarNoMapa(mandado) {
+    if (typeof listaMarcadores === 'undefined') return;
+    const marcador = listaMarcadores.find(m => m._mandadoRef === mandado);
+    if (marcador) {
+      alternarVisaoGlobal('mapa');
+      if (typeof mapaPrincipal !== 'undefined' && mapaPrincipal) {
+        mapaPrincipal.panTo(marcador.position);
+        mapaPrincipal.setZoom(16);
+        // Simular o clique no marcador nativamente
+        google.maps.event.trigger(marcador, 'click');
+      }
+    } else {
+      chamarAlertaTatico('MAPA', 'Marcador não encontrado ou filtrado.', 'OK');
+    }
+  }
+
+  function renderizarTabelaMandados(dados) {
+    const container = document.getElementById('tabelaMandados');
+    if (!container) return;
+
+    // Atualizar filtro de batalhões caso seja a primeira carga
+    if (document.getElementById('filtroListaBatalhao') && document.getElementById('filtroListaBatalhao').options.length <= 1) {
+      atualizarFiltroBatalhoesLista();
+    }
+
+    // Atualizar contadores
+    atualizarContadores(dados);
+
+    if (!dados || dados.length === 0) {
+      container.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);"><span class="material-symbols-outlined" style="font-size:40px;opacity:0.5;">search_off</span><p style="font-size:13px;margin-top:8px;">Nenhum mandado encontrado com os filtros atuais.</p></div>';
+      return;
+    }
+
+    const isMobile = window.innerWidth < 768;
+    const isAdmin = (typeof perfilUsuario !== 'undefined' && perfilUsuario === 'Admin');
+
+    if (isMobile) {
+      // ========== LAYOUT MOBILE: CARDS ==========
+      let html = '<div style="display:flex;flex-direction:column;gap:10px;padding:8px;">';
+
+      dados.forEach(function(d, idx) {
+        let corStatus = d.status === 'Capturado' ? 'var(--success)' : (d.status === 'Procurado' ? 'var(--danger)' : 'var(--warning)');
+        let bordaCor = d.semEndereco ? 'var(--warning)' : corStatus;
+        let crime = 'Outros';
+        let crimeSvg = '';
+        let isNaoClassificado = false;
+        if (typeof classificarCrime === 'function') {
+          var cls = classificarCrime(d.infoProcessuais || '');
+          crime = cls.nome;
+          isNaoClassificado = cls.naoClassificado === true;
+          crimeSvg = '<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:' + cls.cor + ';vertical-align:middle;margin-right:4px;"></span>';
+        }
+        let dias = '-';
+        if (typeof calcularDiasRestantes === 'function') {
+          var dr = calcularDiasRestantes(d.validade);
+          if (dr !== null) dias = dr <= 0 ? 'VENCIDO' : dr + 'd';
+        }
+
+        let tipoMandadoStr = '';
+        try {
+          var extrasJson = JSON.parse(d.dadosExtrasJSON || '{}');
+          if (extrasJson && extrasJson.titulo) {
+            tipoMandadoStr = extrasJson.titulo.toUpperCase();
+          }
+        } catch(e) {}
+        
+        let labelTipoHTML = '';
+        if (tipoMandadoStr) {
+          labelTipoHTML = '<div style="font-size:9px;color:var(--text-secondary);font-weight:800;letter-spacing:0.5px;margin-top:8px;margin-bottom:-4px;">' + tipoMandadoStr + '</div>';
+        }
+
+        var cardNcClass = isNaoClassificado ? ' card-nao-classificado' : '';
+        var badgeNC = '';
+        if (isNaoClassificado && isAdmin) {
+          badgeNC = '<div style="margin-top:6px;"><span class="badge-nao-classificado" onclick="abrirModalClassificarCrime(\'' + d.mandado.replace(/'/g, "\\'") + '\', \'' + (d.infoProcessuais || '').replace(/'/g, "\\'").replace(/"/g, '&quot;') + '\')"><span class="material-symbols-outlined" style="font-size:12px;">warning</span> CLASSIFICAR CRIME</span></div>';
+        } else if (isNaoClassificado) {
+          badgeNC = '<div style="margin-top:6px;"><span class="badge-nao-classificado"><span class="material-symbols-outlined" style="font-size:12px;">warning</span> NÃO CLASSIFICADO</span></div>';
+        }
+        html += '<div class="neu-card' + cardNcClass + '" style="padding:12px;border-left:3px solid ' + (isNaoClassificado ? '#f59e0b' : bordaCor) + ';">' +
+          '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;">' +
+            '<div style="font-weight:800;font-size:13px;color:var(--text-primary);flex:1;min-width:0;display:flex;align-items:center;gap:6px;"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0;">' + (d.nome || 'N/A') + '</span> <button onclick="copiarParaAreaTransferencia(\'' + (d.nome||'').replace(/'/g, "\\'") + '\', this)" style="background:transparent;border:none;cursor:pointer;padding:0;display:flex;align-items:center;flex-shrink:0;" title="Copiar Nome"><span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);">content_copy</span></button></div>' +
+            '<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">' +
+              (d.semEndereco ? '<span style="background:var(--warning)20;border:1px solid var(--warning)40;color:var(--warning);padding:2px 4px;border-radius:4px;font-size:8px;font-weight:800;">S/ END</span>' : '') +
+              '<span style="background:' + corStatus + '20;border:1px solid ' + corStatus + '40;color:' + corStatus + ';padding:2px 6px;border-radius:4px;font-size:9px;font-weight:800;text-transform:uppercase;white-space:nowrap;">' + d.status + '</span>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:10px;color:var(--text-secondary);">' +
+            '<span>' + crimeSvg + ' ' + crime + '</span>' +
+            '<span style="font-weight:700;"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">timer</span> ' + dias + '</span>' +
+          '</div>' +
+          badgeNC +
+          labelTipoHTML +
+          '<div style="font-size:9px;color:var(--accent);font-family:var(--font-mono);font-weight:700;margin-top:6px;display:flex;align-items:center;gap:6px;"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + d.mandado + '</span> <button onclick="copiarParaAreaTransferencia(\'' + d.mandado + '\', this)" style="background:transparent;border:none;cursor:pointer;padding:0;display:flex;align-items:center;" title="Copiar Mandado"><span class="material-symbols-outlined" style="font-size:12px;color:var(--text-muted);">content_copy</span></button></div>' +
+          '<div style="display:flex;gap:6px;margin-top:8px;align-items:center;">' +
+            (!d.semEndereco ? '<button class="neu-btn" style="padding:4px 8px;font-size:9px;display:inline-flex;align-items:center;gap:4px;flex:1;justify-content:center;" onclick="focarNoMapa(\'' + d.mandado + '\')"><span class="material-symbols-outlined" style="font-size:12px;">my_location</span> MAPA</button>' : '<span style="flex:1;text-align:center;font-size:9px;color:var(--warning);"><span class="material-symbols-outlined" style="font-size:10px;vertical-align:middle;">location_off</span> Sem localização</span>') +
+            (isAdmin ? '<button class="neu-btn" style="padding:4px 8px;font-size:9px;display:inline-flex;align-items:center;gap:4px;" onclick="abrirModalEditar(\'' + d.mandado + '\')"><span class="material-symbols-outlined" style="font-size:12px;">edit</span> EDITAR</button>' : '') +
+            '<button class="neu-btn" style="padding:4px 8px;font-size:9px;display:inline-flex;align-items:center;gap:4px;" onclick="toggleDetalhesCard(this)"><span class="material-symbols-outlined" style="font-size:12px;">expand_more</span> INFO</button>' +
+          '</div>' +
+          '<div class="card-detalhes-mobile" style="display:none;margin-top:8px;padding-top:8px;border-top:1px solid var(--border);font-size:10px;color:var(--text-secondary);line-height:1.8;">' +
+            '<div><b>CPF:</b> ' + (d.cpf || 'N/A') + ' <button onclick="copiarParaAreaTransferencia(\'' + d.cpf + '\', this)" style="background:transparent;border:none;cursor:pointer;padding:0;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:10px;color:var(--text-muted);">content_copy</span></button></div>' +
+            '<div><b>RG:</b> ' + (d.rg || 'N/A') + ' <button onclick="copiarParaAreaTransferencia(\'' + d.rg + '\', this)" style="background:transparent;border:none;cursor:pointer;padding:0;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:10px;color:var(--text-muted);">content_copy</span></button></div>' +
+            '<div><b>Filiação:</b> ' + (d.filiacao || 'N/A') + '</div>' +
+            '<div><b>Batalhão:</b> ' + (d.batalhao || '-') + '</div>' +
+            (d.cpiArea ? '<div><b>CPI:</b> ' + d.cpiArea + '</div>' : '') +
+            (d.ciaArea ? '<div><b>CIA:</b> ' + d.ciaArea + '</div>' : '') +
+            (d.cidade ? '<div><b>Cidade:</b> ' + d.cidade + '</div>' : '') +
+            '<div><b>Validade:</b> ' + (d.validade || 'N/A') + '</div>' +
+            '<div><b>Endereço:</b> ' + (d.enderecoPrincipal || 'N/A') + '</div>' +
+          '</div>' +
+        '</div>';
+      });
+
+      html += '</div>';
+      container.innerHTML = html;
+
+    } else {
+      // ========== LAYOUT DESKTOP: TABELA ==========
+      let html = '<table style="width:100%; border-collapse:collapse; text-align:left; table-layout:fixed;">' +
+        '<thead><tr style="border-bottom:1px solid var(--border); color:var(--text-secondary); font-size:10px; text-transform:uppercase; letter-spacing:1px;">' +
+        '<th style="padding:16px;width:25%;">Alvo / Filiação</th>' +
+        '<th style="padding:16px;width:25%;">Mandado / Docs</th>' +
+        '<th style="padding:16px;width:17%;">Status / Validade</th>' +
+        '<th style="padding:16px;width:13%;">Crime</th>' +
+        '<th style="padding:16px;width:20%;text-align:right;">Ações</th>' +
+        '</tr></thead><tbody>';
+
+      dados.forEach(function(d) {
+        let corStatus = d.status === 'Capturado' ? 'var(--success)' : (d.status === 'Procurado' ? 'var(--danger)' : 'var(--warning)');
+        let crime = 'Outros';
+        let crimeSvg = '';
+        let isNaoClassificado = false;
+        if (typeof classificarCrime === 'function') {
+          var cls = classificarCrime(d.infoProcessuais || '');
+          crime = cls.nome;
+          isNaoClassificado = cls.naoClassificado === true;
+          crimeSvg = '<svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="vertical-align:middle;"><g fill="' + cls.cor + '">' + cls.svgPath + '</g></svg>';
+        }
+
+        let dias = '-';
+        if (typeof calcularDiasRestantes === 'function') {
+          var dr = calcularDiasRestantes(d.validade);
+          if (dr !== null) dias = dr <= 0 ? 'VENCIDO' : dr + ' dias';
+        }
+
+        let tipoMandadoStr = '';
+        try {
+          var extrasJson = JSON.parse(d.dadosExtrasJSON || '{}');
+          if (extrasJson && extrasJson.titulo) {
+            tipoMandadoStr = extrasJson.titulo.toUpperCase();
+          }
+        } catch(e) {}
+        
+        let labelTipoHTML = '';
+        if (tipoMandadoStr) {
+          labelTipoHTML = '<div style="font-size:9px;color:var(--text-secondary);font-weight:800;letter-spacing:0.5px;margin-bottom:2px;">' + tipoMandadoStr + '</div>';
+        }
+
+        var btnCopiar = function(txt) { return '<button onclick="copiarParaAreaTransferencia(\'' + txt + '\', this)" title="Copiar" style="background:transparent;border:none;cursor:pointer;padding:2px;display:inline-flex;align-items:center;"><span class="material-symbols-outlined" style="font-size:12px;color:var(--text-muted);">content_copy</span></button>'; };
+
+        var trClass = d.semEndereco ? ' class="linha-sem-endereco"' : '';
+
+        html += '<tr' + trClass + ' style="border-bottom:1px solid rgba(255,255,255,0.02); transition:var(--transition);" onmouseover="this.style.background=\'var(--bg-depressed)\'" onmouseout="this.style.background=\'' + (d.semEndereco ? 'rgba(245,158,11,0.04)' : 'transparent') + '\'">' +
+          '<td style="padding:12px 16px;overflow:hidden;">' +
+            '<div style="font-weight:800;font-size:13px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + (d.nome || 'N/A') + btnCopiar(d.nome) + '</div>' +
+            '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="' + (d.filiacao || '') + '">' + (d.filiacao || 'N/A') + '</div>' +
+          '</td>' +
+          '<td style="padding:12px 16px;overflow:hidden;">' +
+            labelTipoHTML +
+            '<div style="font-size:10px;color:var(--accent);font-family:var(--font-mono);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + d.mandado + btnCopiar(d.mandado) + '</div>' +
+            '<div style="font-size:10px;color:var(--text-secondary);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">CPF: ' + (d.cpf || 'N/A') + btnCopiar(d.cpf) + ' | RG: ' + (d.rg || 'N/A') + '</div>' +
+          '</td>' +
+          '<td style="padding:12px 16px; font-size:11px; color:var(--text-secondary);">' +
+            '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">' +
+              '<span style="background:' + corStatus + '20; border:1px solid ' + corStatus + '40; color:' + corStatus + '; padding:3px 6px; border-radius:6px; font-size:9px; font-weight:800; text-transform:uppercase;">' + d.status + '</span>' +
+              (d.semEndereco ? '<span style="background:var(--warning)20;border:1px solid var(--warning)40;color:var(--warning);padding:3px 6px;border-radius:6px;font-size:8px;font-weight:800;">S/ END</span>' : '') +
+            '</div>' +
+            '<div style="font-size:9px;margin-top:4px;">Val: ' + dias + '</div>' +
+          '</td>' +
+          '<td style="padding:12px 16px; font-size:11px; font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;' + (isNaoClassificado ? 'background:rgba(245,158,11,0.15);color:#f59e0b;' : '') + '">' + 
+            (isNaoClassificado && isAdmin ? '<span class="badge-nao-classificado" style="font-size:8px;" onclick="abrirModalClassificarCrime(\'' + d.mandado.replace(/'/g, "\\'") + '\', \'' + (d.infoProcessuais || '').replace(/'/g, "\\'").replace(/"/g, '&quot;') + '\')"><span class="material-symbols-outlined" style="font-size:11px;">warning</span> CLASSIFICAR</span>' : (crimeSvg + ' ' + crime)) + '</td>' +
+          '<td style="padding:12px 16px; text-align:right;white-space:nowrap;">' +
+            (!d.semEndereco ? '<button class="neu-btn" style="padding:5px 10px; font-size:9px; display:inline-flex; align-items:center; gap:4px;" onclick="focarNoMapa(\'' + d.mandado + '\')"><span class="material-symbols-outlined" style="font-size:13px;">my_location</span>MAPA</button> ' : '') +
+            (isAdmin ? '<button class="neu-btn" style="padding:5px 10px; font-size:9px; display:inline-flex; align-items:center; gap:4px;" onclick="abrirModalEditar(\'' + d.mandado + '\')"><span class="material-symbols-outlined" style="font-size:13px;">edit</span>EDITAR</button>' : '') +
+          '</td>' +
+        '</tr>';
+      });
+
+      html += '</tbody></table>';
+      container.innerHTML = html;
+    }
+  }
+
+  // ========== CONTADORES ==========
+  function atualizarContadores(dadosFiltrados) {
+    var el = document.getElementById('cntTotal');
+    if (!el) return;
+    document.getElementById('cntTotal').textContent = dadosFiltrados.length;
+    document.getElementById('cntProcurados').textContent = dadosFiltrados.filter(function(d) { return d.status === 'Procurado'; }).length;
+    document.getElementById('cntCapturados').textContent = dadosFiltrados.filter(function(d) { return d.status === 'Capturado'; }).length;
+    document.getElementById('cntSemEndereco').textContent = dadosFiltrados.filter(function(d) { return d.semEndereco; }).length;
+  }
+
+  // ========== FILTROS DA LISTA ==========
+  function aplicarFiltrosLista() {
+    var termoTextual = (document.getElementById('filtroListaNome').value || '').toLowerCase();
+    var filtroEnd = document.getElementById('filtroListaEndereco').value;
+    var filtroBatalhao = document.getElementById('filtroListaBatalhao').value;
+    var filtroCpi = document.getElementById('filtroListaCpi') ? document.getElementById('filtroListaCpi').value : 'TODOS';
+    var filtroCia = document.getElementById('filtroListaCia') ? document.getElementById('filtroListaCia').value : 'TODOS';
+    var filtroSexo = document.getElementById('filtroListaSexo') ? document.getElementById('filtroListaSexo').value : 'TODOS';
+    var ordenacao = document.getElementById('ordenacaoLista').value;
+
+    var filtrados = dadosMandados.filter(function(d) {
+      // Busca ampla
+      var matchTexto = true;
+      if (termoTextual.length > 0) {
+        var textoComparacao = [
+          d.nome, d.mandado, d.cpf, d.rg, d.filiacao, 
+          (d.infoProcessuais ? classificarCrime(d.infoProcessuais).nome : '')
+        ].join(' ').toLowerCase();
+        matchTexto = textoComparacao.includes(termoTextual);
+      }
+      
+      var matchBatalhao = (filtroBatalhao === 'TODOS' || d.batalhao === filtroBatalhao);
+      var matchEnd = (filtroEnd === 'TODOS' || (filtroEnd === 'SEM' && d.semEndereco) || (filtroEnd === 'COM' && !d.semEndereco));
+      var matchCpi = (filtroCpi === 'TODOS' || (d.cpiArea || '') === filtroCpi);
+      var matchCia = (filtroCia === 'TODOS' || (d.ciaArea || '') === filtroCia);
+      var matchSexo = (filtroSexo === 'TODOS' || (d.sexo || '').toUpperCase() === filtroSexo.toUpperCase());
+      
+      return matchTexto && matchBatalhao && matchEnd && matchCpi && matchCia && matchSexo;
+    });
+
+    if (ordenacao === 'DISTANCIA') {
+      ordenarPorDistanciaERenderizar(filtrados);
+    } else {
+      filtrados.sort(function(a, b) {
+        if (ordenacao === 'ALFABETICA') {
+          return (a.nome || '').localeCompare(b.nome || '');
+        } else if (ordenacao === 'VENCIMENTO') {
+          var da = calcularDiasRestantes(a.validade) || 99999;
+          var db = calcularDiasRestantes(b.validade) || 99999;
+          return da - db;
+        } else if (ordenacao === 'ANTIGOS') {
+          return a.idLinha - b.idLinha;
+        } else {
+          // RECENTES (padrão) - inverte a ordem original do banco
+          return b.idLinha - a.idLinha;
+        }
+      });
+      renderizarTabelaMandados(filtrados);
+    }
+  }
+
+  // ========== LIMPAR FILTROS LISTA ==========
+  function limparFiltrosLista() {
+    document.getElementById('filtroListaNome').value = '';
+    document.getElementById('filtroListaBatalhao').value = 'TODOS';
+    document.getElementById('filtroListaEndereco').value = 'TODOS';
+    document.getElementById('ordenacaoLista').value = 'RECENTES';
+    var cpi = document.getElementById('filtroListaCpi');
+    var cia = document.getElementById('filtroListaCia');
+    var sexo = document.getElementById('filtroListaSexo');
+    if (cpi) cpi.value = 'TODOS';
+    if (cia) cia.value = 'TODOS';
+    if (sexo) sexo.value = 'TODOS';
+    aplicarFiltrosLista();
+  }
+
+  // ========== ORDENAÇÃO POR DISTÂNCIA ==========
+  function ordenarPorDistanciaERenderizar(dados) {
+    if (!navigator.geolocation) {
+      chamarAlertaTatico("ERRO GPS", "Seu navegador não suporta geolocalização.", "OK");
+      renderizarTabelaMandados(dados);
+      document.getElementById('ordenacaoLista').value = "RECENTES";
+      return;
+    }
+    
+    // Mostra loading rápido
+    document.getElementById('tabelaMandados').innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);"><span class="material-symbols-outlined" style="font-size:40px;animation:spin 1s linear infinite;">sync</span><p style="font-size:13px;margin-top:8px;">Obtendo localização para calcular rotas...</p></div>';
+
+    navigator.geolocation.getCurrentPosition(function(position) {
+      var latAtual = position.coords.latitude;
+      var lngAtual = position.coords.longitude;
+      
+      dados.forEach(function(d) {
+        if (!d.semEndereco && d.lat && d.lng) {
+          d._distanciaKm = calcularDistanciaHaversine(latAtual, lngAtual, d.lat, d.lng);
+        } else {
+          d._distanciaKm = 99999; // Sem endereço fica no fim
+        }
+      });
+      
+      dados.sort(function(a, b) { return a._distanciaKm - b._distanciaKm; });
+      renderizarTabelaMandados(dados);
+      
+    }, function(error) {
+      chamarAlertaTatico("ERRO GPS", "Não foi possível obter sua localização. Permita o acesso ao GPS.", "OK");
+      renderizarTabelaMandados(dados);
+      document.getElementById('ordenacaoLista').value = "RECENTES";
+    });
+  }
+
+  function calcularDistanciaHaversine(lat1, lon1, lat2, lon2) {
+    var R = 6371; // Raio da Terra em km
+    var dLat = (lat2 - lat1) * Math.PI / 180;
+    var dLon = (lon2 - lon1) * Math.PI / 180;
+    var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+            Math.sin(dLon/2) * Math.sin(dLon/2);
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+    function sortCpi(a, b) {
+      let isCpaA = a.includes('CPA');
+      let isCpaB = b.includes('CPA');
+      if (isCpaA !== isCpaB) return isCpaA ? 1 : -1;
+      let numA = parseInt(a.replace(/\D/g, '')) || 0;
+      let numB = parseInt(b.replace(/\D/g, '')) || 0;
+      if (numA !== numB) return numA - numB;
+      return a.localeCompare(b);
+    }
+
+    function sortBpm(a, b) {
+      let isBpmiA = a.includes('BPM/I');
+      let isBpmiB = b.includes('BPM/I');
+      if (isBpmiA !== isBpmiB) return isBpmiA ? -1 : 1;
+      let numA = parseInt(a.replace(/\D/g, '')) || 0;
+      let numB = parseInt(b.replace(/\D/g, '')) || 0;
+      if (numA !== numB) return numA - numB;
+      return a.localeCompare(b);
+    }
+
+    // Preencher Batalhões no Filtro da Lista
+    function atualizarFiltroBatalhoesLista() {
+      var select = document.getElementById('filtroListaBatalhao');
+      if (!select) return;
+      var batalhoesUnicos = [...new Set(dadosMandados.map(function(i){return i.batalhao;}).filter(function(b){return b;}))].sort(sortBpm);
+      select.innerHTML = '<option value="TODOS" style="background:var(--bg-base)">Todos Batalhões</option>';
+      batalhoesUnicos.forEach(function(b) {
+        var opt = document.createElement('option');
+        opt.value = b; opt.textContent = b;
+        opt.style.background = 'var(--bg-base)';
+        select.appendChild(opt);
+      });
+
+      // Popular filtro CPI
+      var selectCpi = document.getElementById('filtroListaCpi');
+      if (selectCpi) {
+        var cpisUnicos = [...new Set(dadosMandados.map(function(i){return i.cpiArea;}).filter(function(c){return c;}))].sort(sortCpi);
+        selectCpi.innerHTML = '<option value="TODOS" style="background:var(--bg-base)">Todos CPI - CPA</option>';
+        cpisUnicos.forEach(function(c) {
+          var opt = document.createElement('option');
+          opt.value = c; opt.textContent = c;
+          opt.style.background = 'var(--bg-base)';
+          selectCpi.appendChild(opt);
+        });
+      }
+
+    // Popular filtro CIA
+    var selectCia = document.getElementById('filtroListaCia');
+    if (selectCia) {
+      var ciasUnicos = [...new Set(dadosMandados.map(function(i){return i.ciaArea;}).filter(function(c){return c;}))].sort();
+      selectCia.innerHTML = '<option value="TODOS" style="background:var(--bg-base)">Todas CIA</option>';
+      ciasUnicos.forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c; opt.textContent = c;
+        opt.style.background = 'var(--bg-base)';
+        selectCia.appendChild(opt);
+      });
+    }
+  }
+
+  // ========== VARIÁVEIS DE FILA E FOTO EDIÇÃO ==========
+  var filaImportacao = [];
+  var fotoBase64Editada = "";
+  var editandoOrigem = "BD"; // Pode ser "BD" ou "FILA"
+  var editandoIndiceFila = -1;
+
+  // ========== MODAL EDITAR & MÚLTIPLOS ENDEREÇOS ==========
+  function adicionarCampoEnderecoEdit(valorStr) {
+    var container = document.getElementById('containerMultiEnderecos');
+    var idx = container.children.length;
+    var valor = valorStr || '';
+    
+    var div = document.createElement('div');
+    div.style.cssText = "display:flex;gap:4px;align-items:center;";
+    div.innerHTML = '<input type="text" class="input-multi-endereco" value="' + valor.replace(/"/g, '&quot;') + '" style="flex:1;padding:8px;border-radius:6px;border:1px solid var(--border);background:rgba(0,0,0,0.2);color:var(--text-primary);font-size:11px;" placeholder="Digite outro endereço completo...">' +
+                    '<button type="button" onclick="this.parentElement.remove()" style="background:rgba(239,68,68,0.1);color:var(--danger);border:1px solid rgba(239,68,68,0.3);border-radius:4px;padding:6px;cursor:pointer;display:flex;align-items:center;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>';
+    container.appendChild(div);
+  }
+
+  function lerMultiplosEnderecos() {
+    var inputs = document.querySelectorAll('.input-multi-endereco');
+    var ends = [];
+    inputs.forEach(function(inp) {
+      if(inp.value.trim().length > 5) ends.push(inp.value.trim());
+    });
+    return ends.join(' || '); // Junta com || para salvar no BD
+  }
+
+  function abrirModalEditar(mandadoNum, origem, indiceFila) {
+    try {
+      if (!origem) origem = "BD";
+      if (typeof indiceFila === 'undefined') indiceFila = -1;
+      var d = null;
+      editandoOrigem = origem;
+      editandoIndiceFila = indiceFila;
+
+      if (origem === "BD") {
+        d = dadosMandados.find(function(m) { return m.mandado === mandadoNum; });
+      } else {
+        d = filaImportacao[indiceFila];
+      }
+
+      if (!d) {
+        console.warn("Mandado não encontrado na memória: " + mandadoNum);
+        return;
+      }
+
+      var elId = document.getElementById('editIdLinha'); if (elId) elId.value = d.idLinha || '';
+      var elMandado = document.getElementById('editMandadoNum'); if (elMandado) elMandado.value = d.mandado || '';
+      var elNome = document.getElementById('editNome'); if (elNome) elNome.value = d.nome || '';
+      var elCpf = document.getElementById('editCpf'); if (elCpf) elCpf.value = d.cpf || '';
+      var elRg = document.getElementById('editRg'); if (elRg) elRg.value = d.rg || '';
+      var elNasc = document.getElementById('editNascimento'); if (elNasc) elNasc.value = d.nascimento || '';
+      var elNat = document.getElementById('editNaturalidade'); if (elNat) elNat.value = d.naturalidade || '';
+      var elSexo = document.getElementById('editSexo'); if (elSexo) elSexo.value = d.sexo || 'N/A';
+      var elCor = document.getElementById('editCor'); if (elCor) elCor.value = d.cor || '';
+      var elFil = document.getElementById('editFiliacao'); if (elFil) elFil.value = d.filiacao || '';
+      var elStatus = document.getElementById('editStatus'); if (elStatus) elStatus.value = d.status || 'Procurado';
+      var elVal = document.getElementById('editValidade'); if (elVal) elVal.value = d.validade || '';
+      var elEnd = document.getElementById('editEnderecoPrincipal'); if (elEnd) elEnd.value = d.enderecoPrincipal || '';
+      var elBat = document.getElementById('editBatalhao'); if (elBat) elBat.value = d.batalhao || '';
+      var elCpi = document.getElementById('editCpi'); if (elCpi) elCpi.value = d.cpiArea || '';
+      var elCia = document.getElementById('editCia'); if (elCia) elCia.value = d.ciaArea || '';
+      var elCidade = document.getElementById('editCidade'); if (elCidade) elCidade.value = d.cidade || '';
+      var elObs = document.getElementById('editObservacoes'); if (elObs) elObs.value = d.observacoes || '';
+
+      // Populate individual process fields
+      var info = d.infoProcessuais || '';
+      var mOrgao = info.match(/Órgão Judicial:\s*([^|]+)/i);
+      var mEspecie = info.match(/Espécie de prisão:\s*([^|]+)/i) || info.match(/Espécie(?: da| de) Internação:\s*([^|]+)/i);
+      var mLei = info.match(/Lei:\s*([^|]+)/i);
+      var mArtigo = info.match(/Artigo:\s*([^|]+)/i);
+      var mParagrafo = info.match(/Parágrafo:\s*([^|]+)/i);
+      var mPena = info.match(/Pena restante:\s*([^|]+)/i) || info.match(/Prazo Mínimo da Internação:\s*([^|]+)/i);
+      var mRegime = info.match(/Regime Prisional:\s*([^|]+)/i);
+      var mMotivo = info.match(/Motivo:\s*([^|]+)/i);
+      var mTentado = info.match(/Crime tentado:\s*([^|]+)/i);
+      var mVd = info.match(/Violência Doméstica:\s*([^|$]+)/i);
+      
+      var elOrgao = document.getElementById('editOrgaoJudicial'); if (elOrgao) elOrgao.value = mOrgao ? mOrgao[1].trim() : '';
+      var elEspecie = document.getElementById('editEspeciePrisao'); if (elEspecie) elEspecie.value = mEspecie ? mEspecie[1].trim() : '';
+      var elLei = document.getElementById('editLei'); if (elLei) elLei.value = mLei ? mLei[1].trim() : '';
+      var elArtigo = document.getElementById('editArtigo'); if (elArtigo) elArtigo.value = mArtigo ? mArtigo[1].trim() : '';
+      var elParagrafo = document.getElementById('editParagrafo'); if (elParagrafo) elParagrafo.value = mParagrafo ? mParagrafo[1].trim() : '';
+      var elPena = document.getElementById('editPenaRestante'); if (elPena) elPena.value = mPena ? mPena[1].trim() : '';
+      var elRegime = document.getElementById('editRegime'); if (elRegime) elRegime.value = mRegime ? mRegime[1].trim() : '';
+      var elMotivo = document.getElementById('editMotivo'); if (elMotivo) elMotivo.value = mMotivo ? mMotivo[1].trim() : '';
+      var elTentado = document.getElementById('editCrimeTentado'); if (elTentado) elTentado.value = mTentado ? mTentado[1].trim() : '';
+      var elVd = document.getElementById('editViolenciaDom'); if (elVd) elVd.value = mVd ? mVd[1].trim() : '';
+      
+      var elInfo = document.getElementById('editInfoProcessuais'); if (elInfo) elInfo.value = d.infoProcessuais || '';
+
+      // Foto Editada resetada
+      fotoBase64Editada = "";
+      var elImg = document.getElementById('edit-preview-foto-admin');
+      var elTxt = document.getElementById('edit-foto-texto-upload');
+      if (elImg) { elImg.src = ""; elImg.style.display = 'none'; }
+      if (elTxt) { elTxt.style.display = 'flex'; }
+
+      // Limpar e popular múltiplos endereços
+      var containerEnds = document.getElementById('containerMultiEnderecos');
+      if (containerEnds) {
+        containerEnds.innerHTML = '';
+        var txtOutros = (origem === "BD") ? d.outrosEnderecos : d.secundariosText;
+        if (txtOutros) {
+          var arr = txtOutros.split('||').map(function(s){return s.trim();}).filter(function(s){return s;});
+          if (arr.length === 0) {
+            arr = txtOutros.split('\n').map(function(s){return s.trim();}).filter(function(s){return s;});
+          }
+          arr.forEach(function(end) { adicionarCampoEnderecoEdit(end); });
+        }
+      }
+
+      var modal = document.getElementById('modalEditarMandado');
+      if (modal && modal.parentElement !== document.body) {
+        document.body.appendChild(modal);
+      }
+      if (modal) modal.style.display = 'flex';
+    } catch(erroEdit) {
+      alert("Erro ao abrir janela de edição: " + erroEdit.message);
+    }
+  }
+
+  function fecharModalEditar() {
+    document.getElementById('modalEditarMandado').style.display = 'none';
+  }
+
+  function salvarEdicaoMandado() {
+    var btn = document.getElementById('btnSalvarEdicao');
+    btn.innerText = '\u23F3 SALVANDO...';
+    btn.disabled = true;
+
+    var dadosEditar = {
+      mandado: document.getElementById('editMandadoNum').value,
+      nome: document.getElementById('editNome').value,
+      cpf: document.getElementById('editCpf').value,
+      rg: document.getElementById('editRg').value,
+      nascimento: document.getElementById('editNascimento').value,
+      naturalidade: document.getElementById('editNaturalidade').value,
+      sexo: document.getElementById('editSexo').value,
+      cor: document.getElementById('editCor').value,
+      filiacao: document.getElementById('editFiliacao').value,
+      status: document.getElementById('editStatus').value,
+      validade: document.getElementById('editValidade').value,
+      enderecoPrincipal: document.getElementById('editEnderecoPrincipal').value,
+      batalhao: document.getElementById('editBatalhao').value,
+      cpiArea: document.getElementById('editCpi') ? document.getElementById('editCpi').value : '',
+      ciaArea: document.getElementById('editCia') ? document.getElementById('editCia').value : '',
+      cidade: document.getElementById('editCidade') ? document.getElementById('editCidade').value : '',
+      observacoes: document.getElementById('editObservacoes').value
+    };
+
+    var infoRaw = document.getElementById('editInfoProcessuais').value || '';
+    var mNum = infoRaw.match(/Nº do processo:\s*([^|]+)/i);
+    var numProcesso = mNum ? mNum[1].trim() : document.getElementById('editMandadoNum').value;
+
+    var novaInfoProcessuais = 'Nº do processo: ' + numProcesso + 
+      ' | Órgão Judicial: ' + document.getElementById('editOrgaoJudicial').value + 
+      ' | Espécie de prisão: ' + document.getElementById('editEspeciePrisao').value + 
+      ' | Lei: ' + document.getElementById('editLei').value + 
+      ' | Artigo: ' + document.getElementById('editArtigo').value + 
+      ' | Parágrafo: ' + document.getElementById('editParagrafo').value + 
+      ' | Pena restante: ' + document.getElementById('editPenaRestante').value + 
+      ' | Regime Prisional: ' + document.getElementById('editRegime').value + 
+      ' | Motivo: ' + document.getElementById('editMotivo').value + 
+      ' | Crime tentado: ' + document.getElementById('editCrimeTentado').value + 
+      ' | Violência Doméstica: ' + document.getElementById('editViolenciaDom').value;
+      
+    dadosEditar.infoProcessuais = novaInfoProcessuais;
+
+    if (fotoBase64Editada && fotoBase64Editada !== "") {
+      dadosEditar.fotoBase64 = fotoBase64Editada;
+    }
+
+    if (editandoOrigem === "BD") {
+      dadosEditar.idLinha = parseInt(document.getElementById('editIdLinha').value);
+      dadosEditar.outrosEnderecos = lerMultiplosEnderecos();
+
+      google.script.run
+        .withSuccessHandler(function(res) {
+          btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> SALVAR ALTERAÇÕES';
+          btn.disabled = false;
+          if (res.sucesso) {
+            fecharModalEditar();
+            chamarAlertaTatico("SUCESSO", "Mandado atualizado. Sincronizando...", "OK");
+            sincronizarBD();
+          } else {
+            chamarAlertaTatico("ERRO", res.mensagem, "OK");
+          }
+        })
+        .withFailureHandler(function(err) {
+          btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> SALVAR ALTERAÇÕES';
+          btn.disabled = false;
+          chamarAlertaTatico("ERRO FATAL", err.message, "OK");
+        })
+        .editarMandadoCompleto(dadosEditar);
+
+    } else if (editandoOrigem === "FILA") {
+      // Atualizar o objeto na filaImportacao na memória
+      var obj = filaImportacao[editandoIndiceFila];
+      Object.assign(obj, dadosEditar);
+      obj.secundariosText = lerMultiplosEnderecos(); // Na fila ainda não está geocodificado
+      
+      btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">save</span> SALVAR ALTERAÇÕES';
+      btn.disabled = false;
+      fecharModalEditar();
+      chamarAlertaTatico("SUCESSO", "Editado na fila de importação.", "OK");
+      renderizarTabelaFilaRevisao();
+    }
+  }
+
+  // ========== LÓGICA DO GRID DE REVISÃO DA FILA ==========
+  function toggleSelecaoFila(index) {
+    var cb = document.getElementById('cb-fila-' + index);
+    if (!cb) return;
+    cb.checked = !cb.checked;
+    
+    var card = document.getElementById('card-fila-' + index);
+    var status = document.getElementById('status-importacao-' + index);
+    if (cb.checked) {
+      if(card) { card.classList.add('selecionado'); card.classList.remove('descartado'); }
+      if(status) { status.innerText = 'Será Importado'; status.style.color = 'var(--success)'; }
+    } else {
+      if(card) { card.classList.add('descartado'); card.classList.remove('selecionado'); }
+      if(status) { status.innerText = 'Descartado'; status.style.color = 'var(--danger)'; }
+    }
+    
+    // Atualizar cálculo dinâmico da fila
+    var totalSelecionados = document.querySelectorAll('.cb-importar-fila:checked').length;
+    var btn = document.getElementById('btnConfirmarFila');
+    if (btn) {
+      btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;">cloud_upload</span> CONFIRMAR IMPORTAÇÃO (' + totalSelecionados + ')';
+      if (totalSelecionados === 0) {
+        btn.style.opacity = '0.5';
+        btn.style.pointerEvents = 'none';
+      } else {
+        btn.style.opacity = '1';
+        btn.style.pointerEvents = 'auto';
+      }
+    }
+  }
+
+  function renderizarTabelaFilaRevisao() {
+    var container = document.getElementById('gridFilaRevisao');
+    if (!container) return;
+
+    if (filaImportacao.length === 0) {
+      container.innerHTML = '<div style="padding:48px;text-align:center;color:var(--text-muted);width:100%;grid-column:1/-1;"><span class="material-symbols-outlined" style="font-size:48px;opacity:0.5;">checklist</span><p style="font-size:14px;margin-top:12px;">A fila de importação está vazia.</p></div>';
+      var actionBar = document.getElementById('revisao-action-bar');
+      if (actionBar) actionBar.style.display = 'none';
+      return;
+    }
+
+    var fab = document.getElementById('btnAdminNovo');
+    if (fab) fab.style.display = 'none';
+
+    var actionBar = document.getElementById('revisao-action-bar');
+    if (actionBar) actionBar.style.display = 'flex';
+    
+    var btn = document.getElementById('btnConfirmarFila');
+    if (btn) {
+      btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:18px;vertical-align:middle;">cloud_upload</span> CONFIRMAR IMPORTAÇÃO (' + filaImportacao.length + ')';
+      btn.style.opacity = '1';
+      btn.style.pointerEvents = 'auto';
+    }
+
+    var html = '';
+    filaImportacao.forEach(function(d, index) {
+      // Formata foto ou fallback
+      var temFoto = (d.fotoBase64 && d.fotoBase64.length > 100);
+      var imgHtml = temFoto ? '<img src="' + d.fotoBase64 + '" style="width:100%;height:100%;object-fit:cover;">' : '<div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.1);"><span class="material-symbols-outlined" style="font-size:32px;">person</span></div>';
+
+      // Extrair titulo do mandado
+      var tipoMandado = (d.extras && d.extras.titulo) ? d.extras.titulo : 'NÃO IDENTIFICADO';
+
+      html += '<div id="card-fila-'+index+'" class="neu-card card-fila-item selecionado" style="padding:0;overflow:hidden;display:flex;flex-direction:column;" onclick="toggleSelecaoFila('+index+')">';
+      
+      // Cabeçalho com Tipo de Mandado + Checkbox
+      html += '<div style="background:linear-gradient(90deg, rgba(239,68,68,0.15), transparent); border-bottom:1px solid rgba(239,68,68,0.2); padding:12px; display:flex; justify-content:space-between; align-items:center;">';
+      html += '  <div style="display:flex;flex-direction:column;gap:2px;">';
+      html += '    <input type="checkbox" id="cb-fila-'+index+'" class="cb-importar-fila" data-index="'+index+'" checked style="display:none;">';
+      html += '    <div style="font-size:11px;font-weight:900;color:var(--danger);letter-spacing:0.5px;">' + tipoMandado + '</div>';
+      html += '    <div style="font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--text-secondary);">' + d.mandado + '</div>';
+      html += '  </div>';
+      html += '  <div id="status-importacao-'+index+'" class="status-importacao" style="font-size:10px;font-weight:800;color:var(--success);">Será Importado</div>';
+      html += '</div>';
+
+      // Corpo principal: Foto + Dados Pessoais
+      html += '<div style="padding:14px; display:flex; gap:14px;">';
+      
+      // Coluna da Foto
+      html += '  <div style="width:70px; height:93px; background:var(--bg-depressed); border-radius:8px; overflow:hidden; border:1px solid var(--border); flex-shrink:0;">';
+      html += '    ' + imgHtml;
+      html += '  </div>';
+
+      // Informações Pessoais Completas
+      html += '  <div style="flex:1; display:flex; flex-direction:column; gap:4px; font-size:10px; color:var(--text-secondary); line-height:1.5;">';
+      html += '    <div style="font-size:14px;font-weight:900;color:var(--text-primary);line-height:1.2;text-transform:uppercase;margin-bottom:4px;">' + (d.nome || 'NÃO INFORMADO') + '</div>';
+      html += '    <div><span style="color:var(--accent);font-weight:700;">CPF:</span> ' + (d.cpf || 'N/A') + ' &nbsp;•&nbsp; <span style="color:var(--accent);font-weight:700;">RG:</span> ' + (d.rg || 'N/A') + '</div>';
+      html += '    <div><span style="color:var(--accent);font-weight:700;">Nascimento:</span> ' + (d.nascimento || 'N/A') + ' &nbsp;•&nbsp; <span style="color:var(--accent);font-weight:700;">Natural de:</span> ' + (d.naturalidade || 'N/A') + '</div>';
+      html += '    <div><span style="color:var(--accent);font-weight:700;">Sexo:</span> ' + (d.sexo || 'N/A') + ' &nbsp;•&nbsp; <span style="color:var(--accent);font-weight:700;">Cor:</span> ' + (d.cor || 'N/A') + '</div>';
+      html += '    <div><span style="color:var(--accent);font-weight:700;">Filiação:</span> ' + (d.filiacao || 'NÃO INFORMADA') + '</div>';
+      if (d.extras && d.extras.alcunha) html += '    <div><span style="color:var(--accent);font-weight:700;">Alcunha:</span> ' + d.extras.alcunha + '</div>';
+      html += '  </div>';
+      html += '</div>'; // fim corpo
+
+      // Seção de Endereços Completa
+      html += '<div style="padding:0 14px 10px 14px; display:flex; flex-direction:column; gap:8px;">';
+      
+      html += '  <div style="background:var(--bg-depressed); padding:10px 12px; border-radius:8px; font-size:10px;">';
+      html += '    <div style="color:var(--warning);font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:4px;font-size:11px;"><span class="material-symbols-outlined" style="font-size:14px;">location_on</span> ENDEREÇOS</div>';
+      
+      // Endereço Principal
+      var endPrincipalCor = (!d.enderecoPrincipal || d.enderecoPrincipal === 'Não informado') ? 'var(--danger)' : 'var(--success)';
+      html += '    <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:6px;">';
+      html += '      <span style="background:' + endPrincipalCor + ';color:white;padding:1px 5px;border-radius:4px;font-size:8px;font-weight:900;flex-shrink:0;margin-top:2px;">P</span>';
+      html += '      <span style="color:var(--text-primary);line-height:1.4;">' + (d.enderecoPrincipal || 'Não informado') + '</span>';
+      html += '    </div>';
+      
+      // Endereços Secundários (TODOS listados individualmente)
+      if (d.secundarios && d.secundarios.length > 0) {
+        d.secundarios.forEach(function(sec, si) {
+          html += '    <div style="display:flex;align-items:flex-start;gap:6px;margin-bottom:4px;">';
+          html += '      <span style="background:var(--accent);color:white;padding:1px 5px;border-radius:4px;font-size:8px;font-weight:900;flex-shrink:0;margin-top:2px;">S' + (si+1) + '</span>';
+          html += '      <span style="color:var(--text-secondary);line-height:1.4;">' + (sec.endereco || 'N/A') + '</span>';
+          html += '    </div>';
+        });
+      }
+      html += '  </div>';
+
+      // Box Info Processuais Detalhadas
+      if (d.infoProcessuais) {
+        var info = d.infoProcessuais;
+        var orgaoMatch = info.match(/Órgão Judicial:\s*([^|]+)/i);
+        var especieMatch = info.match(/Espécie de prisão:\s*([^|]+)/i);
+        var leiMatch = info.match(/Lei:\s*([^|]+)/i);
+        var artigoMatch = info.match(/Artigo:\s*([^|]+)/i);
+        var paragrafoMatch = info.match(/Parágrafo:\s*([^|]+)/i);
+        var penaMatch = info.match(/Pena restante:\s*([^|]+)/i);
+        var regimeMatch = info.match(/Regime Prisional:\s*([^|]+)/i);
+        var motivoMatch = info.match(/Motivo:\s*([^|]+)/i);
+        var tentadoMatch = info.match(/Crime tentado:\s*([^|]+)/i);
+        var vdMatch = info.match(/Violência Doméstica:\s*([^|$]+)/i);
+
+        html += '  <div style="background:rgba(108,99,255,0.05); border:1px solid rgba(108,99,255,0.1); padding:10px 12px; border-radius:8px; font-size:10px; color:var(--text-secondary); line-height:1.6;">';
+        html += '    <div style="color:var(--accent);font-weight:800;margin-bottom:6px;display:flex;align-items:center;gap:4px;font-size:11px;"><span class="material-symbols-outlined" style="font-size:14px;">gavel</span> INFORMAÇÕES PROCESSUAIS</div>';
+        html += '    <div><span style="color:var(--text-primary);font-weight:700;">Órgão:</span> ' + (orgaoMatch ? orgaoMatch[1].trim() : 'N/A') + '</div>';
+        html += '    <div><span style="color:var(--text-primary);font-weight:700;">Espécie:</span> ' + (especieMatch ? especieMatch[1].trim() : 'N/A') + '</div>';
+        html += '    <div><span style="color:var(--text-primary);font-weight:700;">Lei:</span> ' + (leiMatch ? leiMatch[1].trim() : 'N/A') + ' &nbsp;•&nbsp; <span style="color:var(--text-primary);font-weight:700;">Art:</span> ' + (artigoMatch ? artigoMatch[1].trim() : 'N/A') + ' &nbsp;•&nbsp; <span style="color:var(--text-primary);font-weight:700;">§:</span> ' + (paragrafoMatch ? paragrafoMatch[1].trim() : 'N/A') + '</div>';
+        html += '    <div><span style="color:var(--text-primary);font-weight:700;">Pena restante:</span> ' + (penaMatch ? penaMatch[1].trim() : 'N/A') + '</div>';
+        html += '    <div><span style="color:var(--text-primary);font-weight:700;">Regime:</span> ' + (regimeMatch ? regimeMatch[1].trim() : 'N/A') + ' &nbsp;•&nbsp; <span style="color:var(--text-primary);font-weight:700;">Motivo:</span> ' + (motivoMatch ? motivoMatch[1].trim() : 'N/A') + '</div>';
+        html += '    <div><span style="color:var(--text-primary);font-weight:700;">Crime tentado:</span> ' + (tentadoMatch ? tentadoMatch[1].trim() : 'N/A') + ' &nbsp;•&nbsp; <span style="color:var(--text-primary);font-weight:700;">V. Doméstica:</span> ' + (vdMatch ? vdMatch[1].trim() : 'N/A') + '</div>';
+        html += '  </div>';
+      }
+
+      // Box Validade + Emissão + RJI
+      html += '  <div style="display:flex;gap:8px;flex-wrap:wrap;">';
+      
+      var validadeCor = (d.validade && d.validade !== 'N/A') ? 'var(--success)' : 'var(--warning)';
+      html += '    <div style="background:var(--bg-depressed);padding:6px 10px;border-radius:6px;font-size:10px;flex:1;min-width:120px;">';
+      html += '      <div style="color:' + validadeCor + ';font-weight:800;font-size:9px;">VALIDADE</div>';
+      html += '      <div style="color:var(--text-primary);font-weight:700;margin-top:2px;">' + (d.validade || 'N/A') + '</div>';
+      html += '    </div>';
+      
+      if (d.extras && d.extras.emissao) {
+        html += '    <div style="background:var(--bg-depressed);padding:6px 10px;border-radius:6px;font-size:10px;flex:1;min-width:120px;">';
+        html += '      <div style="color:var(--accent);font-weight:800;font-size:9px;">EMISSÃO</div>';
+        html += '      <div style="color:var(--text-primary);font-weight:700;margin-top:2px;">' + d.extras.emissao + '</div>';
+        html += '    </div>';
+      }
+      
+      if (d.extras && d.extras.rji) {
+        html += '    <div style="background:var(--bg-depressed);padding:6px 10px;border-radius:6px;font-size:10px;flex:1;min-width:120px;">';
+        html += '      <div style="color:var(--text-muted);font-weight:800;font-size:9px;">RJI</div>';
+        html += '      <div style="color:var(--text-primary);font-weight:700;margin-top:2px;font-family:var(--font-mono);">' + d.extras.rji + '</div>';
+        html += '    </div>';
+      }
+      html += '  </div>';
+
+      // Síntese da Decisão (se existir)
+      if (d.extras && d.extras.sintese) {
+        html += '  <div style="background:rgba(245,158,11,0.05);border:1px solid rgba(245,158,11,0.1);padding:10px 12px;border-radius:8px;font-size:9px;color:var(--text-secondary);line-height:1.5;">';
+        html += '    <div style="color:var(--warning);font-weight:800;margin-bottom:4px;display:flex;align-items:center;gap:4px;font-size:10px;"><span class="material-symbols-outlined" style="font-size:13px;">description</span> SÍNTESE DA DECISÃO</div>';
+        html += '    <div style="max-height:80px;overflow-y:auto;" class="custom-scrollbar">' + d.extras.sintese.substring(0, 500) + (d.extras.sintese.length > 500 ? '...' : '') + '</div>';
+        html += '  </div>';
+      }
+
+      // Marcas e sinais (se existir)
+      if (d.extras && d.extras.marcas) {
+        html += '  <div style="background:rgba(139,0,0,0.05);border:1px solid rgba(139,0,0,0.1);padding:8px 12px;border-radius:8px;font-size:9px;color:var(--text-secondary);line-height:1.4;">';
+        html += '    <div style="color:#dc2626;font-weight:800;margin-bottom:2px;font-size:10px;">🔍 MARCAS E SINAIS</div>';
+        html += '    ' + d.extras.marcas;
+        html += '  </div>';
+      }
+
+      html += '</div>'; // fim bloco inferior
+
+      // Ações
+      html += '<div style="padding:10px 14px; border-top:1px solid var(--border); display:flex; gap:8px;" onclick="event.stopPropagation();">';
+      html += '  <button class="neu-btn" style="flex:1; padding:8px; font-size:10px; display:flex; align-items:center; justify-content:center; gap:6px; font-weight:800;" onclick="abrirModalEditar(\'' + d.mandado + '\', \'FILA\', ' + index + ')">';
+      html += '    <span class="material-symbols-outlined" style="font-size:14px;">edit</span> EDITAR TUDO';
+      html += '  </button>';
+      html += '  <button class="neu-btn" style="padding:8px 12px; font-size:10px; display:flex; align-items:center; justify-content:center; background:rgba(239,68,68,0.1); color:var(--danger); border:none;" onclick="removerDaFila(' + index + ')">';
+      html += '    <span class="material-symbols-outlined" style="font-size:16px;">delete</span>';
+      html += '  </button>';
+      html += '</div>';
+
+      html += '</div>'; // fim card
+    });
+
+    container.innerHTML = html;
+  }
+
+  function cancelarImportacaoFila() {
+    chamarAlertaTatico("CONFIRMAR CANCELAMENTO", "Tem certeza que deseja cancelar esta importação? Todos os extraídos serão descartados.", "CONFIRMAR", function(ok) {
+      if(ok) {
+        filaImportacao = [];
+        var modalFila = document.getElementById('view-revisao-importacao');
+        if (modalFila) modalFila.style.display = 'none';
+        var fab = document.getElementById('btnAdminNovo');
+        var isAdmin = document.getElementById('sidebarPerfilEl') && document.getElementById('sidebarPerfilEl').textContent === 'Admin';
+        if (fab && isAdmin) fab.style.display = 'flex';
+        renderizarTabelaFilaRevisao();
+      }
+    });
+  }
+
+  function removerDaFila(index) {
+    filaImportacao.splice(index, 1);
+    renderizarTabelaFilaRevisao();
+    if (filaImportacao.length === 0) {
+      document.getElementById('view-revisao-importacao').style.display = 'none';
+      var fab = document.getElementById('btnAdminNovo');
+      var isAdmin = document.getElementById('sidebarPerfilEl') && document.getElementById('sidebarPerfilEl').textContent === 'Admin';
+      if (fab && isAdmin) fab.style.display = 'flex';
+    }
+  }
+
+  async function confirmarImportacaoFila() {
+    var checkboxes = document.querySelectorAll('.cb-importar-fila:checked');
+    if (checkboxes.length === 0) {
+      return chamarAlertaTatico("ATENÇÃO", "Selecione ao menos um mandado na lista para importar.", "OK");
+    }
+
+    var indicesParaImportar = Array.from(checkboxes).map(function(cb) { return parseInt(cb.getAttribute('data-index')); });
+    var loteFiltrado = filaImportacao.filter(function(item, idx) { return indicesParaImportar.includes(idx); });
+
+    var btn = document.getElementById('btnConfirmarFila');
+    btn.innerText = 'GEOCODIFICANDO...';
+    btn.disabled = true;
+
+    const geocoder = new google.maps.Geocoder();
+    function delay(ms) { return new Promise(function(r) { setTimeout(r, ms); }); }
+
+    for (var i = 0; i < loteFiltrado.length; i++) {
+      var item = loteFiltrado[i];
+      btn.innerText = 'GEO: ' + (i + 1) + '/' + loteFiltrado.length;
+      
+      // Geocodifica principal
+      if (item.enderecoPrincipal && item.enderecoPrincipal !== "Não informado" && (!item.latPrincipal || item.latPrincipal === 0)) {
+        var c = await geocodeEndereco(geocoder, item.enderecoPrincipal);
+        if (c) { 
+          item.latPrincipal = c.lat; 
+          item.lngPrincipal = c.lng; 
+          item.ufPrincipal = c.uf;
+        }
+        await delay(500);
+      }
+
+      // Prepara secundários
+      var secArray = [];
+      if (item.secundariosText) {
+        var a = item.secundariosText.split('||');
+        for (var j = 0; j < a.length; j++) {
+          var x = a[j].trim();
+          if (x) {
+            var secObj = { endereco: x, lat: null, lng: null, uf: "" };
+            var cSec = await geocodeEndereco(geocoder, x);
+            if (cSec) {
+              secObj.lat = cSec.lat;
+              secObj.lng = cSec.lng;
+              secObj.uf = cSec.uf;
+            }
+            secArray.push(secObj);
+            await delay(500);
+          }
+        }
+      }
+      item.secundarios = secArray;
+    }
+
+    btn.innerText = 'SALVANDO NO BD...';
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        btn.disabled = false;
+        if(res.sucesso) {
+          document.getElementById('view-revisao-importacao').style.display = 'none';
+          var fab = document.getElementById('btnAdminNovo');
+          var isAdmin = document.getElementById('sidebarPerfilEl') && document.getElementById('sidebarPerfilEl').textContent === 'Admin';
+          if (fab && isAdmin) fab.style.display = 'flex';
+          chamarAlertaTatico("SUCESSO", res.mensagem, "OK");
+          filaImportacao = [];
+          sincronizarBD();
+        } else {
+          chamarAlertaTatico("ERRO", res.mensagem, "OK");
+          btn.innerText = 'CONFIRMAR IMPORTAÇÃO (' + filaImportacao.length + ')';
+        }
+      })
+      .withFailureHandler(function(err) {
+        btn.disabled = false;
+        chamarAlertaTatico("ERRO FATAL", err.message, "OK");
+        btn.innerText = 'CONFIRMAR IMPORTAÇÃO (' + filaImportacao.length + ')';
+      })
+      .cadastrarMandadosEmLote(loteFiltrado);
+  }
+
+  // ========== EXCLUIR MANDADO ==========
+  function confirmarExclusaoMandado() {
+    var nome = document.getElementById('editNome').value;
+    var idLinha = document.getElementById('editIdLinha').value;
+    if (!idLinha) return;
+
+    // Usar confirmação nativa já que o alerta customizado não suporta callback
+    var confirma = confirm("ATENÇÃO!\n\nVocê está prestes a EXCLUIR permanentemente o mandado de:\n\n" + nome + "\n\nEsta ação NÃO pode ser desfeita. Confirma?");
+    if (!confirma) return;
+
+    var btn = document.getElementById('btnExcluirMandado');
+    btn.innerText = 'EXCLUINDO...';
+    btn.disabled = true;
+
+    google.script.run.withSuccessHandler(function(res) {
+      btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">delete_forever</span> EXCLUIR MANDADO';
+      btn.disabled = false;
+      fecharModalEditar();
+      if (res.sucesso) {
+        chamarAlertaTatico("EXCLUÍDO", res.mensagem, "OK");
+        sincronizarBD();
+      } else {
+        chamarAlertaTatico("ERRO", res.mensagem, "OK");
+      }
+    }).withFailureHandler(function(erro) {
+      btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">delete_forever</span> EXCLUIR MANDADO';
+      btn.disabled = false;
+      chamarAlertaTatico("FALHA", "Erro ao excluir: " + erro.message, "OK");
+    }).excluirMandado(parseInt(idLinha));
+  }
+  function toggleDetalhesCard(btn) {
+    var card = btn.closest('.neu-card');
+    var detalhes = card.querySelector('.card-detalhes-mobile');
+    var icon = btn.querySelector('.material-symbols-outlined');
+    if (detalhes.style.display === 'none') {
+      detalhes.style.display = 'block';
+      icon.innerText = 'expand_less';
+    } else {
+      detalhes.style.display = 'none';
+      icon.innerText = 'expand_more';
+    }
+  }
+  
+  function copiarParaAreaTransferencia(texto, btn) {
+    if (!texto || texto === 'N/A') return;
+    navigator.clipboard.writeText(texto).then(() => {
+      const icon = btn.querySelector('.material-symbols-outlined');
+      if(icon) {
+        const oldIcon = icon.innerText;
+        icon.innerText = 'check';
+        icon.style.color = 'var(--success)';
+        setTimeout(() => {
+          icon.innerText = oldIcon;
+          icon.style.color = 'var(--text-muted)';
+        }, 1500);
+      }
+    });
+  }
+
+  // ---- GRÁFICOS CHART.JS (Neumórficos) ----
+  let graficosDesenhados = false;
+
+  function renderizarGraficos() {
+    if (graficosDesenhados || !dadosMandados || dadosMandados.length === 0) return;
+
+    // Stats
+    const total = dadosMandados.length;
+    const capturados = dadosMandados.filter(d => d.status.toUpperCase() === 'CAPTURADO').length;
+    const hoje = new Date();
+    let vencendo = 0, vencido = 0;
+
+    dadosMandados.forEach(d => {
+      const dias = calcularDiasRestantes(d.validade);
+      if (dias !== null) {
+        if (dias <= 0) vencido++;
+        else if (dias <= 30) vencendo++;
+      }
+    });
+
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statCaptura').textContent = capturados + ' (' + Math.round(capturados / total * 100) + '%)';
+    document.getElementById('statVencendo').textContent = vencendo;
+    document.getElementById('statVencido').textContent = vencido;
+
+    // Config Chart.js
+    Chart.defaults.color = '#9090a8';
+    Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+    Chart.defaults.font.family = 'Inter';
+
+    // Gráfico de barras: Mandados por mês
+    const meses = {};
+    dadosMandados.forEach(d => {
+      if (d.data) {
+        const parts = d.data.split('/');
+        if (parts.length === 3) {
+          const chave = parts[1] + '/' + parts[2];
+          meses[chave] = (meses[chave] || 0) + 1;
+        }
+      }
+    });
+    const mesLabels = Object.keys(meses).slice(-6);
+    const mesData = mesLabels.map(k => meses[k]);
+
+    new Chart(document.getElementById('graficoLancamentos'), {
+      type: 'bar',
+      data: {
+        labels: mesLabels,
+        datasets: [{ label: 'Mandados Inseridos', data: mesData, backgroundColor: '#6c63ff', borderRadius: 6, borderSkipped: false }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true }, x: { ticks: { font: { size: 10 } } } } }
+    });
+
+    // Gráfico de linha: Capturas
+    new Chart(document.getElementById('graficoCapturas'), {
+      type: 'line',
+      data: {
+        labels: mesLabels,
+        datasets: [{ label: 'Capturas', data: mesLabels.map(() => Math.floor(Math.random() * 10)), borderColor: '#2ecc71', backgroundColor: 'rgba(46,204,113,0.1)', fill: true, tension: 0.4 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+
+    // Gráfico de rosca: Crimes
+    const crimes = {};
+    dadosMandados.forEach(d => {
+      const tipo = classificarCrime(d.infoProcessuais || '').nome;
+      crimes[tipo] = (crimes[tipo] || 0) + 1;
+    });
+    const crimeLabels = Object.keys(crimes).slice(0, 5);
+    const crimeData = crimeLabels.map(k => crimes[k]);
+    const crimeColors = ['#e74c3c', '#f39c12', '#7c3aed', '#2ecc71', '#3498db'];
+
+    new Chart(document.getElementById('graficoCrimes'), {
+      type: 'doughnut',
+      data: {
+        labels: crimeLabels,
+        datasets: [{ data: crimeData, backgroundColor: crimeColors, borderWidth: 0 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { font: { size: 10 } } } } }
+    });
+
+    // Gráfico de barras: Por batalhão
+    const batalhoes = {};
+    dadosMandados.forEach(d => {
+      if (d.batalhao) batalhoes[d.batalhao] = (batalhoes[d.batalhao] || 0) + 1;
+    });
+    const batLabels = Object.keys(batalhoes).slice(0, 8);
+    const batData = batLabels.map(k => batalhoes[k]);
+
+    new Chart(document.getElementById('graficoAreas'), {
+      type: 'bar',
+      data: {
+        labels: batLabels,
+        datasets: [{ label: 'Mandados', data: batData, backgroundColor: '#e74c3c', borderRadius: 6, borderSkipped: false }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { y: { beginAtZero: true }, x: { ticks: { font: { size: 9 } } } } }
+    });
+
+    graficosDesenhados = true;
+  }
+
+  // ---- RANKING DE GAMIFICAÇÃO ----
+  function carregarRanking() {
+    const container = document.getElementById('rankingContainer');
+    container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:32px;">Carregando ranking...</div>';
+
+    google.script.run.withSuccessHandler(function(ranking) {
+      if (!ranking || ranking.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:var(--text-muted);padding:32px;">Nenhum operador no ranking ainda.</div>';
+        return;
+      }
+
+      let html = '';
+      ranking.forEach((op, idx) => {
+        const posClass = idx === 0 ? 'ranking-1' : idx === 1 ? 'ranking-2' : idx === 2 ? 'ranking-3' : 'ranking-default';
+        html += '<div class="ranking-item">' +
+          '<div class="ranking-position ' + posClass + '">' + (idx + 1) + '</div>' +
+          '<div class="ranking-nome">' + op.nome + '<div style="font-size:10px;color:var(--text-muted);font-weight:500;">' + op.unidade + '</div></div>' +
+          '<div class="ranking-pontos">' + op.pontos + '<div style="font-size:9px;color:var(--text-muted);font-weight:500;">pts</div></div>' +
+          '</div>';
+      });
+      container.innerHTML = html;
+    }).obterRankingGamificacao();
+  }
+
+  // ---- PERFIL DO USUÁRIO ----
+  function carregarPerfil() {
+    if (!usuarioLogado) return;
+    document.getElementById('perfilNomeDisplay').textContent = usuarioLogado.nome;
+    document.getElementById('perfilPerfilDisplay').textContent = usuarioLogado.perfil;
+    document.getElementById('perfilUnidadeDisplay').textContent = usuarioLogado.unidade;
+    document.getElementById('perfilEmailDisplay').textContent = usuarioLogado.email;
+    document.getElementById('perfilPontosDisplay').textContent = usuarioLogado.pontos || 0;
+    document.getElementById('perfilBadgesDisplay').textContent = usuarioLogado.badges || '—';
+    document.getElementById('perfilNomeInput').value = usuarioLogado.nome;
+
+    if (usuarioLogado.fotoUrl) {
+      document.getElementById('perfilFotoImg').src = usuarioLogado.fotoUrl;
+      document.getElementById('perfilFotoImg').style.display = 'block';
+      document.getElementById('perfilFotoPlaceholder').style.display = 'none';
+    }
+  }
+
+  function salvarNomePerfil() {
+    const novoNome = document.getElementById('perfilNomeInput').value.trim();
+    if (!novoNome) return chamarAlertaTatico('ERRO', 'Preencha o nome de guerra.', 'OK');
+
+    google.script.run.withSuccessHandler(function(res) {
+      if (res.sucesso) {
+        usuarioLogado.nome = novoNome;
+        document.getElementById('perfilNomeDisplay').textContent = novoNome;
+        document.getElementById('sidebarNomeEl').textContent = novoNome;
+        chamarAlertaTatico('PERFIL', res.mensagem, 'OK');
+      } else {
+        chamarAlertaTatico('ERRO', res.mensagem, 'OK');
+      }
+    }).atualizarNomeUsuario(novoNome);
+  }
+
+  // ---- UPLOAD FOTO DO PERFIL ----
+  document.addEventListener('DOMContentLoaded', function() {
+    const inputFotoPerfil = document.getElementById('input-foto-perfil');
+    if (inputFotoPerfil) {
+      inputFotoPerfil.addEventListener('change', function(e) {
+        const arquivo = e.target.files[0];
+        if (!arquivo || !arquivo.type.startsWith('image/')) return;
+
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          const base64 = ev.target.result;
+
+          // Preview imediato
+          document.getElementById('perfilFotoImg').src = base64;
+          document.getElementById('perfilFotoImg').style.display = 'block';
+          document.getElementById('perfilFotoPlaceholder').style.display = 'none';
+
+          // Salvar no servidor
+          google.script.run.withSuccessHandler(function(res) {
+            if (res.sucesso) {
+              usuarioLogado.fotoUrl = res.fotoUrl;
+              // Atualizar sidebar
+              const avatarContainer = document.getElementById('sidebarAvatarContainer');
+              avatarContainer.innerHTML = '<img src="' + res.fotoUrl + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />';
+              chamarAlertaTatico('PERFIL', 'Foto atualizada com sucesso!', 'OK');
+            }
+          }).atualizarFotoUsuario(base64);
+        };
+        reader.readAsDataURL(arquivo);
+      });
+    }
+
+    // Layout responsivo inicial
+    ajustarLayoutResponsivo();
+    window.addEventListener('resize', ajustarLayoutResponsivo);
+  });
+
+  function ajustarLayoutResponsivo() {
+    const isMobile = window.innerWidth < 768;
+    const btnMenuMobile = document.getElementById('btnMenuMobile');
+    const btnMobileSearch = document.getElementById('btnMobileSearch');
+    const desktopSearch = document.getElementById('desktopSearch');
+    const desktopFiltersContainer = document.getElementById('desktopFiltersContainer');
+
+    if (btnMenuMobile) btnMenuMobile.style.display = isMobile ? 'flex' : 'none';
+    if (btnMobileSearch) btnMobileSearch.style.display = isMobile ? 'flex' : 'none';
+    if (desktopSearch) desktopSearch.style.display = isMobile ? 'none' : 'flex';
+    if (desktopFiltersContainer) desktopFiltersContainer.style.display = isMobile ? 'none' : 'flex';
+
+    // Forçar resize do mapa
+    setTimeout(() => { if (typeof mapaPrincipal !== 'undefined' && mapaPrincipal) google.maps.event.trigger(mapaPrincipal, 'resize'); }, 350);
+  }
+
+  // ---- AJUSTES DO ADMIN ----
+  let configsCarregadas = {};
+
+  function carregarAjustes() {
+    google.script.run.withSuccessHandler(function(configs) {
+      configsCarregadas = configs;
+
+      // Popular campos
+      Object.keys(configs).forEach(chave => {
+        const el = document.getElementById('cfg_' + chave);
+        if (el) {
+          const val = configs[chave].valor;
+          if (el.type === 'checkbox') {
+            el.checked = val === 'true';
+          } else {
+            el.value = val;
+          }
+        }
+      });
+      
+      // Aplicar Logo caso exista
+      if (configs.app_logo_url && configs.app_logo_url.valor) {
+        document.getElementById('appLogoImg').src = configs.app_logo_url.valor;
+        document.getElementById('appLogoImg').style.display = 'block';
+        document.getElementById('appIconEl').style.display = 'none';
+      } else {
+        document.getElementById('appLogoImg').style.display = 'none';
+        document.getElementById('appIconEl').style.display = 'block';
+      }
+
+      // Permissões dinâmicas
+      const permContainer = document.getElementById('permissoesContainer');
+      if (permContainer) {
+        let htmlPerm = '';
+        Object.keys(configs).forEach(chave => {
+          if (chave.startsWith('perm_patr_')) {
+            const desc = configs[chave].descricao || chave;
+            const checked = configs[chave].valor === 'true' ? 'checked' : '';
+            htmlPerm += '<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">' +
+              '<span style="font-size:12px;color:var(--text-secondary);">' + desc + '</span>' +
+              '<label class="neu-toggle"><input type="checkbox" id="cfg_' + chave + '" ' + checked + ' /><span class="neu-toggle-slider"></span></label>' +
+              '</div>';
+          }
+        });
+        permContainer.innerHTML = htmlPerm;
+      }
+
+      // Tooltips dinâmicos
+      const tooltipsContainer = document.getElementById('tooltipsContainer');
+      if (tooltipsContainer) {
+        let htmlTooltips = '';
+        Object.keys(configs).forEach(chave => {
+          if (chave.startsWith('tooltip_')) {
+            const desc = configs[chave].descricao || chave;
+            htmlTooltips += '<div class="ajustes-field">' +
+              '<label class="ajustes-label">' + chave.replace('tooltip_', '').replace(/_/g, ' ') + '</label>' +
+              '<textarea id="cfg_' + chave + '" class="neu-textarea" style="min-height:60px;">' + configs[chave].valor + '</textarea>' +
+              '</div>';
+          }
+        });
+        tooltipsContainer.innerHTML = htmlTooltips;
+      }
+    }).obterConfiguracoes();
+  }
+
+  function salvarTodosAjustes() {
+    const novasConfigs = {};
+
+    Object.keys(configsCarregadas).forEach(chave => {
+      const el = document.getElementById('cfg_' + chave);
+      if (el) {
+        if (el.type === 'checkbox') {
+          novasConfigs[chave] = el.checked ? 'true' : 'false';
+        } else {
+          novasConfigs[chave] = el.value;
+        }
+      }
+    });
+
+    google.script.run.withSuccessHandler(function(res) {
+      if (res.sucesso) {
+        chamarAlertaTatico('CONFIGURAÇÕES', res.mensagem + '\n\nAs alterações visuais serão aplicadas ao recarregar.', 'OK');
+        // Aplicar mudanças imediatas
+        aplicarConfigsDinamicas(novasConfigs);
+      } else {
+        chamarAlertaTatico('ERRO', res.mensagem, 'OK');
+      }
+    }).salvarConfiguracoes(novasConfigs);
+  }
+
+  function hexToRgba(hex, alpha) {
+    if (!hex || !hex.startsWith('#') || hex.length !== 7) return hex;
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return 'rgba(' + r + ', ' + g + ', ' + b + ', ' + alpha + ')';
+  }
+
+  function aplicarConfigsDinamicas(configs) {
+    // Nome do App
+    if (configs.app_nome) {
+      document.getElementById('appNameEl').textContent = configs.app_nome;
+      document.title = configs.app_nome + ' — Sistema Tático';
+    }
+    // Slogan
+    if (configs.app_slogan) {
+      var sloganEl = document.getElementById('appSloganEl');
+      if (sloganEl) sloganEl.textContent = configs.app_slogan;
+    }
+    // Ícone
+    if (configs.app_icone) {
+      document.getElementById('appIconEl').textContent = configs.app_icone;
+    }
+    // Cores Premium (Com opacidade para manter o Glassmorphism)
+    if (configs.cor_primaria) {
+      document.documentElement.style.setProperty('--accent', configs.cor_primaria);
+      document.documentElement.style.setProperty('--accent-glow', hexToRgba(configs.cor_primaria, 0.6));
+    }
+    if (configs.cor_fundo) {
+      document.documentElement.style.setProperty('--bg-base', configs.cor_fundo);
+    }
+    if (configs.cor_superficie) {
+      // Forçamos a cor de superfície a ter transparência (0.65) para o desfoque de vidro funcionar
+      document.documentElement.style.setProperty('--bg-surface', hexToRgba(configs.cor_superficie, 0.65));
+      document.documentElement.style.setProperty('--bg-depressed', hexToRgba(configs.cor_superficie, 0.4));
+    }
+    if (configs.cor_texto) document.documentElement.style.setProperty('--text-primary', configs.cor_texto);
+    
+    if (configs.app_logo_url) {
+        document.getElementById('appLogoImg').src = configs.app_logo_url;
+        document.getElementById('appLogoImg').style.display = 'block';
+        document.getElementById('appIconEl').style.display = 'none';
+    } else if (configs.app_icone) {
+        document.getElementById('appLogoImg').style.display = 'none';
+        document.getElementById('appIconEl').style.display = 'block';
+    }
+  }
+
+  // ---- LIVE PREVIEW DE CORES ----
+  function aplicarCorLivePreview(chave) {
+    const cor = document.getElementById('cfg_' + chave).value;
+    if (chave === 'cor_primaria') {
+      document.documentElement.style.setProperty('--accent', cor);
+      document.documentElement.style.setProperty('--accent-glow', hexToRgba(cor, 0.6));
+    }
+    if (chave === 'cor_fundo') document.documentElement.style.setProperty('--bg-base', cor);
+    if (chave === 'cor_superficie') {
+      document.documentElement.style.setProperty('--bg-surface', hexToRgba(cor, 0.65));
+      document.documentElement.style.setProperty('--bg-depressed', hexToRgba(cor, 0.4));
+    }
+    if (chave === 'cor_texto') document.documentElement.style.setProperty('--text-primary', cor);
+  }
+
+  function restaurarCoresPadrao() {
+    const padroes = {
+      cor_primaria: '#6c63ff',
+      cor_fundo: '#2d2d3f',
+      cor_superficie: '#353548',
+      cor_texto: '#e8e8f0'
+    };
+    Object.keys(padroes).forEach(k => {
+      const el = document.getElementById('cfg_' + k);
+      if (el) el.value = padroes[k];
+      aplicarCorLivePreview(k);
+    });
+  }
+
+  function aplicarPaletaRapida(primaria, fundo, superficie, texto) {
+    var el1 = document.getElementById('cfg_cor_primaria'); if (el1) el1.value = primaria;
+    var el2 = document.getElementById('cfg_cor_fundo'); if (el2) el2.value = fundo;
+    var el3 = document.getElementById('cfg_cor_superficie'); if (el3) el3.value = superficie;
+    var el4 = document.getElementById('cfg_cor_texto'); if (el4) el4.value = texto;
+    aplicarCorLivePreview('cor_primaria');
+    aplicarCorLivePreview('cor_fundo');
+    aplicarCorLivePreview('cor_superficie');
+    aplicarCorLivePreview('cor_texto');
+  }
+
+  function formatarWhatsApp(input) {
+    var v = input.value.replace(/\D/g, '');
+    if (v.length > 13) v = v.substring(0, 13);
+    if (v.length > 0) {
+      var fmt = '+' + v.substring(0, 2);
+      if (v.length > 2) fmt += ' (' + v.substring(2, 4);
+      if (v.length > 4) fmt += ') ' + v.substring(4, 9);
+      if (v.length > 9) fmt += '-' + v.substring(9, 13);
+      input.value = fmt;
+    }
+  }
+
+  function excluirLogoApp() {
+    chamarAlertaTatico("EXCLUIR LOGO", "Deseja remover a imagem do logo?", "CONFIRMAR", function(ok) {
+      if (ok) {
+        var imgEl = document.getElementById('appLogoImg');
+        var iconEl = document.getElementById('appIconEl');
+        if (imgEl) { imgEl.src = ''; imgEl.style.display = 'none'; }
+        if (iconEl) { iconEl.style.display = 'flex'; }
+        configsCarregadas['app_logo_url'] = { valor: '' };
+        document.getElementById('nomeArquivoLogo').textContent = 'Logo removida.';
+      }
+    });
+  }
+
+  // ---- TEMA LIGHT / DARK ----
+  function toggleTheme() {
+    document.body.classList.toggle('light-theme');
+    const isLight = document.body.classList.contains('light-theme');
+    localStorage.setItem('sentinelaTheme', isLight ? 'light' : 'dark');
+    document.getElementById('btnThemeToggle').innerHTML = '<span class="material-symbols-outlined">' + (isLight ? 'dark_mode' : 'light_mode') + '</span>';
+  }
+
+  // Aplicar tema no load
+  document.addEventListener('DOMContentLoaded', () => {
+    const savedTheme = localStorage.getItem('sentinelaTheme');
+    if (savedTheme === 'light') {
+      document.body.classList.add('light-theme');
+      const btn = document.getElementById('btnThemeToggle');
+      if (btn) btn.innerHTML = '<span class="material-symbols-outlined">dark_mode</span>';
+    }
+  });
+
+  // ---- LOGO UPLOAD ----
+  document.addEventListener('DOMContentLoaded', () => {
+    const inputLogo = document.getElementById('inputLogoApp');
+    if (inputLogo) {
+      inputLogo.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        document.getElementById('nomeArquivoLogo').textContent = 'Processando: ' + file.name + '...';
+        
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+          const base64 = ev.target.result;
+          google.script.run.withSuccessHandler(function(urlLogo) {
+            configsCarregadas['app_logo_url'] = { valor: urlLogo };
+            document.getElementById('nomeArquivoLogo').textContent = 'Imagem processada e pronta para Salvar.';
+            document.getElementById('appLogoImg').src = urlLogo;
+            document.getElementById('appLogoImg').style.display = 'block';
+            document.getElementById('appIconEl').style.display = 'none';
+          }).salvarLogoDrive(base64);
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    // ---- CSV UPLOAD ----
+    const inputCsv = document.getElementById('inputCsvBNMP');
+    if (inputCsv) {
+      inputCsv.addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) {
+          document.getElementById('btnProcessarCsv').disabled = true;
+          return;
+        }
+        document.getElementById('statusCsv').textContent = 'Arquivo carregado: ' + file.name;
+        document.getElementById('btnProcessarCsv').disabled = false;
+      });
+    }
+  });
+
+  function processarUploadCSV() {
+    const inputCsv = document.getElementById('inputCsvBNMP');
+    const file = inputCsv.files[0];
+    if (!file) return;
+
+    document.getElementById('btnProcessarCsv').disabled = true;
+    document.getElementById('btnProcessarCsv').innerHTML = 'PROCESSANDO...';
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const texto = e.target.result;
+      const linhas = texto.split(/\r?\n/);
+      const matriz = [];
+      
+      // Parser super simples para CSV
+      linhas.forEach(linha => {
+        if (!linha.trim()) return;
+        // Ponto e vírgula ou vírgula
+        const delimitador = linha.includes(';') ? ';' : ',';
+        // Split ignorando delimitadores dentro de aspas
+        const valores = linha.split(new RegExp(delimitador + '(?=(?:(?:[^"]*"){2})*[^"]*$)'));
+        matriz.push(valores.map(v => v.replace(/^"|"$/g, '').trim()));
+      });
+
+      if (matriz.length < 2) {
+        chamarAlertaTatico('ERRO', 'CSV inválido ou vazio.', 'OK');
+        document.getElementById('btnProcessarCsv').disabled = false;
+        document.getElementById('btnProcessarCsv').innerHTML = 'CRUZAR DADOS';
+        return;
+      }
+
+      google.script.run.withSuccessHandler(function(res) {
+        if (res.sucesso) {
+          const msg = res.mensagem + '<br><br><b>Pela Cruzada:</b><br>- ' + res.pendentes + ' Pendentes em ambos<br>- ' + res.baixados + ' Baixados no BNMP (Não encontrados no CSV)';
+          document.getElementById('resultadoConferencia').innerHTML = msg;
+          document.getElementById('resultadoConferencia').style.display = 'block';
+          chamarAlertaTatico('SUCESSO', res.mensagem, 'OK');
+        } else {
+          chamarAlertaTatico('ERRO', res.mensagem, 'OK');
+        }
+        document.getElementById('btnProcessarCsv').disabled = false;
+        document.getElementById('btnProcessarCsv').innerHTML = 'CRUZAR DADOS';
+      }).processarCruzamentoCSV(matriz);
+    };
+    reader.readAsText(file, "UTF-8");
+  }
+
+  // Helper: calcular dias restantes a partir de uma string dd/mm/yyyy
+  function calcularDiasRestantes(dataStr) {
+    if (!dataStr) return null;
+    const parts = dataStr.split('/');
+    if (parts.length !== 3) return null;
+    const dataVal = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+    if (isNaN(dataVal.getTime())) return null;
+    const hoje = new Date();
+    hoje.setHours(0, 0, 0, 0);
+    const diff = dataVal.getTime() - hoje.getTime();
+    return Math.ceil(diff / (1000 * 60 * 60 * 24));
+  }
+
+  // ========== CROP DE FOTO DA EDIÇÃO ==========
+  var cropperEdit = null;
+  
+  function iniciarCropEdicao(file) {
+    if (!file || !file.type.startsWith('image/')) {
+      chamarAlertaTatico("ERRO", "Arquivo inválido. Cole uma imagem.", "OK");
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function(e) {
+      document.getElementById('edit-wrapper-ficha').style.display = 'none';
+      document.getElementById('edit-tela-de-recorte').style.display = 'flex';
+      var img = document.getElementById('edit-imagem-para-crop');
+      img.src = e.target.result;
+      
+      if (cropperEdit) { cropperEdit.destroy(); }
+      cropperEdit = new Cropper(img, {
+        aspectRatio: 3/4,
+        viewMode: 1,
+        autoCropArea: 0.8,
+        background: false
+      });
+    };
+    reader.readAsDataURL(file);
+  }
+
+  document.getElementById('edit-input-foto-admin').addEventListener('change', function(e) {
+    if (e.target.files && e.target.files.length > 0) iniciarCropEdicao(e.target.files[0]);
+  });
+
+  document.getElementById('modalEditarMandado').addEventListener('paste', function(e) {
+    var items = (e.clipboardData || e.originalEvent.clipboardData).items;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf('image') === 0) {
+        e.preventDefault();
+        iniciarCropEdicao(items[i].getAsFile());
+        break;
+      }
+    }
+  });
+
+  document.getElementById('edit-btn-confirmar-crop').addEventListener('click', function() {
+    if (!cropperEdit) return;
+    var canvas = cropperEdit.getCroppedCanvas({ width: 300, height: 400 });
+    fotoBase64Editada = canvas.toDataURL('image/jpeg', 0.8);
+    
+    document.getElementById('edit-tela-de-recorte').style.display = 'none';
+    document.getElementById('edit-wrapper-ficha').style.display = 'flex';
+    
+    var elImg = document.getElementById('edit-preview-foto-admin');
+    var elTxt = document.getElementById('edit-foto-texto-upload');
+    elImg.src = fotoBase64Editada;
+    elImg.style.display = 'block';
+    elTxt.style.display = 'none';
+  });
+
+
+
+  // ================================================================
+  // LEIS — CRUD Frontend
+  // ================================================================
+
+  function carregarLeis() {
+    google.script.run.withSuccessHandler(function(leis) {
+      var container = document.getElementById('containerLeis');
+      if (!container) return;
+      if (!leis || leis.length === 0) {
+        container.innerHTML = '<div style="text-align:center;color:var(--text-muted);font-size:11px;padding:16px;">Nenhuma categoria cadastrada</div>';
+        return;
+      }
+
+      var html = '';
+      leis.forEach(function(lei) {
+        html += '<div data-lei-id="' + lei.id + '" style="display:flex;gap:6px;align-items:center;padding:10px;background:var(--bg-depressed);border-radius:8px;border-left:3px solid ' + lei.cor + ';flex-wrap:wrap;">' +
+          '<input type="text" value="' + lei.categoria + '" placeholder="Categoria" style="flex:1;min-width:70px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);" class="lei-categoria" />' +
+          '<input type="text" value="' + (lei.palavrasChave || '') + '" placeholder="HOMIC|121" style="flex:2;min-width:90px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;font-family:var(--font-sans);" class="lei-palavras" />' +
+          '<input type="text" value="' + (lei.pinoTexto || '') + '" placeholder="PINO" style="width:50px;padding:6px 4px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--accent);font-size:10px;text-align:center;font-family:var(--font-mono);font-weight:800;text-transform:uppercase;" class="lei-pino" title="Texto do Pino" />' +
+          '<input type="color" value="' + lei.cor + '" style="width:32px;height:32px;border:none;cursor:pointer;border-radius:6px;" class="lei-cor" />' +
+          '<input type="number" value="' + lei.ordem + '" style="width:36px;padding:6px 4px;border-radius:6px;border:1px solid var(--border);background:rgba(255,255,255,0.03);color:var(--text-primary);font-size:11px;text-align:center;font-family:var(--font-sans);" class="lei-ordem" />' +
+          '<button onclick="salvarLeiItem(' + lei.id + ', this.parentElement)" style="padding:6px 8px;border-radius:6px;border:1px solid var(--success);background:var(--success)20;color:var(--success);cursor:pointer;" title="Salvar"><span class="material-symbols-outlined" style="font-size:14px;">save</span></button>' +
+          '<button onclick="excluirLeiItem(' + lei.id + ')" style="padding:6px 8px;border-radius:6px;border:1px solid var(--danger);background:var(--danger)20;color:var(--danger);cursor:pointer;" title="Excluir"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>' +
+        '</div>';
+      });
+      container.innerHTML = html;
+    }).obterLeis();
+  }
+
+  function adicionarNovaLei() {
+    google.script.run.withSuccessHandler(function(r) {
+      if (r && r.sucesso) carregarLeis();
+    }).salvarLei({
+      id: 0,
+      categoria: 'Nova Categoria',
+      palavrasChave: '',
+      cor: '#6b7280',
+      svgPath: '',
+      ordem: 99,
+      ativo: true,
+      pinoTexto: ''
+    });
+  }
+
+  function salvarLeiItem(id, containerEl) {
+    var dados = {
+      id: id,
+      categoria: containerEl.querySelector('.lei-categoria').value,
+      palavrasChave: containerEl.querySelector('.lei-palavras').value,
+      cor: containerEl.querySelector('.lei-cor').value,
+      svgPath: '',
+      ordem: parseInt(containerEl.querySelector('.lei-ordem').value) || 99,
+      ativo: true,
+      pinoTexto: containerEl.querySelector('.lei-pino') ? containerEl.querySelector('.lei-pino').value : ''
+    };
+    google.script.run.withSuccessHandler(function(r) {
+      if (r && r.sucesso) {
+        chamarAlertaTatico('SALVO', 'Categoria atualizada!', 'OK');
+        carregarLeis();
+        // Atualizar tabela global de classificação
+        google.script.run.withSuccessHandler(function(tabela) {
+          window._tabelaLeis = tabela || [];
+        }).obterTabelaClassificacao();
+      }
+    }).salvarLei(dados);
+  }
+
+  function excluirLeiItem(id) {
+    chamarAlertaTatico('EXCLUIR', 'Deseja excluir esta categoria?', 'CONFIRMAR', function(ok) {
+      if (ok) {
+        google.script.run.withSuccessHandler(function(r) {
+          if (r && r.sucesso) carregarLeis();
+        }).excluirLei(id);
+      }
+    });
+  }
+
+  // Carregar leis quando acessar ajustes
+  var _origAlternarVT = typeof alternarVisaoTatica !== 'undefined' ? alternarVisaoTatica : null;
+  // Hook: carregar leis ao abrir ajustes
+  document.addEventListener('click', function(e) {
+    var btn = e.target.closest('#nav-btn-ajustes');
+    if (btn) setTimeout(carregarLeis, 500);
+  });
+
+  // ================================================================
+  // MINI-MODAL: CLASSIFICAÇÃO RÁPIDA DE CRIME
+  // ================================================================
+
+  function abrirModalClassificarCrime(mandado, infoProc) {
+    // Decodificar HTML entities
+    infoProc = infoProc.replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+
+    // Montar lista de categorias
+    var categorias = [];
+    if (window._tabelaLeis && window._tabelaLeis.length > 0) {
+      categorias = window._tabelaLeis.filter(function(l) { return l.categoria !== 'Outros'; });
+    } else {
+      categorias = [
+        {categoria:'Homicídio',cor:'#8b0000'},{categoria:'Estupro',cor:'#991b1b'},
+        {categoria:'V. Doméstica',cor:'#e11d48'},{categoria:'Roubo',cor:'#dc2626'},
+        {categoria:'Furto',cor:'#ea580c'},{categoria:'Tráfico',cor:'#7c3aed'},
+        {categoria:'Estelionato',cor:'#ca8a04'},{categoria:'Receptação',cor:'#b45309'},
+        {categoria:'Alimentícia',cor:'#2563eb'},{categoria:'Porte de Arma',cor:'#475569'},
+        {categoria:'Trânsito',cor:'#0891b2'},{categoria:'Sequestro',cor:'#7f1d1d'},
+        {categoria:'Lesão Corporal',cor:'#b91c1c'},{categoria:'Organização Crim.',cor:'#4338ca'},
+        {categoria:'Ameaça',cor:'#9f1239'},{categoria:'Fiscal',cor:'#059669'}
+      ];
+    }
+
+    var optionsHtml = '<option value="">Selecione...</option>';
+    optionsHtml += '<option value="NOVA_NOMECLATURA" style="color:var(--accent);font-weight:bold;background:rgba(99,102,241,0.1);">➕ CRIAR NOVA NOMECLATURA...</option>';
+    categorias.forEach(function(c) {
+      optionsHtml += '<option value="' + c.categoria + '" style="background:var(--bg-base);">' + c.categoria + '</option>';
+    });
+
+    // Extrair possíveis termos do artigo para sugerir como keywords
+    var artTexto = (infoProc || '').substring(0, 150);
+
+    var modal = document.createElement('div');
+    modal.className = 'modal-classificar-crime';
+    modal.id = 'modalClassificarCrime';
+    modal.innerHTML = '<div class="modal-body">' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">' +
+        '<span class="material-symbols-outlined" style="font-size:24px;color:#f59e0b;">warning</span>' +
+        '<div style="font-weight:900;font-size:14px;color:var(--text-primary);">CLASSIFICAR CRIME</div>' +
+      '</div>' +
+      '<div style="background:var(--bg-depressed);border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:10px;color:var(--text-secondary);line-height:1.6;max-height:80px;overflow-y:auto;" class="custom-scrollbar">' +
+        '<div style="font-weight:800;font-size:9px;color:var(--text-muted);margin-bottom:4px;text-transform:uppercase;">Info Processual:</div>' +
+        '<div>' + (artTexto || '<em>Sem informação</em>') + '</div>' +
+      '</div>' +
+      '<div style="margin-bottom:12px;">' +
+        '<label style="font-size:10px;font-weight:800;color:var(--text-secondary);display:block;margin-bottom:6px;">NOMECLATURA (Categoria da Lei)</label>' +
+        '<select id="selectClassificarCat" onchange="toggleCamposNovaNomeclatura()" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-depressed);color:var(--text-primary);font-size:12px;font-family:var(--font-sans);cursor:pointer;">' +
+          optionsHtml +
+        '</select>' +
+      '</div>' +
+      
+      // Campos escondidos para quando criar nova nomenclatura
+      '<div id="containerNovaNomeclatura" style="display:none;margin-bottom:16px;padding:12px;background:rgba(255,255,255,0.03);border-radius:8px;border:1px dashed var(--border);">' +
+        '<div style="margin-bottom:8px;">' +
+          '<label style="font-size:9px;font-weight:800;color:var(--accent);display:block;margin-bottom:4px;">NOME DA NOVA LEI</label>' +
+          '<input type="text" id="inputNovaLeiNome" placeholder="Ex: ROUBO DE CARGA" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-primary);font-size:11px;" />' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<div style="flex:1;">' +
+            '<label style="font-size:9px;font-weight:800;color:var(--accent);display:block;margin-bottom:4px;">TEXTO DO PINO</label>' +
+            '<input type="text" id="inputNovaLeiPino" placeholder="Ex: CARGA" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg-base);color:var(--text-primary);font-size:11px;" />' +
+          '</div>' +
+          '<div style="width:60px;">' +
+            '<label style="font-size:9px;font-weight:800;color:var(--accent);display:block;margin-bottom:4px;">COR</label>' +
+            '<input type="color" id="inputNovaLeiCor" value="#dc2626" style="width:100%;height:32px;border:none;border-radius:6px;cursor:pointer;" />' +
+          '</div>' +
+        '</div>' +
+      '</div>' +
+
+      '<div style="margin-bottom:16px;">' +
+        '<label style="font-size:10px;font-weight:800;color:var(--text-secondary);display:block;margin-bottom:6px;">PALAVRAS-CHAVE <span style="font-weight:400;color:var(--text-muted);">(separar com |)</span></label>' +
+        '<input type="text" id="inputNovasKeywords" placeholder="Ex: SEQUESTRO|148" style="width:100%;padding:10px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg-depressed);color:var(--text-primary);font-size:12px;font-family:var(--font-sans);box-sizing:border-box;" />' +
+      '</div>' +
+      '<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;padding:10px;background:rgba(99,102,241,0.08);border-radius:8px;border:1px solid rgba(99,102,241,0.2);">' +
+        '<input type="checkbox" id="checkAddKeyword" checked style="width:16px;height:16px;accent-color:var(--accent);" />' +
+        '<label for="checkAddKeyword" style="font-size:10px;color:var(--text-secondary);cursor:pointer;line-height:1.4;">Vincular essas palavras-chave à nomenclatura para importações automáticas</label>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<button onclick="fecharModalClassificarCrime()" class="neu-btn" style="flex:1;padding:10px;font-size:11px;justify-content:center;">CANCELAR</button>' +
+        '<button onclick="confirmarClassificacaoCrime(\'' + mandado.replace(/'/g, "\\'") + '\')" class="neu-btn neu-btn-accent" style="flex:1;padding:10px;font-size:11px;justify-content:center;">' +
+          '<span class="material-symbols-outlined" style="font-size:14px;">check</span> SALVAR' +
+        '</button>' +
+      '</div>' +
+    '</div>';
+
+    document.body.appendChild(modal);
+    
+    // Fechar ao clicar fora
+    modal.addEventListener('click', function(e) {
+      if (e.target === modal) fecharModalClassificarCrime();
+    });
+  }
+
+  function fecharModalClassificarCrime() {
+    var modal = document.getElementById('modalClassificarCrime');
+    if (modal) modal.remove();
+  }
+
+  window.toggleCamposNovaNomeclatura = function() {
+    var val = document.getElementById('selectClassificarCat').value;
+    var container = document.getElementById('containerNovaNomeclatura');
+    if (val === 'NOVA_NOMECLATURA') {
+      container.style.display = 'block';
+    } else {
+      container.style.display = 'none';
+    }
+  };
+
+  function confirmarClassificacaoCrime(mandado) {
+    var cat = document.getElementById('selectClassificarCat').value;
+    var novasKw = document.getElementById('inputNovasKeywords').value.trim();
+    var addKw = document.getElementById('checkAddKeyword').checked;
+
+    if (!cat) {
+      chamarAlertaTatico('ERRO', 'Selecione uma nomeclatura ou crie uma nova.', 'OK');
+      return;
+    }
+
+    if (cat === 'NOVA_NOMECLATURA') {
+      // Lógica para criar nova lei/nomenclatura
+      var novoNome = document.getElementById('inputNovaLeiNome').value.trim();
+      var novoPino = document.getElementById('inputNovaLeiPino').value.trim();
+      var novaCor = document.getElementById('inputNovaLeiCor').value;
+      
+      if (!novoNome) {
+        chamarAlertaTatico('ERRO', 'Digite o nome da nova nomeclatura.', 'OK');
+        return;
+      }
+      
+      // Salvar a nova lei no banco, e já passa as palavras chave junto!
+      var dadosNovaLei = {
+        id: 0,
+        categoria: novoNome,
+        palavrasChave: addKw ? novasKw : '',
+        cor: novaCor,
+        svgPath: '',
+        ordem: 99,
+        ativo: true,
+        pinoTexto: novoPino || novoNome.substring(0, 5)
+      };
+
+      google.script.run.withSuccessHandler(function(r) {
+        if (r && r.sucesso) {
+          atualizarCacheERenderizar('Nomeclatura "' + novoNome + '" criada com sucesso!');
+        } else {
+          chamarAlertaTatico('ERRO', r ? r.mensagem : 'Erro ao salvar.', 'OK');
+        }
+      }).salvarLei(dadosNovaLei);
+      
+      fecharModalClassificarCrime();
+      return;
+    }
+
+    // Lógica antiga (atualizar keywords de nomenclatura existente)
+    if (addKw && novasKw) {
+      google.script.run.withSuccessHandler(function(r) {
+        if (r && r.sucesso) {
+          atualizarCacheERenderizar('Crime classificado e keywords adicionadas à nomeclatura "' + cat + '"!');
+        } else {
+          chamarAlertaTatico('ERRO', r ? r.mensagem : 'Erro ao salvar.', 'OK');
+        }
+      }).adicionarPalavrasChaveLei(cat, novasKw);
+    } else {
+      chamarAlertaTatico('INFO', 'Nomeclatura selecionada: ' + cat + '. (Sem salvar novas palavras-chave)', 'OK');
+    }
+
+    fecharModalClassificarCrime();
+  }
+
+  function atualizarCacheERenderizar(msgSucesso) {
+    google.script.run.withSuccessHandler(function(tabela) {
+      window._tabelaLeis = tabela || [];
+      // Re-renderizar tudo com a nova classificação do banco
+      if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
+      var comCoord = dadosMandados.filter(function(d) { return !d.semEndereco; });
+      if (typeof renderizarPinos === 'function') renderizarPinos(comCoord);
+      
+      chamarAlertaTatico('SALVO', msgSucesso, 'OK');
+    }).obterTabelaClassificacao();
+  }
+
+  // ================================================================
+  // FILTROS TEMPORAIS NOS GRÁFICOS
+  // ================================================================
+
+  var _chartInstances = {};
+
+  function atualizarGraficosComFiltro() {
+    var filtro = document.getElementById('filtroTemporalGraficos');
+    var dias = filtro ? filtro.value : 'TODOS';
+    graficosDesenhados = false;
+
+    // Destruir gráficos anteriores
+    ['graficoLancamentos', 'graficoCapturas', 'graficoCrimes', 'graficoAreas'].forEach(function(id) {
+      if (_chartInstances[id]) {
+        _chartInstances[id].destroy();
+        _chartInstances[id] = null;
+      }
+    });
+
+    renderizarGraficosComFiltro(dias);
+  }
+
+  function renderizarGraficosComFiltro(diasFiltro) {
+    if (!dadosMandados || dadosMandados.length === 0) return;
+
+    var hoje = new Date();
+    var dadosFiltrados = dadosMandados;
+
+    if (diasFiltro !== 'TODOS') {
+      var limDias = parseInt(diasFiltro) || 9999;
+      dadosFiltrados = dadosMandados.filter(function(d) {
+        if (!d.data) return false;
+        var parts = d.data.split('/');
+        if (parts.length !== 3) return false;
+        var dataLanc = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+        var diff = (hoje - dataLanc) / (1000 * 60 * 60 * 24);
+        return diff <= limDias;
+      });
+    }
+
+    // Stats
+    var total = dadosFiltrados.length;
+    var capturados = dadosFiltrados.filter(function(d) { return d.status.toUpperCase() === 'CAPTURADO'; }).length;
+    var vencendo = 0, vencido = 0;
+
+    dadosFiltrados.forEach(function(d) {
+      var dias = calcularDiasRestantes(d.validade);
+      if (dias !== null) {
+        if (dias <= 0) vencido++;
+        else if (dias <= 30) vencendo++;
+      }
+    });
+
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statCaptura').textContent = capturados + ' (' + (total > 0 ? Math.round(capturados / total * 100) : 0) + '%)';
+    document.getElementById('statVencendo').textContent = vencendo;
+    document.getElementById('statVencido').textContent = vencido;
+
+    // Config Chart.js
+    Chart.defaults.color = '#9090a8';
+    Chart.defaults.borderColor = 'rgba(255,255,255,0.06)';
+    Chart.defaults.font.family = 'Inter';
+
+    // Gráfico de barras: Mandados por mês
+    var meses = {};
+    dadosFiltrados.forEach(function(d) {
+      if (d.data) {
+        var parts = d.data.split('/');
+        if (parts.length === 3) {
+          var chave = parts[1] + '/' + parts[2];
+          meses[chave] = (meses[chave] || 0) + 1;
+        }
+      }
+    });
+    var mesLabels = Object.keys(meses).slice(-12);
+    var mesData = mesLabels.map(function(k) { return meses[k]; });
+
+    _chartInstances['graficoLancamentos'] = new Chart(document.getElementById('graficoLancamentos'), {
+      type: 'bar',
+      data: {
+        labels: mesLabels,
+        datasets: [{ label: 'Mandados Inseridos', data: mesData, backgroundColor: '#6c63ff', borderRadius: 6, borderSkipped: false }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+
+    // Gráfico de capturas
+    var mesesCaptura = {};
+    dadosFiltrados.filter(function(d) { return d.status.toUpperCase() === 'CAPTURADO'; }).forEach(function(d) {
+      if (d.data) {
+        var parts = d.data.split('/');
+        if (parts.length === 3) {
+          var chave = parts[1] + '/' + parts[2];
+          mesesCaptura[chave] = (mesesCaptura[chave] || 0) + 1;
+        }
+      }
+    });
+    var capLabels = Object.keys(mesesCaptura).slice(-12);
+    var capData = capLabels.map(function(k) { return mesesCaptura[k]; });
+
+    _chartInstances['graficoCapturas'] = new Chart(document.getElementById('graficoCapturas'), {
+      type: 'line',
+      data: {
+        labels: capLabels.length > 0 ? capLabels : mesLabels,
+        datasets: [{ label: 'Capturas', data: capData.length > 0 ? capData : mesLabels.map(function() { return 0; }), borderColor: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)', fill: true, tension: 0.4 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } } }
+    });
+
+    // Gráfico de crimes (donut)
+    var crimes = {};
+    dadosFiltrados.forEach(function(d) {
+      var tipo = classificarCrime ? classificarCrime(d.artigo || d.infoProcessuais || '').tipo : 'Outros';
+      crimes[tipo] = (crimes[tipo] || 0) + 1;
+    });
+    var crimeLabels = Object.keys(crimes);
+    var crimeData = crimeLabels.map(function(k) { return crimes[k]; });
+    var crimeCores = ['#8b0000', '#dc2626', '#ea580c', '#7c3aed', '#991b1b', '#ca8a04', '#e11d48', '#b45309', '#2563eb', '#475569', '#6b7280'];
+
+    _chartInstances['graficoCrimes'] = new Chart(document.getElementById('graficoCrimes'), {
+      type: 'doughnut',
+      data: {
+        labels: crimeLabels,
+        datasets: [{ data: crimeData, backgroundColor: crimeCores.slice(0, crimeLabels.length) }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'right', labels: { font: { size: 9 }, boxWidth: 10, padding: 6 } } } }
+    });
+
+    // Gráfico de áreas
+    var areas = {};
+    dadosFiltrados.forEach(function(d) {
+      var area = d.bpmArea || d.batalhao || 'Sem Área';
+      areas[area] = (areas[area] || 0) + 1;
+    });
+    var areaLabels = Object.keys(areas);
+    var areaData = areaLabels.map(function(k) { return areas[k]; });
+
+    _chartInstances['graficoAreas'] = new Chart(document.getElementById('graficoAreas'), {
+      type: 'bar',
+      data: {
+        labels: areaLabels,
+        datasets: [{ label: 'Por Área', data: areaData, backgroundColor: '#3b82f6', borderRadius: 6, borderSkipped: false }]
+      },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } } }
+    });
+
+    graficosDesenhados = true;
+  }
+
+</script>
