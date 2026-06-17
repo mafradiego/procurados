@@ -139,7 +139,7 @@
     // Botão centralizar GPS
     var btnGPS = document.createElement('div');
     btnGPS.style.cssText = 'display:flex;margin:0 10px 20px 0;';
-    btnGPS.innerHTML = '<button id="btnCentralizarGPS" title="Centralizar no GPS" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border:none;border-radius:50%;cursor:pointer;background:rgba(15,23,42,0.6);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);color:var(--accent);box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);transition:all 0.3s;"><span class="material-symbols-outlined" style="font-size:22px;">my_location</span></button>';
+    btnGPS.innerHTML = '<button id="btnCentralizarGPS" title="Centralizar no GPS" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border:none;border-radius:50%;cursor:pointer;background:rgba(15,23,42);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);color:var(--accent);box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);transition:all 0.3s;"><span class="material-symbols-outlined" style="font-size:22px;">my_location</span></button>';
     btnGPS.querySelector('button').onclick = function() {
       if (posicaoPatrulheiro) {
         mapaPrincipal.panTo(posicaoPatrulheiro);
@@ -376,7 +376,19 @@
     const telaSeguranca = document.getElementById("tela-seguranca");
     if (telaSeguranca) {
       telaSeguranca.style.opacity = '0';
-      setTimeout(function() { telaSeguranca.style.display = 'none'; }, 500);
+      setTimeout(function() { 
+        telaSeguranca.style.display = 'none'; 
+        // Força a atualização dos blocos visuais do Google Maps após a tela de loading sumir.
+        // Sem isso, se o GPS falhar, a API não renderiza os "tiles" e a tela fica travada cinza.
+        if (typeof mapaPrincipal !== 'undefined' && mapaPrincipal) {
+          google.maps.event.trigger(mapaPrincipal, 'resize');
+          const latPadrao = parseFloat(configsSistema.mapa_lat_padrao) || -22.9056;
+          const lngPadrao = parseFloat(configsSistema.mapa_lng_padrao) || -47.0608;
+          const zoomPadrao = parseInt(configsSistema.mapa_zoom_padrao) || 10;
+          mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
+          mapaPrincipal.setZoom(zoomPadrao);
+        }
+      }, 500);
     }
     var iconeSinc = document.querySelector('button[title="Sincronizar"] span');
     if (iconeSinc) iconeSinc.style.animation = 'none';
@@ -912,19 +924,23 @@
   }
 
   function iniciarGeolocalizacao() {
-    // Desacopla a execução do GPS da thread principal (aguarda 1.5s).
-    // Isso garante que o mapa padrão (Campinas) renderize PERFEITAMENTE sem interrupções do sistema.
     setTimeout(function() {
       try {
+        const latPadrao = parseFloat(configsSistema.mapa_lat_padrao) || -22.9056;
+        const lngPadrao = parseFloat(configsSistema.mapa_lng_padrao) || -47.0608;
+        const zoomPadrao = parseInt(configsSistema.mapa_zoom_padrao) || 10;
+
         if (!navigator.geolocation) {
-          console.warn("Navegador não suporta geolocalização. Mapa já está nas coordenadas padrão.");
+          console.warn("Navegador não suporta geolocalização. Forçando mapa padrão.");
+          google.maps.event.trigger(mapaPrincipal, 'resize');
+          mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
+          mapaPrincipal.setZoom(zoomPadrao);
           return;
         }
 
         navigator.geolocation.getCurrentPosition(
           function(pos) {
             posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-            // Apenas centraliza e aplica zoom se encontrou o GPS com sucesso
             mapaPrincipal.setCenter(posicaoPatrulheiro);
             mapaPrincipal.setZoom(15);
 
@@ -938,20 +954,19 @@
             setTimeout(function() { atualizarBadgeAreaGPS(); }, 3000);
           },
           function(error) { 
-            console.warn("GPS negado ou indisponível. Mantendo mapa renderizado na região padrão."); 
-            // IMPORTANTE: NÃO forçamos o map.setCenter aqui. O mapa já nasceu centrado corretamente 
-            // no setup principal. Tentar centralizar novamente aqui é o que travava a API.
+            console.warn("GPS negado ou indisponível. Forçando mapa para a região padrão."); 
+            // A ausência de GPS quebra o carregamento dos "tiles". Precisamos forçar o repaint do Maps.
+            google.maps.event.trigger(mapaPrincipal, 'resize');
+            mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
+            mapaPrincipal.setZoom(zoomPadrao);
             
-            // Apenas garante que os polígonos fiquem visíveis caso o usuário negue o GPS
             setTimeout(function() {
               if(typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS','TODOS','TODOS');
             }, 1000);
           },
-          // Timeout reduzido para evitar congelamento longo da permissão no mobile
           { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
         );
 
-        // O monitoramento contínuo também pode quebrar (throw error) em WebViews se bloqueado
         try {
           watchPositionId = navigator.geolocation.watchPosition(
             function(pos) {
@@ -969,6 +984,12 @@
 
       } catch (excecaoCritica) {
         console.error("Erro crítico na API de GPS contido com sucesso.", excecaoCritica);
+        // Última linha de defesa para não deixar o mapa cinza
+        google.maps.event.trigger(mapaPrincipal, 'resize');
+        const latPadrao = parseFloat(configsSistema.mapa_lat_padrao) || -22.9056;
+        const lngPadrao = parseFloat(configsSistema.mapa_lng_padrao) || -47.0608;
+        mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
+        mapaPrincipal.setZoom(parseInt(configsSistema.mapa_zoom_padrao) || 10);
       }
     }, 1500); 
   }
