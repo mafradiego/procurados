@@ -1,0 +1,1341 @@
+<script>
+/* ================================================================
+     MÓDULO 3: GOOGLE MAPS + PINOS SVG
+     ================================================================ */
+  function configurarEstruturaMapa() {
+    const lat = parseFloat(configsSistema.mapa_lat_padrao) || -22.9056;
+    const lng = parseFloat(configsSistema.mapa_lng_padrao) || -47.0608;
+    const zoom = parseInt(configsSistema.mapa_zoom_padrao) || 10;
+
+    mapaPrincipal = new google.maps.Map(document.getElementById("mapa"), {
+      center: { lat, lng },
+      zoom: zoom,
+      mapTypeId: configsSistema.mapa_tipo || 'roadmap',
+      streetViewControl: true,
+      streetViewControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
+      mapTypeControl: false,
+      fullscreenControl: false,
+      zoomControlOptions: { position: google.maps.ControlPosition.RIGHT_BOTTOM },
+      gestureHandling: 'greedy',
+      mapId: 'sentinela_map',
+      padding: window.innerWidth < 768 ? { bottom: 120 } : { bottom: 80 }
+    });
+
+    // Camada de trânsito em tempo real (Desabilitada por padrão para carregar mais rápido)
+    const trafficLayer = new google.maps.TrafficLayer();
+    let transitoAtivo = false;
+
+    // --- Botões Mapa/Satélite/Trânsito (colapsável) ---
+    var layersWrapper = document.createElement('div');
+    layersWrapper.style.cssText = 'display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin:0 0 20px 10px;';
+
+    var btnLayers = document.createElement('button');
+    btnLayers.title = 'Camadas do Mapa';
+    btnLayers.style.cssText = 'display:flex;align-items:center;justify-content:center;width:44px;height:44px;border:none;border-radius:50%;cursor:pointer;background:rgba(15,23,42,0.7);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);color:var(--text-secondary);box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);transition:all 0.3s;';
+    btnLayers.innerHTML = '<span class="material-symbols-outlined" style="font-size:22px;">layers</span>';
+
+    var layersPanel = document.createElement('div');
+    layersPanel.style.cssText = 'display:none;flex-direction:row;gap:4px;background:rgba(15,23,42,0.7);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:99px;padding:6px;box-shadow:0 8px 32px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);';
+
+    var btnStyle = 'display:flex;align-items:center;justify-content:center;width:44px;height:38px;border:none;border-radius:99px;cursor:pointer;transition:all 0.3s;font-family:var(--font-sans);';
+
+    var btnMapa = document.createElement('button'); btnMapa.title = 'Mapa';
+    btnMapa.innerHTML = '<span class="material-symbols-outlined" style="font-size:20px;">map</span>';
+    btnMapa.style.cssText = btnStyle + 'background:rgba(99,102,241,0.85);color:white;box-shadow:0 4px 12px rgba(99,102,241,0.4);';
+
+    var btnSat = document.createElement('button'); btnSat.title = 'Satélite';
+    btnSat.innerHTML = '<span class="material-symbols-outlined" style="font-size:20px;">satellite_alt</span>';
+    btnSat.style.cssText = btnStyle + 'background:transparent;color:var(--text-secondary);box-shadow:none;';
+
+    var btnTransito = document.createElement('button'); btnTransito.title = 'Trânsito';
+    btnTransito.innerHTML = '<span class="material-symbols-outlined" style="font-size:20px;">traffic</span>';
+    btnTransito.style.cssText = btnStyle + 'background:transparent;color:var(--text-secondary);box-shadow:none;';
+
+    btnLayers.onclick = function() {
+      if (layersPanel.style.display === 'none') {
+        layersPanel.style.display = 'flex';
+        btnLayers.style.background = 'rgba(99,102,241,0.3)'; btnLayers.style.color = 'white';
+      } else {
+        layersPanel.style.display = 'none';
+        btnLayers.style.background = 'rgba(15,23,42,0.7)'; btnLayers.style.color = 'var(--text-secondary)';
+      }
+    };
+
+    btnMapa.onclick = function() {
+      mapaPrincipal.setMapTypeId('roadmap');
+      btnMapa.style.background = 'rgba(99,102,241,0.85)'; btnMapa.style.color = 'white'; btnMapa.style.boxShadow = '0 4px 12px rgba(99,102,241,0.4)';
+      btnSat.style.background = 'transparent'; btnSat.style.color = 'var(--text-secondary)'; btnSat.style.boxShadow = 'none';
+    };
+    btnSat.onclick = function() {
+      mapaPrincipal.setMapTypeId('hybrid');
+      btnSat.style.background = 'rgba(99,102,241,0.85)'; btnSat.style.color = 'white'; btnSat.style.boxShadow = '0 4px 12px rgba(99,102,241,0.4)';
+      btnMapa.style.background = 'transparent'; btnMapa.style.color = 'var(--text-secondary)'; btnMapa.style.boxShadow = 'none';
+    };
+    btnTransito.onclick = function() {
+      transitoAtivo = !transitoAtivo;
+      if (transitoAtivo) {
+        trafficLayer.setMap(mapaPrincipal);
+        btnTransito.style.color = 'var(--success)'; btnTransito.style.textShadow = '0 0 8px rgba(46, 204, 113, 0.4)';
+      } else {
+        trafficLayer.setMap(null);
+        btnTransito.style.color = 'var(--text-secondary)'; btnTransito.style.textShadow = 'none';
+      }
+    };
+
+    layersPanel.appendChild(btnMapa);
+    layersPanel.appendChild(btnSat);
+    layersPanel.appendChild(btnTransito);
+    layersWrapper.appendChild(btnLayers);
+    layersWrapper.appendChild(layersPanel);
+    mapaPrincipal.controls[google.maps.ControlPosition.LEFT_BOTTOM].push(layersWrapper);
+
+    // --- Drawer de Filtros Avançados (canto esquerdo central) ---
+    var drawerDiv = document.createElement('div');
+    drawerDiv.id = 'drawerFiltrosAvancados';
+    drawerDiv.style.cssText = 'position:relative;display:flex;align-items:flex-start;gap:0;margin:0 0 0 10px;';
+
+    // Botão toggle (sempre visível)
+    var btnToggleDrawer = document.createElement('button');
+    btnToggleDrawer.id = 'btnToggleDrawerFiltros';
+    btnToggleDrawer.style.cssText = 'display:flex;align-items:center;justify-content:center;width:44px;height:44px;border:none;border-radius:50%;cursor:pointer;background:rgba(15,23,42,0.7);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);color:var(--text-secondary);box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);transition:all 0.3s;flex-shrink:0;position:relative;';
+    btnToggleDrawer.innerHTML = '<span class="material-symbols-outlined" style="font-size:22px;">filter_list</span>';
+
+    // Indicador de filtro ativo (bolinha)
+    var indicador = document.createElement('span');
+    indicador.id = 'indicadorFiltroAtivo';
+    indicador.style.cssText = 'display:none;position:absolute;top:2px;right:2px;width:10px;height:10px;background:#ef4444;border-radius:50%;border:2px solid rgba(15,23,42,0.7);';
+    btnToggleDrawer.appendChild(indicador);
+
+    // Painel dos filtros (slide-in)
+    var painelFiltros = document.createElement('div');
+    painelFiltros.id = 'painelFiltrosAvancados';
+    painelFiltros.style.cssText = 'display:none;flex-direction:column;gap:8px;padding:12px;background:rgba(15,23,42,0.9);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:12px;border:1px solid rgba(255,255,255,0.1);box-shadow:0 8px 32px rgba(0,0,0,0.5);margin-left:8px;min-width:160px;transition:all 0.3s;';
+
+    painelFiltros.innerHTML =
+      '<div style="font-size:10px;font-weight:800;color:var(--text-muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:2px;">Filtros Avançados</div>' +
+      '<select id="filtroCrime" class="modern-select" style="font-size:11px;padding:5px 8px;width:100%;"><option value="TODOS">Tipo de Crime</option><option value="Homicídio">Homicídio</option><option value="Roubo">Roubo</option><option value="Furto">Furto</option><option value="Tráfico">Tráfico</option><option value="Estupro">Estupro</option><option value="Estelionato">Estelionato</option><option value="V. Doméstica">V. Doméstica</option><option value="Porte de Arma">Porte de Arma</option><option value="Prisão Civil">Prisão Civil</option><option value="Receptação">Receptação</option><option value="Outros">Outros</option></select>' +
+      '<select id="filtroSexo" class="modern-select" style="font-size:11px;padding:5px 8px;width:100%;"><option value="TODOS">Sexo</option><option value="MASCULINO">Masculino</option><option value="FEMININO">Feminino</option></select>' +
+      '<select id="filtroTipoMandado" class="modern-select" style="font-size:11px;padding:5px 8px;width:100%;"><option value="TODOS">Tipo de Mandado</option><option value="MANDADO DE PRISÃO">Prisão</option><option value="MANDADO DE RECAPTURA">Recaptura</option><option value="MANDADO DE INTERNAÇÃO">Internação</option><option value="MANDADO DE INTERNAÇÃO RECAPTURA">Int. Recaptura</option></select>' +
+      '<div style="display:flex;gap:6px;">' +
+        '<button id="btnAplicarFiltroAvancado" onclick="aplicarFiltroAvancadoEFechar()" style="flex:1;padding:6px;border:none;border-radius:8px;cursor:pointer;background:rgba(99,102,241,0.8);color:white;font-size:11px;font-weight:700;font-family:var(--font-sans);transition:all 0.2s;">FILTRAR</button>' +
+        '<button onclick="limparFiltrosAvancados()" style="padding:6px 10px;border:none;border-radius:8px;cursor:pointer;background:rgba(239,68,68,0.2);color:#ef4444;font-size:11px;font-weight:700;font-family:var(--font-sans);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">close</span></button>' +
+      '</div>';
+
+    btnToggleDrawer.onclick = function() {
+      var painel = document.getElementById('painelFiltrosAvancados');
+      if (painel.style.display === 'none') {
+        painel.style.display = 'flex';
+        btnToggleDrawer.style.background = 'rgba(99,102,241,0.3)'; btnToggleDrawer.style.color = 'white';
+      } else {
+        painel.style.display = 'none';
+        atualizarIndicadorFiltro();
+      }
+    };
+
+    drawerDiv.appendChild(btnToggleDrawer);
+    drawerDiv.appendChild(painelFiltros);
+    mapaPrincipal.controls[google.maps.ControlPosition.LEFT_CENTER].push(drawerDiv);
+
+    // Botão centralizar GPS
+    var btnGPS = document.createElement('div');
+    btnGPS.style.cssText = 'display:flex;margin:0 10px 20px 0;';
+    btnGPS.innerHTML = '<button id="btnCentralizarGPS" title="Centralizar no GPS" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border:none;border-radius:50%;cursor:pointer;background:rgba(15,23,42,0.6);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);color:var(--accent);box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);transition:all 0.3s;"><span class="material-symbols-outlined" style="font-size:22px;">my_location</span></button>';
+    btnGPS.querySelector('button').onclick = function() {
+      if (posicaoPatrulheiro) {
+        mapaPrincipal.panTo(posicaoPatrulheiro);
+        mapaPrincipal.setZoom(15);
+      } else {
+        chamarAlertaTatico('GPS', 'Localiza\u00e7\u00e3o n\u00e3o dispon\u00edvel. Verifique as permiss\u00f5es do navegador.', 'OK');
+      }
+    };
+    mapaPrincipal.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(btnGPS);
+
+    window.addEventListener('resize', function() {
+      if (mapaPrincipal) setTimeout(function() { google.maps.event.trigger(mapaPrincipal, 'resize'); }, 350);
+    });
+
+    infoWindowAtiva = new google.maps.InfoWindow();
+
+    // Esconder TODOS os controles do mapa quando InfoWindow abre (via API direta)
+    function esconderControlesMapa() {
+      // Usar a API controls do Google Maps - acesso direto aos elementos
+      var posicoes = [
+        google.maps.ControlPosition.LEFT_BOTTOM,
+        google.maps.ControlPosition.LEFT_CENTER,
+        google.maps.ControlPosition.TOP_LEFT,
+        google.maps.ControlPosition.TOP_CENTER,
+        google.maps.ControlPosition.RIGHT_BOTTOM
+      ];
+      posicoes.forEach(function(pos) {
+        var arr = mapaPrincipal.controls[pos];
+        if (arr) {
+          for (var i = 0; i < arr.getLength(); i++) {
+            var el = arr.getAt(i);
+            if (el && el.style) {
+              el.dataset.prevDisplay = el.style.display || '';
+              el.style.display = 'none';
+            }
+          }
+        }
+      });
+      // Esconder FAB admin (fora do mapa)
+      var fab = document.getElementById('btnAdminNovo');
+      if (fab) fab.style.display = 'none';
+      // Esconder topnav mobile
+      var topNav = document.querySelector('.topnav-filtros');
+      if (topNav) topNav.style.display = 'none';
+    }
+
+    function mostrarControlesMapa() {
+      var posicoes = [
+        google.maps.ControlPosition.LEFT_BOTTOM,
+        google.maps.ControlPosition.LEFT_CENTER,
+        google.maps.ControlPosition.TOP_LEFT,
+        google.maps.ControlPosition.TOP_CENTER,
+        google.maps.ControlPosition.RIGHT_BOTTOM
+      ];
+      posicoes.forEach(function(pos) {
+        var arr = mapaPrincipal.controls[pos];
+        if (arr) {
+          for (var i = 0; i < arr.getLength(); i++) {
+            var el = arr.getAt(i);
+            if (el && el.style) {
+              el.style.display = el.dataset.prevDisplay || '';
+            }
+          }
+        }
+      });
+      var fab = document.getElementById('btnAdminNovo');
+      if (fab) fab.style.display = 'flex';
+      var topNav = document.querySelector('.topnav-filtros');
+      if (topNav) topNav.style.display = '';
+    }
+
+    infoWindowAtiva.addListener('domready', esconderControlesMapa);
+    infoWindowAtiva.addListener('closeclick', mostrarControlesMapa);
+    mapaPrincipal.addListener("click", function() {
+      if (infoWindowAtiva) infoWindowAtiva.close();
+      mostrarControlesMapa();
+    });
+
+    // Geolocalização do patrulheiro
+    iniciarGeolocalizacao();
+
+    carregarMandados();
+  }
+
+  // Limpar TODOS os filtros (CPI + BTL + CIA + avançados)
+  function limparTodosFiltros() {
+    if (document.getElementById('filtroCPI')) document.getElementById('filtroCPI').value = 'TODOS';
+    if (document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').value = 'TODOS';
+    if (document.getElementById('filtroBatalhao')) document.getElementById('filtroBatalhao').value = 'TODOS';
+    if (document.getElementById('filtroBatalhaoMobile')) document.getElementById('filtroBatalhaoMobile').value = 'TODOS';
+    if (document.getElementById('filtroCIA')) document.getElementById('filtroCIA').value = 'TODOS';
+    if (document.getElementById('filtroCIAMobile')) document.getElementById('filtroCIAMobile').value = 'TODOS';
+    limparFiltrosAvancados();
+    montarFiltrosBatalhao();
+    filtrarNoMapa();
+    window._cpiAutoSelecionado = false;
+  }
+
+  // Limpar só os filtros avançados
+  function limparFiltrosAvancados(isMobile) {
+    if (isMobile) {
+      if (document.getElementById('filtroCrimeMobile')) document.getElementById('filtroCrimeMobile').value = 'TODOS';
+      if (document.getElementById('filtroSexoMobile')) document.getElementById('filtroSexoMobile').value = 'TODOS';
+      if (document.getElementById('filtroTipoMandadoMobile')) document.getElementById('filtroTipoMandadoMobile').value = 'TODOS';
+      filtrarNoMapaMobile();
+    } else {
+      if (document.getElementById('filtroCrime')) document.getElementById('filtroCrime').value = 'TODOS';
+      if (document.getElementById('filtroSexo')) document.getElementById('filtroSexo').value = 'TODOS';
+      if (document.getElementById('filtroTipoMandado')) document.getElementById('filtroTipoMandado').value = 'TODOS';
+      // Limpar sincronizado no mobile
+      if (document.getElementById('filtroCrimeMobile')) document.getElementById('filtroCrimeMobile').value = 'TODOS';
+      if (document.getElementById('filtroSexoMobile')) document.getElementById('filtroSexoMobile').value = 'TODOS';
+      if (document.getElementById('filtroTipoMandadoMobile')) document.getElementById('filtroTipoMandadoMobile').value = 'TODOS';
+      filtrarNoMapa();
+      atualizarIndicadorFiltro();
+      // Fechar o painel
+      var painel = document.getElementById('painelFiltrosAvancados');
+      if (painel) painel.style.display = 'none';
+      var btn = document.getElementById('btnToggleDrawerFiltros');
+      if (btn) { btn.style.background = 'rgba(15,23,42,0.7)'; btn.style.color = 'var(--text-secondary)'; }
+    }
+  }
+
+  // Aplicar filtros avançados e fechar o drawer
+  function aplicarFiltroAvancadoEFechar() {
+    filtrarNoMapa();
+    // Fechar o painel
+    var painel = document.getElementById('painelFiltrosAvancados');
+    if (painel) painel.style.display = 'none';
+    atualizarIndicadorFiltro();
+  }
+
+  // Atualizar bolinha indicadora de filtro ativo
+  function atualizarIndicadorFiltro() {
+    var crime = document.getElementById('filtroCrime');
+    var sexo = document.getElementById('filtroSexo');
+    var tipo = document.getElementById('filtroTipoMandado');
+    var ativo = (crime && crime.value !== 'TODOS') || (sexo && sexo.value !== 'TODOS') || (tipo && tipo.value !== 'TODOS');
+    var ind = document.getElementById('indicadorFiltroAtivo');
+    var btn = document.getElementById('btnToggleDrawerFiltros');
+    if (ind) ind.style.display = ativo ? 'block' : 'none';
+    if (btn) {
+      if (ativo) {
+        btn.style.background = 'rgba(239,68,68,0.25)';
+        btn.style.color = '#ef4444';
+        btn.style.borderColor = 'rgba(239,68,68,0.4)';
+      } else {
+        btn.style.background = 'rgba(15,23,42,0.7)';
+        btn.style.color = 'var(--text-secondary)';
+        btn.style.borderColor = 'rgba(255,255,255,0.1)';
+      }
+    }
+  }
+
+  function processarDados(dados) {
+    dadosMandados = dados;
+    montarFiltrosCPI();
+    montarFiltrosBatalhao();
+    // Pinos no mapa: apenas mandados COM coordenadas
+    var comCoordenadas = dadosMandados.filter(function(d) { return !d.semEndereco; });
+    renderizarPinos(comCoordenadas);
+    // Tabela: TODOS os mandados
+    if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
+    // Carregar polígonos de áreas BPM/CIA
+    carregarPoligonos();
+
+    // Carregar tabela de classificação de leis (1x)
+    if (!window._tabelaLeis) {
+      google.script.run.withSuccessHandler(function(tabela) {
+        window._tabelaLeis = tabela || [];
+        // Re-renderizar pinos e lista para usar classificação do banco
+        var comCoord = dadosMandados.filter(function(d) { return !d.semEndereco; });
+        renderizarPinos(comCoord);
+        if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
+      }).withFailureHandler(function() {
+        window._tabelaLeis = [];
+      }).obterTabelaClassificacao();
+    }
+
+    // A tela de segurança será fechada pelo processarDadosPoligonos para garantir que o mapa inteiro já carregou
+  }
+
+  // ================================================================
+  // MÓDULO 1.1: CACHE INTELIGENTE DE MANDADOS (INDEXEDDB)
+  // ================================================================
+
+  function lerCacheMandados(callbackSucesso, callbackFalha) {
+    if (!window.indexedDB) { callbackFalha(); return; }
+    let request = indexedDB.open(dbName, 2);
+    request.onupgradeneeded = function(e) {
+      let db = e.target.result;
+      if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
+    };
+    request.onsuccess = function(e) {
+      let db = e.target.result;
+      if (!db.objectStoreNames.contains("Mandados")) { callbackFalha(); return; }
+      try {
+        let transaction = db.transaction(["Mandados"], "readonly");
+        let store = transaction.objectStore("Mandados");
+        let getRequest = store.get("dados_mandados");
+        getRequest.onsuccess = function() {
+          if (getRequest.result) {
+            callbackSucesso(getRequest.result);
+          } else {
+            callbackFalha();
+          }
+        };
+        getRequest.onerror = callbackFalha;
+      } catch (err) { callbackFalha(); }
+    };
+    request.onerror = callbackFalha;
+  }
+
+  function salvarCacheMandados(timestampServidor, dados) {
+    if (!window.indexedDB) return;
+    let request = indexedDB.open(dbName, 2);
+    request.onupgradeneeded = function(e) {
+      let db = e.target.result;
+      if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
+    };
+    request.onsuccess = function(e) {
+      let db = e.target.result;
+      try {
+        let transaction = db.transaction(["Mandados"], "readwrite");
+        let store = transaction.objectStore("Mandados");
+        store.put({ id: "dados_mandados", versao: String(timestampServidor), dados: dados });
+      } catch (err) {}
+    };
+  }
+
+  function fecharTelaDeCarregamento() {
+    const telaSeguranca = document.getElementById("tela-seguranca");
+    if (telaSeguranca) {
+      telaSeguranca.style.opacity = '0';
+      setTimeout(function() { telaSeguranca.style.display = 'none'; }, 500);
+    }
+    var iconeSinc = document.querySelector('button[title="Sincronizar"] span');
+    if (iconeSinc) iconeSinc.style.animation = 'none';
+  }
+
+  function carregarMandados() {
+    var iconeSinc = document.querySelector('button[title="Sincronizar"] span');
+    if (iconeSinc) iconeSinc.style.animation = 'spin 1s linear infinite';
+
+    // Failsafe timeout: Se der pane de rede, destrava a tela depois de 15 segundos
+    var failsafe = setTimeout(fecharTelaDeCarregamento, 15000);
+
+    lerCacheMandados(
+      function(cacheInfo) {
+        google.script.run.withSuccessHandler(function(resp) {
+          clearTimeout(failsafe);
+          if (resp.atualizado) {
+            _ultimoTimestampLocal = resp.timestamp;
+            salvarCacheMandados(resp.timestamp, resp.dados);
+            processarDados(resp.dados);
+          } else {
+            _ultimoTimestampLocal = cacheInfo.versao;
+            processarDados(cacheInfo.dados);
+          }
+          iniciarAutoSync();
+        }).withFailureHandler(function(){
+          clearTimeout(failsafe);
+          fecharTelaDeCarregamento();
+          iniciarAutoSync();
+        }).verificarAtualizacaoMandados(cacheInfo.versao);
+      },
+      function() {
+        google.script.run.withSuccessHandler(function(resp) {
+          clearTimeout(failsafe);
+          if (resp.atualizado) {
+            _ultimoTimestampLocal = resp.timestamp;
+            salvarCacheMandados(resp.timestamp, resp.dados);
+            processarDados(resp.dados);
+          }
+          iniciarAutoSync();
+        }).withFailureHandler(function(){
+          clearTimeout(failsafe);
+          fecharTelaDeCarregamento();
+          iniciarAutoSync();
+        }).obterTodosOsMandados();
+      }
+    );
+  }
+
+  // ================================================================
+  // AUTO-SYNC: Polling silencioso a cada 30 segundos
+  // ================================================================
+  var _ultimoTimestampLocal = "0";
+  var _autoSyncInterval = null;
+  var _autoSyncAtivo = false;
+
+  function iniciarAutoSync() {
+    if (_autoSyncInterval) return; // Já está rodando
+    _autoSyncInterval = setInterval(verificarAtualizacaoSilenciosa, 30000); // 30s
+  }
+
+  function verificarAtualizacaoSilenciosa() {
+    if (_autoSyncAtivo) return; // Evitar sobreposição
+    _autoSyncAtivo = true;
+
+    google.script.run.withSuccessHandler(function(resp) {
+      _autoSyncAtivo = false;
+      if (resp.atualizado && resp.dados) {
+        // Servidor tem dados mais recentes — atualizar silenciosamente
+        _ultimoTimestampLocal = resp.timestamp;
+        salvarCacheMandados(resp.timestamp, resp.dados);
+        processarDados(resp.dados);
+        console.log("[AutoSync] Dados atualizados silenciosamente.");
+      }
+    }).withFailureHandler(function() {
+      _autoSyncAtivo = false;
+    }).verificarAtualizacaoMandados(_ultimoTimestampLocal);
+  }
+
+  // Função global de sincronização do banco
+  var _sincronizando = false;
+  function sincronizarBD() {
+    if (_sincronizando) return; // Bloquear duplo-clique
+    _sincronizando = true;
+    setTimeout(function() { _sincronizando = false; }, 5000); // Liberar após 5s
+
+    const telaSeguranca = document.getElementById("tela-seguranca");
+    const lblStatus = document.getElementById("txt-status-carregamento");
+    if (telaSeguranca && lblStatus) {
+      lblStatus.innerText = "SINCRONIZANDO BANCO DE DADOS...";
+      telaSeguranca.style.display = "flex";
+      setTimeout(function() { telaSeguranca.style.opacity = '1'; }, 10);
+    }
+
+    poligonosCarregados = false; // Forçar o mapa a atualizar as cores táticas
+
+    // Limpar cache IndexedDB
+    if (window.indexedDB) {
+      try {
+        let request = indexedDB.open(dbName, 2);
+        request.onupgradeneeded = function(e) {
+          let db = e.target.result;
+          if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
+          if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
+        };
+        request.onsuccess = function(e) {
+          try {
+            let db = e.target.result;
+            let storesToClear = [];
+            if (db.objectStoreNames.contains("Mandados")) storesToClear.push("Mandados");
+            if (db.objectStoreNames.contains("Poligonos")) storesToClear.push("Poligonos");
+            if (storesToClear.length > 0) {
+              let transaction = db.transaction(storesToClear, "readwrite");
+              if (storesToClear.includes("Mandados")) transaction.objectStore("Mandados").delete("dados_mandados");
+              if (storesToClear.includes("Poligonos")) transaction.objectStore("Poligonos").delete("dados_mapa");
+            }
+          } catch(err) {}
+        };
+      } catch(err) {}
+    }
+
+    // BYPASS CACHE: Ir direto para o servidor com timestamp 0 (forçar download total)
+    var failsafe = setTimeout(fecharTelaDeCarregamento, 15000);
+    var iconeSinc = document.querySelector('button[title="Sincronizar"] span');
+    if (iconeSinc) iconeSinc.style.animation = 'spin 1s linear infinite';
+
+    google.script.run.withSuccessHandler(function(resp) {
+      clearTimeout(failsafe);
+      if (resp.atualizado && resp.dados) {
+        salvarCacheMandados(resp.timestamp, resp.dados);
+        processarDados(resp.dados);
+      } else {
+        // Se o servidor diz que não mudou, mesmo assim busca tudo
+        google.script.run.withSuccessHandler(function(resp2) {
+          if (resp2.atualizado && resp2.dados) {
+            salvarCacheMandados(resp2.timestamp, resp2.dados);
+            processarDados(resp2.dados);
+          }
+          fecharTelaDeCarregamento();
+        }).withFailureHandler(function() {
+          fecharTelaDeCarregamento();
+        }).obterTodosOsMandados();
+      }
+    }).withFailureHandler(function() {
+      clearTimeout(failsafe);
+      fecharTelaDeCarregamento();
+    }).verificarAtualizacaoMandados("0"); // Timestamp "0" = forçar atualização
+  }
+
+  function sortCpi(a, b) {
+    let isCpaA = a.includes('CPA');
+    let isCpaB = b.includes('CPA');
+    if (isCpaA !== isCpaB) return isCpaA ? 1 : -1;
+    let numA = parseInt(a.replace(/\D/g, '')) || 0;
+    let numB = parseInt(b.replace(/\D/g, '')) || 0;
+    if (numA !== numB) return numA - numB;
+    return a.localeCompare(b);
+  }
+
+  function sortBpm(a, b) {
+    let isBpmiA = a.includes('BPM/I');
+    let isBpmiB = b.includes('BPM/I');
+    if (isBpmiA !== isBpmiB) return isBpmiA ? -1 : 1;
+    let numA = parseInt(a.replace(/\D/g, '')) || 0;
+    let numB = parseInt(b.replace(/\D/g, '')) || 0;
+    if (numA !== numB) return numA - numB;
+    return a.localeCompare(b);
+  }
+
+  function montarFiltrosCPI() {
+    let cpis = [];
+    if (poligonosInstancias.length > 0) {
+      cpis = [...new Set(poligonosInstancias.map(i => i.cpi).filter(b => b))].sort(sortCpi);
+    } else {
+      cpis = [...new Set(dadosMandados.map(i => i.cpiArea).filter(b => b))].sort(sortCpi);
+    }
+    
+    // Adicionar opção "TODOS"
+    let html = '<option value="TODOS">CPI - CPA</option>';
+    cpis.forEach(c => html += '<option value="' + c + '">' + c + '</option>');
+    
+    if (document.getElementById('filtroCPI')) document.getElementById('filtroCPI').innerHTML = html;
+    if (document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').innerHTML = html;
+  }
+
+  function montarFiltrosBatalhao(isMobile) {
+    const cpiSelecionado = isMobile ? document.getElementById('filtroCPIMobile').value : document.getElementById('filtroCPI').value;
+    if (!isMobile && document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').value = cpiSelecionado;
+    if (isMobile && document.getElementById('filtroCPI')) document.getElementById('filtroCPI').value = cpiSelecionado;
+
+    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({cpi: d.cpiArea, batalhao: d.batalhao, cia: d.ciaArea}));
+    
+    let filtrados = fonteDeDados;
+    if (cpiSelecionado !== 'TODOS') {
+      filtrados = filtrados.filter(i => i.cpi === cpiSelecionado);
+    }
+    const bpms = [...new Set(filtrados.map(i => i.batalhao).filter(b => b))].sort(sortBpm);
+    
+    let html = '<option value="TODOS">Batalhão</option>';
+    bpms.forEach(b => html += '<option value="' + b + '">' + b + '</option>');
+    
+    if (document.getElementById('filtroBatalhao')) document.getElementById('filtroBatalhao').innerHTML = html;
+    if (document.getElementById('filtroBatalhaoMobile')) document.getElementById('filtroBatalhaoMobile').innerHTML = html;
+
+    montarFiltrosCIA(isMobile);
+  }
+
+  function montarFiltrosCIA(isMobile) {
+    const bpmSelecionado = isMobile ? document.getElementById('filtroBatalhaoMobile').value : document.getElementById('filtroBatalhao').value;
+    if (!isMobile && document.getElementById('filtroBatalhaoMobile')) document.getElementById('filtroBatalhaoMobile').value = bpmSelecionado;
+    if (isMobile && document.getElementById('filtroBatalhao')) document.getElementById('filtroBatalhao').value = bpmSelecionado;
+
+    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({cpi: d.cpiArea, batalhao: d.batalhao, cia: d.ciaArea}));
+
+    let filtrados = fonteDeDados;
+    const cpiSelecionado = document.getElementById('filtroCPI').value;
+    if (cpiSelecionado !== 'TODOS') filtrados = filtrados.filter(i => i.cpi === cpiSelecionado);
+    if (bpmSelecionado !== 'TODOS') filtrados = filtrados.filter(i => i.batalhao === bpmSelecionado);
+    
+    const cias = [...new Set(filtrados.map(i => i.cia).filter(b => b))].sort();
+    
+    let html = '<option value="TODOS">CIA</option>';
+    cias.forEach(c => html += '<option value="' + c + '">' + c + '</option>');
+    
+    if (document.getElementById('filtroCIA')) document.getElementById('filtroCIA').innerHTML = html;
+    if (document.getElementById('filtroCIAMobile')) document.getElementById('filtroCIAMobile').innerHTML = html;
+    
+    // Sicroniza a CIA entre mobile e desktop caso alterado
+    document.getElementById('filtroCIA').addEventListener('change', function() { document.getElementById('filtroCIAMobile').value = this.value; });
+    document.getElementById('filtroCIAMobile').addEventListener('change', function() { document.getElementById('filtroCIA').value = this.value; });
+  }
+  // ---- CRIAÇÃO DO PINO SVG ----
+  function criarPinoSVG(alvo) {
+    const crimeInfo = classificarCrime(alvo.infoProcessuais || '');
+    const diasRestantes = calcularDiasRestantes(alvo.validade);
+    const isCapturado = alvo.status.toUpperCase() === 'CAPTURADO';
+    const cor = isCapturado ? '#2ecc71' : crimeInfo.cor;
+    const label = crimeInfo.pinoTexto || '?';
+
+    // Tamanho da fonte adaptado ao comprimento
+    var fontSize = 11;
+    if (label.length <= 2) fontSize = 14;
+    else if (label.length <= 3) fontSize = 12;
+    else if (label.length <= 4) fontSize = 10.5;
+    else if (label.length <= 5) fontSize = 9;
+    else fontSize = 7.5;
+
+    // Determinar nível de glow
+    let glowClass = '';
+    if (crimeInfo.naoClassificado) {
+      glowClass = 'pin-nao-classificado';
+    } else if (!isCapturado && diasRestantes !== null) {
+      const limVermelho = parseInt(configsSistema.validade_vermelho_dias) || 15;
+      const limLaranja = parseInt(configsSistema.validade_laranja_dias) || 30;
+      const limAmarelo = parseInt(configsSistema.validade_amarelo_dias) || 90;
+
+      if (diasRestantes <= 0) glowClass = 'pin-glow-critical';
+      else if (diasRestantes <= limVermelho) glowClass = 'pin-glow-critical';
+      else if (diasRestantes <= limLaranja) glowClass = 'pin-glow-strong';
+      else if (diasRestantes <= limAmarelo) glowClass = 'pin-glow-mild';
+    }
+
+    // Verificar se tem endereços secundários
+    let temSecundarios = false;
+    try {
+      const sec = JSON.parse(alvo.geodataSecundarios || '[]');
+      temSecundarios = sec.length > 0;
+    } catch(e) {}
+
+    const container = document.createElement('div');
+    container.className = 'pin-marker ' + glowClass;
+    container.style.setProperty('--glow-color', cor);
+    container.style.position = 'relative';
+
+    // Badge "+" acima do pino
+    const badgePlus = temSecundarios
+      ? '<div style="position:absolute;top:-10px;left:50%;transform:translateX(-50%);width:18px;height:18px;background:#fff;border:2px solid ' + cor + ';border-radius:50%;display:flex;align-items:center;justify-content:center;z-index:10;box-shadow:0 1px 4px rgba(0,0,0,0.4);"><span style="font-size:13px;font-weight:900;color:' + cor + ';line-height:1;">+</span></div>'
+      : '';
+
+    container.innerHTML = badgePlus + `
+      <svg width="46" height="58" viewBox="0 0 46 58" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M23 57C23 57 43 37.5 43 21C43 10 34.046 1 23 1C11.954 1 3 10 3 21C3 37.5 23 57 23 57Z" fill="${cor}" stroke="rgba(0,0,0,0.35)" stroke-width="1.5"/>
+        <circle cx="23" cy="21" r="14" fill="rgba(0,0,0,0.25)"/>
+        <circle cx="23" cy="21" r="13" fill="${isCapturado ? '#1a9c54' : 'rgba(255,255,255,0.15)'}"/>
+        <text x="23" y="${21 + fontSize * 0.35}" text-anchor="middle" font-size="${fontSize}" font-weight="900" font-family="Impact,Arial Black,sans-serif" fill="white" letter-spacing="0.5">${label}</text>
+      </svg>`;
+
+    return container;
+  }
+
+  let clustererInstancia = null;
+
+  function renderizarPinos(dadosFiltrados) {
+    // Limpar marcadores anteriores
+    listaMarcadores.forEach(function(m) { m.map = null; });
+    listaMarcadores = [];
+    if (clustererInstancia) {
+      clustererInstancia.clearMarkers();
+    }
+
+    // Limpar secundários visíveis
+    Object.keys(secundariosVisiveis).forEach(function(k) {
+      if (secundariosVisiveis[k]) {
+        secundariosVisiveis[k].markers.forEach(function(m) { m.map = null; });
+        secundariosVisiveis[k].polylines.forEach(function(p) { p.setMap(null); });
+      }
+    });
+    secundariosVisiveis = {};
+
+    dadosFiltrados.forEach(function(alvo) {
+      if (typeof alvo.lat !== 'number' || typeof alvo.lng !== 'number' || isNaN(alvo.lat) || isNaN(alvo.lng)) return;
+      
+      const pinoEl = criarPinoSVG(alvo);
+
+      const marcador = new google.maps.marker.AdvancedMarkerElement({
+        position: { lat: alvo.lat, lng: alvo.lng },
+        map: mapaPrincipal,
+        title: alvo.nome,
+        content: pinoEl
+      });
+
+      // Click → centraliza e abre card (com debounce para não conflitar com dblclick)
+      var _clickTimeout = null;
+      marcador.addListener("click", function() {
+        if (_clickTimeout) clearTimeout(_clickTimeout);
+        _clickTimeout = setTimeout(function() {
+          mapaPrincipal.panTo({ lat: alvo.lat, lng: alvo.lng });
+          infoWindowAtiva.setContent(montarCardInteligencia(alvo));
+          infoWindowAtiva.open(mapaPrincipal, marcador);
+        }, 300);
+      });
+
+      // Double-click → mostra/esconde secundários (Desktop)
+      pinoEl.addEventListener("dblclick", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
+        toggleSecundarios(alvo, marcador);
+      });
+
+      // Long press (Touch and hold) → mostra/esconde secundários (Mobile/Tablet)
+      var _longPressTimer = null;
+      var _touchMoved = false;
+      pinoEl.addEventListener("touchstart", function(e) {
+        _touchMoved = false;
+        _longPressTimer = setTimeout(function() {
+          if (!_touchMoved) {
+            if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
+            toggleSecundarios(alvo, marcador);
+          }
+        }, 600);
+      }, { passive: true });
+      pinoEl.addEventListener("touchmove", function() {
+        _touchMoved = true;
+        if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+      }, { passive: true });
+      pinoEl.addEventListener("touchend", function() {
+        if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
+      }, { passive: true });
+
+      // Fallback: contextmenu (right-click desktop / long-press some devices)
+      pinoEl.addEventListener("contextmenu", function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
+        toggleSecundarios(alvo, marcador);
+      });
+
+      marcador._mandadoRef = alvo.mandado;
+      listaMarcadores.push(marcador);
+    });
+
+    // Iniciar Marker Clusterer com os marcadores instanciados
+    if (window.markerClusterer && listaMarcadores.length > 0) {
+      clustererInstancia = new window.markerClusterer.MarkerClusterer({
+        map: mapaPrincipal,
+        markers: listaMarcadores
+      });
+    }
+
+    // Auto-exibir secundários se há filtro de CPI/BPM/CIA ativo
+    var cpiVal = (document.getElementById('filtroCPI') || {}).value || 'TODOS';
+    var btlVal = (document.getElementById('filtroBatalhao') || {}).value || 'TODOS';
+    var ciaVal = (document.getElementById('filtroCIA') || {}).value || 'TODOS';
+    if (cpiVal !== 'TODOS' || btlVal !== 'TODOS' || ciaVal !== 'TODOS') {
+      dadosFiltrados.forEach(function(alvo) {
+        if (typeof alvo.lat !== 'number' || typeof alvo.lng !== 'number') return;
+        // Buscar marcador correspondente
+        var marc = listaMarcadores.find(function(m) { return m._mandadoRef === alvo.mandado; });
+        if (marc && !secundariosVisiveis[alvo.mandado]) {
+          // Mostrar secundários automaticamente (sem toggle)
+          mostrarSecundariosAuto(alvo, marc);
+        }
+      });
+    }
+  }
+
+  // Mostrar secundários automaticamente (sem toggle)
+  function mostrarSecundariosAuto(alvo, marcadorPrincipal) {
+    try {
+      var listaSec = JSON.parse(alvo.geodataSecundarios || "[]");
+      if (listaSec.length === 0) return;
+
+      var markers = [];
+      var polylines = [];
+
+      listaSec.forEach(function(sec) {
+        if (typeof sec.lat !== 'number' || typeof sec.lng !== 'number') return;
+
+        var secEl = document.createElement('div');
+        secEl.innerHTML = '<svg width="28" height="36" viewBox="0 0 28 36" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 35C14 35 26 23 26 13C26 6.4 20.6 1 14 1C7.4 1 2 6.4 2 13C2 23 14 35 14 35Z" fill="rgba(255,165,0,0.85)" stroke="rgba(0,0,0,0.3)" stroke-width="1"/><circle cx="14" cy="13" r="5" fill="white" opacity="0.9"/></svg>';
+
+        var marcSec = new google.maps.marker.AdvancedMarkerElement({
+          position: { lat: sec.lat, lng: sec.lng },
+          map: mapaPrincipal,
+          title: "Possível Paradeiro: " + alvo.nome,
+          content: secEl
+        });
+
+        marcSec.addListener("click", function() {
+          mapaPrincipal.panTo({ lat: sec.lat, lng: sec.lng });
+          infoWindowAtiva.setContent(montarCardInteligencia(alvo));
+          infoWindowAtiva.open(mapaPrincipal, marcSec);
+        });
+
+        markers.push(marcSec);
+
+        // Linha tracejada
+        var line = new google.maps.Polyline({
+          path: [{ lat: alvo.lat, lng: alvo.lng }, { lat: sec.lat, lng: sec.lng }],
+          strokeColor: '#FFA500',
+          strokeOpacity: 0,
+          strokeWeight: 2,
+          map: mapaPrincipal,
+          icons: [{
+            icon: { path: 'M 0,-1 0,1', strokeOpacity: 0.6, strokeColor: '#FFA500', scale: 3 },
+            offset: '0',
+            repeat: '16px'
+          }]
+        });
+        polylines.push(line);
+      });
+
+      secundariosVisiveis[alvo.mandado] = { markers: markers, polylines: polylines };
+    } catch (e) { console.error("Erro ao auto-exibir secundários:", e); }
+  }
+
+  // ---- TOGGLE PINOS SECUNDÁRIOS ----
+  function toggleSecundarios(alvo, marcadorPrincipal) {
+    const key = alvo.mandado;
+
+    if (secundariosVisiveis[key]) {
+      // Remover
+      secundariosVisiveis[key].markers.forEach(function(m) { m.map = null; });
+      secundariosVisiveis[key].polylines.forEach(function(p) { p.setMap(null); });
+      delete secundariosVisiveis[key];
+      return;
+    }
+
+    // Criar secundários
+    try {
+      const lista = JSON.parse(alvo.geodataSecundarios || '[]');
+      if (lista.length === 0) return;
+
+      const markers = [];
+      const polylines = [];
+
+      lista.forEach(function(sec) {
+        if (typeof sec.lat !== 'number' || typeof sec.lng !== 'number' || isNaN(sec.lat) || isNaN(sec.lng)) return;
+        
+        // Pino secundário (amarelo simples)
+        const secEl = document.createElement('div');
+        secEl.className = 'pin-marker';
+        secEl.innerHTML = `
+          <svg width="30" height="40" viewBox="0 0 40 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M20 51C20 51 38 33.5 38 19C38 9.059 29.941 1 20 1C10.059 1 2 9.059 2 19C2 33.5 20 51 20 51Z" fill="#f39c12" stroke="rgba(0,0,0,0.3)" stroke-width="1.5"/>
+            <circle cx="20" cy="19" r="10" fill="rgba(0,0,0,0.2)"/>
+            <text x="20" y="23" text-anchor="middle" fill="white" font-size="12" font-weight="bold">?</text>
+          </svg>`;
+
+        const marcSec = new google.maps.marker.AdvancedMarkerElement({
+          position: { lat: sec.lat, lng: sec.lng },
+          map: mapaPrincipal,
+          title: "Possível Paradeiro: " + alvo.nome,
+          content: secEl
+        });
+
+        marcSec.addListener("click", function() {
+          mapaPrincipal.panTo({ lat: sec.lat, lng: sec.lng });
+          infoWindowAtiva.setContent(montarCardInteligencia(alvo));
+          infoWindowAtiva.open(mapaPrincipal, marcSec);
+        });
+
+        markers.push(marcSec);
+
+        // Linha tracejada
+        const line = new google.maps.Polyline({
+          path: [
+            { lat: alvo.lat, lng: alvo.lng },
+            { lat: sec.lat, lng: sec.lng }
+          ],
+          geodesic: true,
+          strokeColor: '#f39c12',
+          strokeOpacity: 0.7,
+          strokeWeight: 2,
+          map: mapaPrincipal,
+          icons: [{
+            icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, scale: 3 },
+            offset: '0',
+            repeat: '16px'
+          }]
+        });
+        // Tornar a linha sólida tracejada
+        line.setOptions({ strokeOpacity: 0 });
+        polylines.push(line);
+      });
+
+      secundariosVisiveis[key] = { markers, polylines };
+    } catch (e) { console.error("Erro ao toggle secundários:", e); }
+  }
+
+  /* ================================================================
+     MÓDULO 5: HAVERSINE + GEOLOCALIZAÇÃO
+     ================================================================ */
+  function calcularHaversine(lat1, lon1, lat2, lon2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  }
+
+  function iniciarGeolocalizacao() {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition(
+      function(pos) {
+        posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        mapaPrincipal.setCenter(posicaoPatrulheiro);
+
+        new google.maps.marker.AdvancedMarkerElement({
+          position: posicaoPatrulheiro,
+          map: mapaPrincipal,
+          title: "Sua Posição",
+          content: criarPinoPosicao()
+        });
+
+        // Identificar área após polígonos carregarem
+        setTimeout(function() { atualizarBadgeAreaGPS(); }, 3000);
+      },
+      function(error) { 
+        console.warn("GPS indisponível (mapa continua funcionando): ", error.message || error); 
+        // Se falhou o GPS e os poligonos carregaram, mostra todos
+        setTimeout(function() {
+          if(typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS','TODOS','TODOS');
+        }, 1500);
+      },
+      { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+    );
+
+    // Watch contínuo
+    watchPositionId = navigator.geolocation.watchPosition(
+      function(pos) {
+        posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        atualizarBadgeAreaGPS();
+      },
+      function() {},
+      { enableHighAccuracy: true, maximumAge: 30000 }
+    );
+  }
+
+  function criarPinoPosicao() {
+    const el = document.createElement('div');
+    el.innerHTML = '<div style="width:20px;height:20px;border-radius:50%;background:var(--accent);border:3px solid white;box-shadow:0 0 12px rgba(108,99,255,0.6),0 2px 6px rgba(0,0,0,0.3);"></div>';
+    return el;
+  }
+
+  // ---- BADGE DE ÁREA GPS ----
+
+  /**
+   * Ray Casting client-side para point-in-polygon
+   */
+  function pontoNoPoligonoJS(lat, lng, paths) {
+    var inside = false;
+    var n = paths.length;
+    for (var i = 0, j = n - 1; i < n; j = i++) {
+      var yi = paths[i].lat, xi = paths[i].lng;
+      var yj = paths[j].lat, xj = paths[j].lng;
+      if (((yi > lat) !== (yj > lat)) &&
+          (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  var badgeAreaGPSNode = null;
+
+  /**
+   * Identifica em qual polígono o patrulheiro está e atualiza o badge
+   */
+  function atualizarBadgeAreaGPS() {
+    if (!posicaoPatrulheiro || !poligonosCarregados) return;
+
+    var lat = posicaoPatrulheiro.lat;
+    var lng = posicaoPatrulheiro.lng;
+    var areaEncontrada = null;
+
+    // Buscar nos polígonos já renderizados
+    for (var i = 0; i < poligonosInstancias.length; i++) {
+      var poly = poligonosInstancias[i].polygon;
+      var path = poly.getPath();
+      if (!path) continue;
+
+      var pathArray = [];
+      path.forEach(function(latLng) {
+        pathArray.push({ lat: latLng.lat(), lng: latLng.lng() });
+      });
+
+      if (pontoNoPoligonoJS(lat, lng, pathArray)) {
+        areaEncontrada = poligonosInstancias[i];
+        
+        // Auto-selecionar o CPI local no filtro se ainda não foi feito
+        if (!window._cpiAutoSelecionado && areaEncontrada.cpi) {
+          window._cpiAutoSelecionado = true;
+          if (document.getElementById('filtroCPI')) {
+             document.getElementById('filtroCPI').value = areaEncontrada.cpi;
+             if (document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').value = areaEncontrada.cpi;
+             montarFiltrosBatalhao(false);
+             filtrarNoMapa();
+             // Pintar o polígono do CPI no mapa
+             aplicarFiltrosDePoligono(
+               areaEncontrada.cpi,
+               document.getElementById('filtroBatalhao') ? document.getElementById('filtroBatalhao').value : 'TODOS',
+               document.getElementById('filtroCIA') ? document.getElementById('filtroCIA').value : 'TODOS'
+             );
+          }
+        }
+        break;
+      }
+    }
+
+    // Buscar dados completos do polígono (batalhao, cia, delegacia) via dados carregados
+    var badge = badgeAreaGPSNode || document.getElementById('badgeAreaGPS');
+    if (!badge) {
+      badge = document.createElement('div');
+      badge.id = 'badgeAreaGPS';
+      badge.style.cssText = 'font-family:var(--font-sans);font-size:11px;line-height:1.4;padding:8px 14px;background:rgba(15,23,42,0.85);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-radius:12px;color:white;border:1px solid rgba(255,255,255,0.12);box-shadow:0 4px 20px rgba(0,0,0,0.4);pointer-events:none;margin:10px;max-width:280px;';
+      badgeAreaGPSNode = badge;
+      mapaPrincipal.controls[google.maps.ControlPosition.TOP_LEFT].push(badge);
+    }
+
+    if (areaEncontrada) {
+      // Buscar detalhes via callback do servidor (delegacia e cidade)
+      // Usar os dados que já temos no polígono
+      var info = areaEncontrada;
+      var html = '<div style="display:flex;align-items:center;gap:6px;">';
+      html += '<span class="material-symbols-outlined" style="font-size:16px;color:var(--accent);">my_location</span>';
+      html += '<span style="font-weight:700;color:var(--accent);">Sua \u00c1rea</span>';
+      html += '</div>';
+      html += '<div style="margin-top:4px;font-weight:600;">' + (info.batalhao || '') + (info.cia ? ' \u2014 ' + info.cia : '') + '</div>';
+
+      // Para obter delegacia, buscar via servidor uma vez
+      if (!badge._areaCarregada || badge._areaBatalhao !== info.batalhao || badge._areaCia !== info.cia) {
+        badge._areaBatalhao = info.batalhao;
+        badge._areaCia = info.cia;
+        badge._areaCarregada = true;
+
+        google.script.run.withSuccessHandler(function(area) {
+          if (area) {
+            var extraHtml = '';
+            if (area.cpi) extraHtml += '<div style="font-size:10px;opacity:0.7;margin-top:2px;"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:middle;">shield</span> ' + area.cpi + '</div>';
+            if (area.delegacia) extraHtml += '<div style="font-size:10px;opacity:0.6;margin-top:1px;"><span class="material-symbols-outlined" style="font-size:11px;vertical-align:middle;">account_balance</span> ' + area.delegacia + '</div>';
+            badge._extraInfo = extraHtml;
+            badge.innerHTML = html + extraHtml;
+          } else {
+            badge.innerHTML = html;
+          }
+        }).withFailureHandler(function() {
+          badge.innerHTML = html;
+        }).identificarAreaPorCoordenadas(lat, lng);
+      } else {
+        badge.innerHTML = html + (badge._extraInfo || '');
+      }
+    } else {
+      badge.innerHTML = '<div style="display:flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="font-size:16px;opacity:0.5;">my_location</span><span style="opacity:0.5;">Fora da \u00e1rea mapeada</span></div>';
+      badge._areaCarregada = false;
+    }
+  }
+
+
+  /* ================================================================
+     MÓDULO 6: POLÍGONOS DE ÁREAS (BPM/CIA) E CACHE LOCAL (INDEXEDDB)
+     ================================================================ */
+  let poligonosInstancias = [];
+  let poligonosVisiveis = true;
+  let poligonosCarregados = false;
+
+  const dbName = "SentinelaDB";
+  const storeName = "Poligonos";
+
+  function lerCachePoligonos(versaoServidor, callbackSucesso, callbackFalha) {
+    if (!window.indexedDB) { callbackFalha(); return; }
+    let request = indexedDB.open(dbName, 2);
+    request.onupgradeneeded = function(e) {
+      let db = e.target.result;
+      if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
+    };
+    request.onsuccess = function(e) {
+      let db = e.target.result;
+      if (!db.objectStoreNames.contains("Poligonos")) { callbackFalha(); return; }
+      try {
+        let transaction = db.transaction(["Poligonos"], "readonly");
+        let store = transaction.objectStore("Poligonos");
+        let getRequest = store.get("dados_mapa");
+        getRequest.onsuccess = function() {
+          if (getRequest.result && String(getRequest.result.versao) === String(versaoServidor)) {
+            callbackSucesso(getRequest.result.dados);
+          } else {
+            callbackFalha();
+          }
+        };
+        getRequest.onerror = callbackFalha;
+      } catch (err) { callbackFalha(); }
+    };
+    request.onerror = callbackFalha;
+  }
+
+  function salvarCachePoligonos(versaoServidor, dados) {
+    if (!window.indexedDB) return;
+    let request = indexedDB.open(dbName, 2);
+    request.onupgradeneeded = function(e) {
+      let db = e.target.result;
+      if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
+    };
+    request.onsuccess = function(e) {
+      let db = e.target.result;
+      try {
+        let transaction = db.transaction(["Poligonos"], "readwrite");
+        let store = transaction.objectStore("Poligonos");
+        store.put({ id: "dados_mapa", versao: String(versaoServidor), dados: dados });
+      } catch (err) {}
+    };
+  }
+
+  function carregarPoligonos() {
+    if (poligonosCarregados) return;
+
+    // Failsafe: se polígonos não carregarem em 30s, libera a tela
+    var failsafePoligonos = setTimeout(function() {
+      if (!poligonosCarregados) {
+        console.warn("Failsafe: polígonos não carregaram em 30s");
+        fecharTelaDeCarregamento();
+      }
+    }, 30000);
+
+    // Carregar sempre do servidor (sem cache) para garantir dados frescos
+    google.script.run.withSuccessHandler(function(dados) {
+      clearTimeout(failsafePoligonos);
+      if (!dados || dados.length === 0) {
+        console.warn("Servidor retornou 0 polígonos");
+        fecharTelaDeCarregamento();
+        return;
+      }
+      console.log("Polígonos recebidos do servidor: " + dados.length);
+      processarDadosPoligonos(dados);
+    }).withFailureHandler(function(err) {
+      clearTimeout(failsafePoligonos);
+      console.error("Erro ao carregar polígonos:", err);
+      fecharTelaDeCarregamento();
+    }).obterPoligonos();
+  }
+
+  function processarDadosPoligonos(dados) {
+    if (poligonosCarregados) return;
+    poligonosCarregados = true;
+    
+    // Renderizar com callback — só monta filtros quando TODOS os lotes terminarem
+    renderizarPoligonos(dados, function() {
+      adicionarBotaoPoligonos();
+      montarFiltrosCPI();
+      montarFiltrosBatalhao(false);
+
+      // SEMPRE aplicar filtros de polígono (antes falhava quando GPS estava ativo)
+      var cpiVal = document.getElementById('filtroCPI') ? document.getElementById('filtroCPI').value : 'TODOS';
+      var bpmVal = document.getElementById('filtroBatalhao') ? document.getElementById('filtroBatalhao').value : 'TODOS';
+      var ciaVal = document.getElementById('filtroCIA') ? document.getElementById('filtroCIA').value : 'TODOS';
+      aplicarFiltrosDePoligono(cpiVal, bpmVal, ciaVal);
+
+      fecharTelaDeCarregamento();
+    });
+  }
+
+  function renderizarPoligonos(dados, onComplete) {
+    // Limpar anteriores
+    poligonosInstancias.forEach(function(p) { p.polygon.setMap(null); });
+    poligonosInstancias = [];
+
+    // Processar em lotes para não travar a UI
+    var LOTE = 50;
+    var i = 0;
+
+    function processarLote() {
+      var fim = Math.min(i + LOTE, dados.length);
+      for (; i < fim; i++) {
+        try {
+          var item = dados[i];
+          var geo = JSON.parse(item.geoJson);
+          if (!geo || !geo.coordinates || !geo.coordinates[0]) continue;
+
+          var paths = geo.coordinates[0].map(function(coord) {
+            return { lat: coord[1], lng: coord[0] };
+          });
+
+          var corHex = item.cor || '#3388ff';
+
+          var polygon = new google.maps.Polygon({
+            paths: paths,
+            strokeColor: corHex,
+            strokeOpacity: 0.9,
+            strokeWeight: 2,
+            fillColor: corHex,
+            fillOpacity: 0.25,
+            map: null,
+            clickable: false,
+            zIndex: 1
+          });
+
+          poligonosInstancias.push({
+            polygon: polygon,
+            cpi: item.cpi || "",
+            batalhao: item.batalhao || "",
+            cia: item.cia || "",
+            delegacia: item.delegacia || "",
+            cidade: item.cidade || "",
+            cor: corHex
+          });
+        } catch (e) {
+          console.error("Erro ao renderizar polígono:", e);
+        }
+      }
+
+      if (i < dados.length) {
+        setTimeout(processarLote, 0);
+      } else {
+        // Todos os lotes terminaram — executar callback
+        if (onComplete) onComplete();
+      }
+    }
+
+    processarLote();
+  }
+
+  function togglePoligonos() {
+    poligonosVisiveis = !poligonosVisiveis;
+    aplicarFiltrosDePoligono(
+      document.getElementById('filtroCPI') ? document.getElementById('filtroCPI').value : 'TODOS',
+      document.getElementById('filtroBatalhao') ? document.getElementById('filtroBatalhao').value : 'TODOS',
+      document.getElementById('filtroCIA') ? document.getElementById('filtroCIA').value : 'TODOS'
+    );
+    var btn = document.getElementById('btnTogglePoligonos');
+    if (btn) {
+      var icon = btn.querySelector('span');
+      if (poligonosVisiveis) {
+        icon.style.color = 'var(--success)';
+        icon.style.textShadow = '0 0 8px rgba(46, 204, 113, 0.4)';
+      } else {
+        icon.style.color = 'var(--text-secondary)';
+        icon.style.textShadow = 'none';
+      }
+    }
+  }
+
+  // Paleta de cores VIBRANTES e bem distintas para diferenciar CPIs/Batalhões/CIAs
+  const paletaCoresEscuras = [
+    '#E53935', '#1E88E5', '#43A047', '#FB8C00', '#8E24AA',
+    '#00ACC1', '#D81B60', '#FFB300', '#3949AB', '#00897B',
+    '#C62828', '#1565C0', '#2E7D32', '#EF6C00', '#6A1B9A',
+    '#00838F', '#AD1457', '#FF8F00', '#283593', '#00695C',
+    '#B71C1C', '#0D47A1', '#1B5E20', '#E65100', '#4A148C'
+  ];
+
+  function aplicarFiltrosDePoligono(filtroCPI, filtroBPM, filtroCIA) {
+    if (!poligonosVisiveis) {
+      poligonosInstancias.forEach(function(p) { p.polygon.setMap(null); });
+      return;
+    }
+
+    // Cores dinâmicas por nível de filtro
+    let coresAtribuidas = {};
+    let corIndex = 0;
+
+    function obterCorDinamica(chave) {
+      if (!coresAtribuidas[chave]) {
+        coresAtribuidas[chave] = paletaCoresEscuras[corIndex % paletaCoresEscuras.length];
+        corIndex++;
+      }
+      return coresAtribuidas[chave];
+    }
+
+    poligonosInstancias.forEach(function(p) {
+      let matchCPI = (filtroCPI === 'TODOS' || p.cpi === filtroCPI);
+      let matchBPM = (filtroBPM === 'TODOS' || p.batalhao === filtroBPM);
+      let matchCIA = (filtroCIA === 'TODOS' || p.cia === filtroCIA);
+      
+      if (matchCPI && matchBPM && matchCIA) {
+        var corBase;
+
+        if (filtroCPI === 'TODOS') {
+          // Cor única por CPI
+          corBase = obterCorDinamica(p.cpi);
+        } else if (filtroBPM === 'TODOS') {
+          // CPI selecionado → cor única por Batalhão
+          corBase = obterCorDinamica(p.batalhao);
+        } else if (filtroCIA === 'TODOS') {
+          // CPI+BPM selecionados → cor única por CIA
+          corBase = obterCorDinamica(p.cia);
+        } else {
+          // Tudo selecionado → cor da planilha
+          corBase = p.cor || '#3388ff';
+        }
+
+        p.polygon.setOptions({
+          fillColor: corBase,
+          strokeColor: corBase,
+          fillOpacity: 0.25,
+          strokeOpacity: 0.9,
+          strokeWeight: 2
+        });
+
+        p.polygon.setMap(mapaPrincipal);
+      } else {
+        p.polygon.setMap(null);
+      }
+    });
+  }
+
+  function adicionarBotaoPoligonos() {
+    if (document.getElementById('btnTogglePoligonos')) return;
+
+    // Buscar o layersPanel (painel dentro do layersWrapper em LEFT_BOTTOM)
+    var controls = mapaPrincipal.controls[google.maps.ControlPosition.LEFT_BOTTOM];
+    if (controls && controls.getLength() > 0) {
+      var layersWrapper = controls.getAt(0);
+      // O layersPanel é o segundo filho do layersWrapper (primeiro é o btnLayers)
+      var layersPanel = layersWrapper.querySelector('div');
+      if (!layersPanel) return;
+      
+      var btnPoligonos = document.createElement('button');
+      btnPoligonos.id = 'btnTogglePoligonos';
+      btnPoligonos.innerHTML = '<span class="material-symbols-outlined" style="font-size:20px;color:var(--success);text-shadow:0 0 8px rgba(46, 204, 113, 0.4);">hexagon</span>';
+      btnPoligonos.title = 'Áreas BPM/CIA';
+      btnPoligonos.style.cssText = 'display:flex;align-items:center;justify-content:center;width:44px;height:38px;border:none;border-radius:99px;cursor:pointer;background:transparent;box-shadow:none;transition:all 0.3s;font-family:var(--font-sans);';
+      btnPoligonos.onclick = togglePoligonos;
+
+      layersPanel.appendChild(btnPoligonos);
+    }
+  }
+</script>
