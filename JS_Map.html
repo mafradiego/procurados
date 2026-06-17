@@ -912,54 +912,68 @@
   }
 
   function iniciarGeolocalizacao() {
-    const latPadrao = parseFloat(configsSistema.mapa_lat_padrao) || -22.9056;
-    const lngPadrao = parseFloat(configsSistema.mapa_lng_padrao) || -47.0608;
+    // Desacopla a execução do GPS da thread principal (aguarda 1.5s).
+    // Isso garante que o mapa padrão (Campinas) renderize PERFEITAMENTE sem interrupções do sistema.
+    setTimeout(function() {
+      try {
+        if (!navigator.geolocation) {
+          console.warn("Navegador não suporta geolocalização. Mapa já está nas coordenadas padrão.");
+          return;
+        }
 
-    if (!navigator.geolocation) {
-      console.warn("Geolocalização não suportada. Carregando coordenadas padrão.");
-      mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
-      return;
-    }
+        navigator.geolocation.getCurrentPosition(
+          function(pos) {
+            posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            // Apenas centraliza e aplica zoom se encontrou o GPS com sucesso
+            mapaPrincipal.setCenter(posicaoPatrulheiro);
+            mapaPrincipal.setZoom(15);
 
-    navigator.geolocation.getCurrentPosition(
-      function(pos) {
-        posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        mapaPrincipal.setCenter(posicaoPatrulheiro);
+            new google.maps.marker.AdvancedMarkerElement({
+              position: posicaoPatrulheiro,
+              map: mapaPrincipal,
+              title: "Sua Posição",
+              content: criarPinoPosicao()
+            });
 
-        new google.maps.marker.AdvancedMarkerElement({
-          position: posicaoPatrulheiro,
-          map: mapaPrincipal,
-          title: "Sua Posição",
-          content: criarPinoPosicao()
-        });
+            setTimeout(function() { atualizarBadgeAreaGPS(); }, 3000);
+          },
+          function(error) { 
+            console.warn("GPS negado ou indisponível. Mantendo mapa renderizado na região padrão."); 
+            // IMPORTANTE: NÃO forçamos o map.setCenter aqui. O mapa já nasceu centrado corretamente 
+            // no setup principal. Tentar centralizar novamente aqui é o que travava a API.
+            
+            // Apenas garante que os polígonos fiquem visíveis caso o usuário negue o GPS
+            setTimeout(function() {
+              if(typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS','TODOS','TODOS');
+            }, 1000);
+          },
+          // Timeout reduzido para evitar congelamento longo da permissão no mobile
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        );
 
-        // Identificar área após polígonos carregarem
-        setTimeout(function() { atualizarBadgeAreaGPS(); }, 3000);
-      },
-      function(error) { 
-        console.warn("GPS indisponível (mapa continua funcionando): ", error.message || error); 
-        
-        // Forçar mapa para a coordenada padrão configurada no sistema
-        mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
+        // O monitoramento contínuo também pode quebrar (throw error) em WebViews se bloqueado
+        try {
+          watchPositionId = navigator.geolocation.watchPosition(
+            function(pos) {
+              posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+              atualizarBadgeAreaGPS();
+            },
+            function(err) {
+              console.warn("Monitoramento contínuo de GPS falhou, ignorando.");
+            },
+            { enableHighAccuracy: true, maximumAge: 30000 }
+          );
+        } catch (e) {
+          console.warn("Falha de segurança ao iniciar o watchPosition: ", e);
+        }
 
-        // Se falhou o GPS e os poligonos carregaram, mostra todos
-        setTimeout(function() {
-          if(typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS','TODOS','TODOS');
-        }, 1500);
-      },
-      { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
-    );
-
-    // Watch contínuo
-    watchPositionId = navigator.geolocation.watchPosition(
-      function(pos) {
-        posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        atualizarBadgeAreaGPS();
-      },
-      function() {},
-      { enableHighAccuracy: true, maximumAge: 30000 }
-    );
+      } catch (excecaoCritica) {
+        console.error("Erro crítico na API de GPS contido com sucesso.", excecaoCritica);
+      }
+    }, 1500); 
   }
+  
+
   function criarPinoPosicao() {
     const el = document.createElement('div');
     el.innerHTML = '<div style="width:20px;height:20px;border-radius:50%;background:var(--accent);border:3px solid white;box-shadow:0 0 12px rgba(108,99,255,0.6),0 2px 6px rgba(0,0,0,0.3);"></div>';
