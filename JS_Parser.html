@@ -1,0 +1,314 @@
+<script>
+/* ================================================================
+     MÓDULO 8: PARSER BNMP + CADASTRO
+     ================================================================ */
+
+  /* Função reutilizável de extração de dados a partir de texto bruto de PDF */
+  function extrairDadosDeTextoPDF(textoBruto) {
+    const texto = textoBruto;
+
+    const isValid = function(val) { if (!val) return false; return !["", "n/a", "-", "não", "nao", "não informado", "nao informado", "não informada"].includes(val.trim().toLowerCase()); };
+
+    const stopLabels = "(?:N° do Mandado\\s*:|N° do Documento\\s*:|Data de validade\\s*:|Nome da Pessoa\\s*:|Pessoa Procurada\\s*:|Nome\\s*:|Nome Social\\s*:|RJI\\s*:|Alcunha\\s*:|Data de Nascimento\\s*:|Sexo\\s*:|Cor\\s*:|RG\\s*:|CPF\\s*:|Natural de\\s*:|Filia[çc][ãa]o\\s*:|Nome da mãe\\s*:|Nome do pai\\s*:|Marcas e sinais\\s*:|Teor do Documento|Endereços|Telefones\\s*:|Informa[çc][õo]es Processuais|Nº do processo\\s*:|Órgão Judicial\\s*:|Espécie de|Tipo do Mandado Origin[áa]rio\\s*:|Tipifica[çc][ãa]o Penal|Lei\\s*:|Artigo\\s*:|Parágrafo\\s*:|Complemento\\s*:|Pena restante\\s*:|Regime Prisional\\s*:|Motivo\\s*:|Crime tentat|Violência Doméstica\\s*:|Identifica[çc][ãa]o biom[ée]trica|Síntese da|Advertências|Observaç[õo]es|Lavrado por\\s*:|MANDADO DE PRISÃO|$)";
+
+    const extrairCurto = function(labelRegex) {
+      const regex = new RegExp(labelRegex + '\\s*([\\s\\S]*?)(?=' + stopLabels + ')', 'i');
+      const m = texto.match(regex);
+      let res = m ? m[1].replace(/\n/g, ' ').replace(/\s{2,}/g, ' ').trim() : "N/A";
+      return res.replace(/^\|/, '').replace(/\|$/, '').trim() || "N/A";
+    };
+
+    // Mandado: extrair apenas o número no formato NNNNNNN-NN.NNNN.N.NN.NNNN... 
+    let mandado = extrairCurto('N° do (?:Mandado|Documento)\\s*:');
+    var matchMandado = mandado.match(/[\d]{5,}-[\d\.]+/); 
+    if (matchMandado) mandado = matchMandado[0];
+
+    const matchVal = texto.match(/Data de validade\s*:\s*(\d{2}[\/\.]\d{2}[\/\.]\d{4})/i);
+    const validade = matchVal ? matchVal[1].replace(/\./g, '/') : "N/A";
+    let nome = extrairCurto('Nome da Pessoa\\s*:'); if (!isValid(nome)) nome = extrairCurto('Pessoa Procurada\\s*:'); if (!isValid(nome)) nome = extrairCurto('Nome\\s*:');
+    // CPF: extrair apenas o padrão NNN.NNN.NNN-NN
+    let cpfBruto = extrairCurto('CPF\\s*:');
+    var matchCpf = cpfBruto.match(/\d{3}\.\d{3}\.\d{3}-\d{2}/);
+    const cpf = matchCpf ? matchCpf[0] : cpfBruto;
+    // RG: limpar traços e espaços soltos no final
+    let rg = extrairCurto('RG\\s*:').replace(/[\s-]+$/, '').trim();
+    let matchNasc = texto.match(/(?:Data de Nascimento|Data de nasc\.)\s*:\s*(\d{2}[\/\.]\d{2}[\/\.]\d{4})/i);
+    let nascimento = matchNasc ? matchNasc[1].replace(/\./g, '/') : "N/A";
+    const sexo = extrairCurto('Sexo\\s*:'); const cor = extrairCurto('Cor\\s*:'); const naturalidade = extrairCurto('Natural de\\s*:');
+    let filiacao = extrairCurto('Filia[çc][ãa]o\\s*:').replace(/BNMP\d*/ig, '').trim();
+    if (!isValid(filiacao)) { let mae = extrairCurto('Nome da mãe\\s*:'); let pai = extrairCurto('Nome do pai\\s*:'); if (isValid(mae) || isValid(pai)) filiacao = (isValid(mae)?mae:"Não informado") + "(mãe) e " + (isValid(pai)?pai:"Não informado") + "(pai)"; }
+    const rji = extrairCurto('RJI\\s*:'); const nomeSocial = extrairCurto('Nome Social\\s*:'); const alcunha = extrairCurto('Alcunha\\s*:'); const marcas = extrairCurto('Marcas e sinais\\s*:');
+    const tituloMatch = texto.match(/MANDADO[^\n\r]*/i); let titulo = tituloMatch ? tituloMatch[0].trim() : "MANDADO DE PRISÃO";
+    const emissaoMatch = texto.match(/([A-ZÀ-ÿ\- ]+,\s*\d{1,2}\s+de\s+[A-Za-zÀ-ÿ]+\s+de\s+\d{4})/i); let emissao = emissaoMatch ? emissaoMatch[1].trim() : "";
+    const sinteseMatch = texto.match(/Síntese da [Dd]ecisão:?\s*([\s\S]*?)(?:Advertências|Observaç[õo]es?:|Outros Mandados|Documento assinado|Lavrado por|$)/i); const sintese = sinteseMatch ? sinteseMatch[1].trim().replace(/\n/g, ' ') : "";
+    const obsMatch = texto.match(/Observaç[õo]es?:?\s*([\s\S]*?)(?:Lavrado por:|Documento assinado|Para confirmar)/i); const obsPdf = obsMatch ? obsMatch[1].trim().replace(/\n/g, ' ') : "";
+
+    const endMatch = texto.match(/Endereços:?\s*([\s\S]*?)(?=Informa[çc][õo]es Processuais|Telefones:|Síntese|Outros Mandados|Advertências|Documento assinado|Lavrado por:?|Observaç[õo]es|CRIMINAIS -|DEPARTAMENTO|$)/i);
+    let blocoEnd = endMatch ? endMatch[1].trim() : "N/A";
+
+    blocoEnd = blocoEnd.replace(/CEP[:\s-]*\n+/gi, 'CEP ');
+    const UFS_BRASIL = "AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO";
+    const ufRegex = new RegExp('-\\s*(' + UFS_BRASIL + ')(?=\\s+[A-Z])', 'gi');
+    blocoEnd = blocoEnd.replace(ufRegex, '- $1\n');
+
+    // Filtro de lixo nos endereços (textos institucionais/jurídicos que vazam do PDF)
+    var lixoEndereco = /Tribunal de Justi|Documento assinado|Para confirmar|DEPARTAMENTO DE|CRIMINAL DE|CRIMINAIS|RAJ DE|EXECU[ÇC][ÕO]ES|\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}|e-mail:|telefone:|Nº do Mandado|Mandado de Pris|Mandado de Intern|Teor do Documento|Magistrado|Alcançado|competente.*conforme|jurisdição|TribunalÓrgão|portal\s*BNMP|QR\s*Code|a qualquer Autoridade|que PRENDA e RECOLHA|indicada e qualificada|à ordem e à disposição|unidade prisional|juízo expedidor|pessoa acima|CUMULATIVA DE|VARA CRIMINAL|VARA UNICA|VARA JUDICIAL|VEPEMA|Código Penal|Código de Processo|inimputável|MEDIDA DE SEGURANÇA|art\.\s*\d+|inc\.\s|fundamento no art|trânsito em julg|defesa da vítima|aplicando-lhe|absolver|condenar|sentenciado|pena privativa|regime prisional|condenação|Lei de Execução|medida de segurança|prazo mínimo|considerando o|Internação decorrente|Identificação biométrica|N° do Documento|tipificação|biométrica/i;
+    let listaEndBruta = blocoEnd.split('\n').map(function(e) { return e.replace(/Telefone.*/gi, '').replace(/Logradouro:\s*/i, '').trim(); }).filter(function(e) { return e.length >= 5 && isValid(e) && !lixoEndereco.test(e); });
+    
+    // Juntar linhas fragmentadas: se a linha não começa com prefixo de logradouro, é continuação da anterior
+    var prefixosEnd = /^(Rua|R |R\.|Av |Av\.|Avenida|Estrada|Rodovia|Rod\.|Travessa|Tv\.|Alameda|Al\.|Praça|Pc\.|Largo|Beco|Viela|Servidão|LOCAL|FOLHA|QUADRA|LOCALIDADE|RUA|AVENIDA|ESTRADA|RODOVIA|TRAVESSA)/i;
+    var listaEndJuntada = [];
+    for (var ei = 0; ei < listaEndBruta.length; ei++) {
+      var linhaEnd = listaEndBruta[ei];
+      if (ei > 0 && !prefixosEnd.test(linhaEnd) && listaEndJuntada.length > 0) {
+        // Continuar endereço anterior
+        listaEndJuntada[listaEndJuntada.length - 1] += ', ' + linhaEnd;
+      } else {
+        listaEndJuntada.push(linhaEnd);
+      }
+    }
+    
+    let listaEnd = listaEndJuntada.filter(function(e) { return e.length >= 10; });
+    if(listaEnd.length === 0) listaEnd = ["Não informado"];
+    const endPrincipal = listaEnd[0]; const endsSec = listaEnd.slice(1);
+
+    let nProcesso = extrairCurto('Nº do processo\\s*:'); if (!isValid(nProcesso)) nProcesso = extrairCurto('N° processo\\s*:');
+    const orgao = extrairCurto('Órgão Judicial\\s*:');
+    let especie = extrairCurto('Espécie(?: de| da) (?:prisão|Internação)\\s*:'); if (!isValid(especie)) especie = extrairCurto('Espécie de prisão\\s*:');
+    let lei = extrairCurto('Lei\\s*:'); let artigo = extrairCurto('Artigo\\s*:'); let paragrafo = extrairCurto('Parágrafo\\s*:');
+    
+    // Filtro inteligente para Lei mal formatada
+    if (lei && lei.match(/art\./i) && (!isValid(artigo) || artigo === 'N/A' || artigo === '')) {
+      var partesLei = lei.split(/art\./i);
+      lei = partesLei[0].replace(/,\s*$/, '').trim();
+      var restoLei = partesLei[1].trim();
+      if (restoLei.match(/§/i)) {
+        var subPartes = restoLei.split(/§/i);
+        artigo = subPartes[0].replace(/,\s*$/, '').trim();
+        paragrafo = '§ ' + subPartes[1].trim();
+      } else {
+        artigo = restoLei;
+      }
+    }
+
+    let pena = extrairCurto('Pena restante\\s*:'); if (!isValid(pena)) pena = extrairCurto('Prazo Mínimo da Internação\\s*:');
+    const regime = extrairCurto('Regime Prisional\\s*:'); const motivo = extrairCurto('Motivo\\s*:'); const tentado = extrairCurto('Crime tentat[do]\\s*:'); const vd = extrairCurto('Violência Doméstica\\s*:');
+
+    let infoProc = 'Nº do processo: ' + nProcesso + ' | Órgão Judicial: ' + orgao + ' | Espécie de prisão: ' + especie + ' | Lei: ' + lei + ' | Artigo: ' + artigo + ' | Parágrafo: ' + paragrafo + ' | Pena restante: ' + pena + ' | Regime Prisional: ' + regime + ' | Motivo: ' + motivo + ' | Crime tentado: ' + tentado + ' | Violência Doméstica: ' + vd;
+
+    return {
+      nome, cpf, mandado, validade, rg, naturalidade, nascimento, sexo, cor, filiacao,
+      batalhao: "A DEFINIR (GEO)", infoProcessuais: infoProc,
+      enderecoPrincipal: endPrincipal, latPrincipal: null, lngPrincipal: null, secundarios: endsSec.map(function(s) { return {endereco: s, lat: null, lng: null}; }),
+      extras: { titulo: titulo, emissao: emissao, nomeSocial: isValid(nomeSocial)?nomeSocial:"", rji: isValid(rji)?rji:"", alcunha: isValid(alcunha)?alcunha:"", marcas: isValid(marcas)?marcas.replace(/\n/g,' '):"", sintese: isValid(sintese)?sintese:"", obsPdf: isValid(obsPdf)?obsPdf:"" }
+    };
+  }
+
+  /* Processa um único mandado a partir do texto colado */
+  async function processarSuperBloco() {
+    const texto = document.getElementById('textoPdfBruto').value;
+    if(texto.length < 50) return chamarAlertaTatico("FALTA INFORMAÇÃO", "Cole o texto do PDF oficial antes de extrair.", "OK");
+    
+    document.getElementById('btnProcessarTexto').innerText = "Processando inteligência...";
+
+    let dadosTemporarios = extrairDadosDeTextoPDF(texto);
+
+    if (dadosTemporarios.mandado && dadosTemporarios.mandado !== "N/A") {
+      const existente = dadosMandados.find(function(d) { return d.mandado === dadosTemporarios.mandado; });
+      if (existente) {
+        document.getElementById('btnProcessarTexto').innerText = "EXTRAIR DADOS E PREVER ALVOS";
+        return chamarAlertaTatico("⚠️ DUPLICIDADE", "Mandado já no banco.\n\nAlvo: " + existente.nome + "\nStatus: " + existente.status, "OK");
+      }
+    }
+
+    // Pega a foto do cropper se existir
+    if (fotoBase64Temporaria && fotoBase64Temporaria !== "") {
+      dadosTemporarios.fotoBase64 = fotoBase64Temporaria;
+    }
+    
+    // Adicionar os endereços secundários como string para poder editar e ler no mesmo formato
+    var txtSec = dadosTemporarios.secundarios.map(function(s){return s.endereco;}).join(' || ');
+    dadosTemporarios.secundariosText = txtSec;
+
+    filaImportacao.push(dadosTemporarios);
+    
+    document.getElementById('btnProcessarTexto').innerText = "EXTRAIR DADOS E PREVER ALVOS";
+    document.getElementById('textoPdfBruto').value = "";
+    fecharModalSuperBloco();
+    
+    document.getElementById('view-revisao-importacao').style.display = 'flex';
+    renderizarTabelaFilaRevisao();
+  }
+
+  /* ================================================================
+     MÓDULO 9: PROCESSAMENTO EM LOTE DE PDFs (Vai para a fila)
+     ================================================================ */
+  async function processarLotePdf(textosPdfs) {
+    var adicionados = 0;
+
+    for (var i = 0; i < textosPdfs.length; i++) {
+      var dados = extrairDadosDeTextoPDF(textosPdfs[i]);
+      if (dados.mandado && dados.mandado !== "N/A") {
+        var existente = dadosMandados.find(function(d) { return d.mandado === dados.mandado; });
+        var existeNaFila = filaImportacao.find(function(f) { return f.mandado === dados.mandado; });
+        if (existente || existeNaFila) continue;
+      }
+      
+      var txtSec = dados.secundarios.map(function(s){return s.endereco;}).join(' || ');
+      dados.secundariosText = txtSec;
+      
+      filaImportacao.push(dados);
+      adicionados++;
+    }
+
+    if (adicionados === 0) {
+      return chamarAlertaTatico("LOTE VAZIO", "Nenhum mandado novo encontrado. Todos os PDFs selecionados já estão no banco de dados ou na fila atual.", "OK");
+    }
+
+    fecharModalSuperBloco();
+    document.getElementById('view-revisao-importacao').style.display = 'flex';
+    renderizarTabelaFilaRevisao();
+  }
+
+  /* ================================================================
+     MÓDULO 10: SALVAR MANDADO INDIVIDUAL 
+     (Descontinuado - Agora a fila assume tudo, mas mantido para fallback)
+     ================================================================ */
+  function salvarMandadoConfirmado() {
+    const btn = document.getElementById('btnConfirmarPreview');
+    btn.innerText = "⏳ GRAVANDO..."; btn.disabled = true;
+    dadosTemporariosCadastro.fotoBase64 = fotoBase64Temporaria;
+
+    // WhatsApp opcional
+    const whatsAtivo = configsSistema.whatsapp_ativo === 'true';
+
+    google.script.run.withSuccessHandler(function(res) {
+      chamarAlertaTatico("BANCO DE DADOS", res.mensagem, "OK");
+      btn.style.display = 'none'; btn.disabled = false;
+      pinosPreview.forEach(function(m) { m.map = null; });
+      fecharModalSuperBloco();
+      google.script.run.withSuccessHandler(processarDados).obterDados();
+    }).withFailureHandler(function(erro) {
+      chamarAlertaTatico("FALHA", "Mandado NÃO salvo.\n\n" + erro.message, "OK");
+      btn.innerText = "CONFIRMAR NO BANCO"; btn.disabled = false;
+    }).cadastrarMandadoWebAppPreview(dadosTemporariosCadastro);
+  }
+
+  /* ================================================================
+     MÓDULO 11: RECORTE DE FOTO (CROPPER.JS)
+     ================================================================ */
+  (function() {
+    let cropperInstancia = null;
+    const inputFoto = document.getElementById('input-foto-admin');
+    const telaRecorte = document.getElementById('tela-de-recorte');
+    const wrapperFicha = document.getElementById('wrapper-ficha-normal');
+    const btnProcessar = document.getElementById('btnProcessarTexto');
+    const imagemCrop = document.getElementById('imagem-para-crop');
+    const btnConfirmarCrop = document.getElementById('btn-confirmar-crop');
+    const previewFoto = document.getElementById('preview-foto-admin');
+    const areaTextoFoto = document.getElementById('foto-texto-upload');
+
+    function abrirRecorte(arquivo) {
+      if (!arquivo || !arquivo.type.startsWith('image/')) return chamarAlertaTatico("FORMATO INVÁLIDO", "Selecione uma imagem.", "OK");
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        wrapperFicha.style.display = "none"; btnProcessar.style.display = "none";
+        telaRecorte.style.display = "flex"; imagemCrop.src = e.target.result;
+        imagemCrop.onload = function() {
+          if (cropperInstancia) cropperInstancia.destroy();
+          cropperInstancia = new Cropper(imagemCrop, { aspectRatio: 3/4, viewMode: 1, dragMode: 'move', guides: true, cropBoxMovable: true, cropBoxResizable: true, background: false });
+        };
+      };
+      reader.readAsDataURL(arquivo);
+    }
+
+    if (btnConfirmarCrop) {
+      btnConfirmarCrop.onclick = function() {
+        if (!cropperInstancia) return;
+        fotoBase64Temporaria = cropperInstancia.getCroppedCanvas({ width: 300, height: 400, fillColor: '#fff', imageSmoothingEnabled: true, imageSmoothingQuality: 'high' }).toDataURL('image/jpeg', 0.7);
+        cropperInstancia.destroy(); cropperInstancia = null;
+        telaRecorte.style.display = "none"; wrapperFicha.style.display = "flex"; btnProcessar.style.display = "block";
+        if(previewFoto) { previewFoto.src = fotoBase64Temporaria; previewFoto.style.display = "block"; previewFoto.className = "pre-save"; if(areaTextoFoto) areaTextoFoto.style.display = "none"; }
+      };
+    }
+
+    if (inputFoto) inputFoto.addEventListener('change', function(e) { if (e.target.files[0]) abrirRecorte(e.target.files[0]); });
+
+    window.addEventListener('paste', function(e) {
+      if (document.getElementById('modalSuperBloco').style.display !== 'flex') return;
+      if (telaRecorte.style.display === 'flex') return;
+      const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].type.startsWith('image/')) { abrirRecorte(items[i].getAsFile()); e.preventDefault(); break; }
+      }
+    });
+  })();
+
+  /* ================================================================
+     MÓDULO 12: LEITURA DE PDF VIA PDF.JS (SUPORTE A LOTE)
+     ================================================================ */
+  (function() {
+    const inputPdf = document.getElementById('inputPdfUpload');
+    const textArea = document.getElementById('textoPdfBruto');
+    const loadingMsg = document.getElementById('loadingPdfMsg');
+    const btnProcessar = document.getElementById('btnProcessarTexto');
+
+    if (inputPdf) {
+      inputPdf.addEventListener('change', async function(e) {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+
+        loadingMsg.style.display = 'block';
+        textArea.disabled = true;
+        btnProcessar.disabled = true;
+
+        try {
+          var textosLote = [];
+
+          for (var f = 0; f < files.length; f++) {
+            const file = files[f];
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+            var fullText = '';
+
+            for (var i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const content = await page.getTextContent();
+
+              var lastY, text = '';
+              for (var item of content.items) {
+                if (lastY == item.transform[5] || !lastY) {
+                  text += item.str;
+                } else {
+                  text += '\n' + item.str;
+                }
+                lastY = item.transform[5];
+              }
+              fullText += text + '\n';
+            }
+            textosLote.push(fullText.replace(/\s{2,}/g, ' '));
+          }
+
+          if (textosLote.length === 1) {
+            textArea.value = textosLote[0];
+            setTimeout(processarSuperBloco, 500);
+          } else {
+            setTimeout(function() { processarLotePdf(textosLote); }, 500);
+          }
+
+        } catch (erro) {
+          if (typeof chamarAlertaTatico === 'function') {
+            chamarAlertaTatico("ERRO AO LER PDF", "Não foi possível extrair o texto: " + erro.message, "OK");
+          } else {
+            alert("Erro ao ler PDF: " + erro.message);
+          }
+        } finally {
+          loadingMsg.style.display = 'none';
+          textArea.disabled = false;
+          btnProcessar.disabled = false;
+          inputPdf.value = '';
+        }
+      });
+    }
+  })();
+</script>
