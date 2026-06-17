@@ -912,7 +912,15 @@
   }
 
   function iniciarGeolocalizacao() {
-    if (!navigator.geolocation) return;
+    const latPadrao = parseFloat(configsSistema.mapa_lat_padrao) || -22.9056;
+    const lngPadrao = parseFloat(configsSistema.mapa_lng_padrao) || -47.0608;
+
+    if (!navigator.geolocation) {
+      console.warn("Geolocalização não suportada. Carregando coordenadas padrão.");
+      mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
+      return;
+    }
+
     navigator.geolocation.getCurrentPosition(
       function(pos) {
         posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -930,6 +938,10 @@
       },
       function(error) { 
         console.warn("GPS indisponível (mapa continua funcionando): ", error.message || error); 
+        
+        // Forçar mapa para a coordenada padrão configurada no sistema
+        mapaPrincipal.setCenter({ lat: latPadrao, lng: lngPadrao });
+
         // Se falhou o GPS e os poligonos carregaram, mostra todos
         setTimeout(function() {
           if(typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS','TODOS','TODOS');
@@ -948,7 +960,6 @@
       { enableHighAccuracy: true, maximumAge: 30000 }
     );
   }
-
   function criarPinoPosicao() {
     const el = document.createElement('div');
     el.innerHTML = '<div style="width:20px;height:20px;border-radius:50%;background:var(--accent);border:3px solid white;box-shadow:0 0 12px rgba(108,99,255,0.6),0 2px 6px rgba(0,0,0,0.3);"></div>';
