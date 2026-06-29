@@ -6,9 +6,20 @@
  * Ponto de entrada do Web App.
  */
 function doGet(e) {
+  // Invalidar cache do usuário ao recarregar a página para refletir mudanças manuais na planilha instantaneamente
+  try {
+    const emailAtivo = Session.getActiveUser().getEmail();
+    if (emailAtivo) {
+      const cache = CacheService.getScriptCache();
+      cache.remove("AUTH_V2_" + emailAtivo.toLowerCase());
+    }
+  } catch (err) {
+    // Ignorar falhas de leitura de e-mail no escopo de carregamento
+  }
+
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
-    .setTitle('Sentinela — Sistema Tático')
+    .setTitle('PAPA-ROMEUS — Sistema Tático')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
 }
@@ -25,10 +36,12 @@ function include(filename) {
  */
 function onOpen() {
   const ui = SpreadsheetApp.getUi();
-  ui.createMenu('Sentinela')
+  ui.createMenu('PAPA-ROMEUS')
     .addItem('Executar Setup Inicial', 'executarSetupInicial')
     .addItem('Geocodificar Pendentes', 'processarPendentes')
-    .addItem('Importar Poligonos CPI-2', 'importarPoligonosCPI2')
+    .addItem('Parar Geocod. Automática', 'pararGeocodificacaoAutomatica')
+    .addItem('Gerar Dados Fictícios', 'gerarDadosFicticios')
+    .addItem('Remover Endereços Duplicados', 'removerEnderecosDuplicados')
     .addSeparator()
     .addItem('Atualizar Headers v2.5 (Migracao)', 'atualizarHeadersMandados')
     .addItem('Verificar Integridade', 'verificarIntegridade')
@@ -64,6 +77,15 @@ function obterConfiguracoes() {
     }
   }
 
+  // Cota dinâmica para geocodificação se não existir na planilha
+  if (!configs["geocodificacao_limite_mensal"]) {
+    configs["geocodificacao_limite_mensal"] = {
+      valor: "40000",
+      categoria: "Mapa",
+      descricao: "Limite mensal de endereços geocodificados na API do Google Maps."
+    };
+  }
+
   return configs;
 }
 
@@ -84,12 +106,16 @@ function obterConfiguracoesSimples() {
     if (chave) configs[chave] = valor;
   }
 
+  if (!configs["geocodificacao_limite_mensal"]) {
+    configs["geocodificacao_limite_mensal"] = "40000";
+  }
+
   return configs;
 }
 
 /**
  * Salva múltiplas configurações de uma vez (Admin only).
- * @param {Object} novasConfigs — { chave: novoValor, chave2: novoValor2, ... }
+ * @param {Object} novasConfigs — { chave: novoValor, ... }
  */
 function salvarConfiguracoes(novasConfigs) {
   // Verificar permissão Admin
@@ -107,7 +133,9 @@ function salvarConfiguracoes(novasConfigs) {
 
     const dados = aba.getDataRange().getValues();
     let atualizados = 0;
+    const chavesExistentes = new Set(dados.map(r => r[0].toString().trim()));
 
+    // Atualizar linhas existentes
     for (let i = 1; i < dados.length; i++) {
       const chaveAtual = dados[i][0].toString().trim();
       if (novasConfigs.hasOwnProperty(chaveAtual)) {
@@ -116,6 +144,14 @@ function salvarConfiguracoes(novasConfigs) {
       }
     }
 
+    // Inserir novas configurações que não existiam na planilha
+    Object.keys(novasConfigs).forEach(chave => {
+      if (!chavesExistentes.has(chave) && novasConfigs[chave] !== undefined) {
+        aba.appendRow([chave, novasConfigs[chave], "Mapa", "Configuração adicionada dinamicamente"]);
+        atualizados++;
+      }
+    });
+
     return { sucesso: true, mensagem: atualizados + " configuração(ões) atualizada(s) com sucesso." };
 
   } catch (erro) {
@@ -123,6 +159,43 @@ function salvarConfiguracoes(novasConfigs) {
   } finally {
     lock.releaseLock();
   }
+}
+
+/**
+ * Retorna a versão atual dos dados para o Cache do IndexedDB (Frontend).
+ * Baseado em PropertiesService e fallback estrutural para evitar loops ou permissões Extras (DriveApp).
+ */
+function obterVersaoBancos() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  
+  const abaPoligonos = ss.getSheetByName("Poligonos");
+  const linhasPoligonos = abaPoligonos ? abaPoligonos.getLastRow() : 0;
+  
+  const abaMandados = ss.getSheetByName("Mandados");
+  const linhasMandados = abaMandados ? abaMandados.getLastRow() : 0;
+  
+  // Lemos um timestamp no Script Properties, que nós vamos atualizar
+  // sempre que o sistema gravar algo novo.
+  const props = PropertiesService.getScriptProperties();
+  let ts = props.getProperty('DB_UPDATE_TIMESTAMP');
+  if (!ts) {
+    ts = new Date().getTime().toString();
+    props.setProperty('DB_UPDATE_TIMESTAMP', ts);
+  }
+
+  return {
+    poligonosVersao: "v_" + linhasPoligonos + "_" + ts,
+    mandadosVersao: "v_" + linhasMandados + "_" + ts
+  };
+}
+
+/**
+ * Função utilitária para o backend invalidar o cache dos clientes.
+ * Deve ser chamada em toda operação de salvar/editar Mandados.
+ */
+function invalidarCacheMandados() {
+  const props = PropertiesService.getScriptProperties();
+  props.setProperty('DB_UPDATE_TIMESTAMP', new Date().getTime().toString());
 }
 
 /**
