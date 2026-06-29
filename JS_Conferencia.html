@@ -1,0 +1,629 @@
+<script>
+/* ================================================================
+     MÓDULO DE CONFERÊNCIA DE MANDADOS (BNMP vs LOCAL)
+     ================================================================ */
+
+  // Apenas dados reais do sistema serão utilizados.
+
+  let alvosOrfaosDetectados = [];
+  let alvosValidadosDetectados = [];
+  let marcarTodosEstado = true; // True = Todos marcados
+
+  /**
+   * Remove o sufixo -XX (dígitos verificadores finais) do mandado para conferência tolerante
+   */
+  function normalizarMandadoParaConferencia(num) {
+    if (!num) return "";
+    return num.trim().replace(/-[\d]+$/, "");
+  }
+
+  /**
+   * Formata os números do dashboard da conferência com abreviação "mil" se >= 1.000
+   */
+  function formatarNumeroConferencia(num) {
+    if (isNaN(num)) return "0";
+    if (num >= 1000000) {
+      return (num / 1000000).toFixed(1).replace('.', ',') + ' mi';
+    }
+    if (num >= 1000) {
+      let milhares = (num / 1000).toFixed(1).replace('.', ',');
+      if (milhares.endsWith(',0')) milhares = milhares.slice(0, -2);
+      return milhares + ' mil';
+    }
+    return num.toString();
+  }
+
+  /**
+   * Alterna a visibilidade do tooltip de ajuda da conferência.
+   */
+  function toggleAjudaConferencia() {
+    const el = document.getElementById('tooltip-ajuda-conferencia');
+    if (el) {
+      el.style.display = el.style.display === 'none' ? 'block' : 'none';
+    }
+  }
+
+  /**
+   * Inicializa a aba de Conferência. É chamada automaticamente ao mudar para a visão.
+   */
+  function carregarConferencia() {
+    console.log('[Conferência] carregarConferencia() chamada');
+    
+    const viewEl = document.getElementById('view-conferencia');
+    console.log('[Conferência] view-conferencia encontrada:', !!viewEl);
+    if (viewEl) {
+      console.log('[Conferência] display:', viewEl.style.display);
+      console.log('[Conferência] visibility:', getComputedStyle(viewEl).visibility);
+      console.log('[Conferência] opacity:', getComputedStyle(viewEl).opacity);
+      console.log('[Conferência] offsetHeight:', viewEl.offsetHeight);
+      console.log('[Conferência] children:', viewEl.children.length);
+    }
+    
+    console.log('[Conferência] dadosMandados carregados:', typeof dadosMandados !== 'undefined' ? (Array.isArray(dadosMandados) ? dadosMandados.length : 'não é array') : 'indefinido');
+    const containerOrfaos = document.getElementById('lista-orfaos-container');
+    console.log('[Conferência] container lista-orfaos-container encontrado:', !!containerOrfaos);
+    const dashboard = document.getElementById('dashboard-impacto');
+    console.log('[Conferência] dashboard-impacto encontrado:', !!dashboard);
+    const secaoAuditoria = document.getElementById('secao-auditoria');
+    console.log('[Conferência] secao-auditoria encontrada:', !!secaoAuditoria);
+
+    const dropzone = document.getElementById('dropzone-csv');
+    console.log('[Conferência] dropzone-csv encontrada:', !!dropzone);
+    
+    const titulo = viewEl ? viewEl.querySelector('h2') : null;
+    console.log('[Conferência] h2 titulo encontrado:', !!titulo, titulo ? titulo.textContent : 'N/A');
+    
+    configurarDragAndDrop();
+    
+    // Ocultar Tooltip ao clicar fora
+    document.addEventListener('click', function(e) {
+      const tooltip = document.getElementById('tooltip-ajuda-conferencia');
+      const btn = document.querySelector('.tooltip-help-container button');
+      if (tooltip && tooltip.style.display === 'block' && btn && !btn.contains(e.target) && !tooltip.contains(e.target)) {
+        tooltip.style.display = 'none';
+      }
+    });
+  }
+
+  /**
+   * Configura os eventos de arrastar e soltar (Drag & Drop) na zona de arquivo.
+   */
+  function configurarDragAndDrop() {
+    const dropzone = document.getElementById('dropzone-csv');
+    if (!dropzone) return;
+
+    // Evitar comportamento padrão para todos os eventos de drag
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+      dropzone.addEventListener(eventName, preventDefaults, false);
+    });
+
+    function preventDefaults(e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+
+    // Efeitos visuais de hover
+    ['dragenter', 'dragover'].forEach(eventName => {
+      dropzone.addEventListener(eventName, () => dropzone.classList.add('dragover'), false);
+    });
+
+    ['dragleave', 'drop'].forEach(eventName => {
+      dropzone.addEventListener(eventName, () => dropzone.classList.remove('dragover'), false);
+    });
+
+    // Manipular arquivo solto
+    dropzone.addEventListener('drop', function(e) {
+      const dt = e.dataTransfer;
+      const files = dt.files;
+      if (files && files.length > 0) {
+        processarArquivoCSV(files[0]);
+      }
+    }, false);
+  }
+
+  /**
+   * Lida com a seleção de arquivo via diálogo padrão de input
+   */
+  function lidarComSelecaoArquivo(event) {
+    const files = event.target.files;
+    if (files && files.length > 0) {
+      processarArquivoCSV(files[0]);
+    }
+  }
+
+  /**
+   * Lê o arquivo carregado e executa a lógica de conferência
+   */
+  function processarArquivoCSV(file) {
+    if (!file) {
+      console.warn('[Conferência] Nenhum arquivo passado para processarArquivoCSV');
+      return;
+    }
+    console.log('[Conferência] Iniciando processarArquivoCSV para o arquivo:', file.name, 'tamanho:', file.size, 'tipo:', file.type);
+    
+    if (!file.name.endsWith('.csv')) {
+      console.warn('[Conferência] Arquivo inválido (não termina com .csv):', file.name);
+      return chamarAlertaTatico("FORMATO INVÁLIDO", "O sistema aceita apenas arquivos com a extensão .csv.", "OK");
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const texto = e.target.result;
+      console.log('[Conferência] FileReader carregado com sucesso. Tamanho do texto lido:', texto ? texto.length : 0, 'caracteres.');
+      
+      // Atualizar área de upload
+      const info = document.getElementById('info-arquivo-carregado');
+      const textoPrincipal = document.getElementById('texto-principal-upload');
+      const iconUpload = document.getElementById('icon-upload-csv');
+      
+      console.log('[Conferência] Atualizando elementos visuais da dropzone...');
+      if (info) {
+        info.innerText = `📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+        info.style.display = 'inline-block';
+      }
+      if (textoPrincipal) {
+        textoPrincipal.innerText = "ARQUIVO CARREGADO COM SUCESSO";
+      }
+      if (iconUpload) {
+        iconUpload.innerText = "task_alt";
+        iconUpload.style.color = "var(--success)";
+      }
+
+      const btnReset = document.getElementById('btn-reset-conferencia');
+      if (btnReset) btnReset.style.display = 'inline-flex';
+
+      // Cruzar os dados do CSV com a base local
+      console.log('[Conferência] Chamando cruzamentoConferencia...');
+      cruzamentoConferencia(texto);
+    };
+
+    reader.onerror = function(err) {
+      console.error('[Conferência] Erro na leitura do FileReader:', err);
+      chamarAlertaTatico("ERRO DE LEITURA", "Houve um erro ao tentar ler o arquivo CSV.", "OK");
+    };
+
+    console.log('[Conferência] Disparando readAsText no arquivo...');
+    reader.readAsText(file, "UTF-8");
+  }
+
+  /**
+   * Executa a lógica de cruzamento de dados O(1) usando Set
+   */
+  function cruzamentoConferencia(textoCsv) {
+    console.log('[Conferência] cruzamentoConferencia() chamada.');
+    if (!textoCsv || textoCsv.trim() === "") {
+      console.warn('[Conferência] Texto do CSV está vazio ou nulo.');
+      return chamarAlertaTatico("CSV VAZIO", "O arquivo selecionado está em branco.", "OK");
+    }
+
+    // 1. Parsear as linhas do CSV
+    const linhas = textoCsv.split(/\r?\n/);
+    console.log('[Conferência] Total de linhas brutas no CSV:', linhas.length);
+    if (linhas.length <= 1) {
+      console.warn('[Conferência] CSV com linhas insuficientes:', linhas.length);
+      return chamarAlertaTatico("FORMATO INVÁLIDO", "O CSV não possui registros suficientes para cruzamento.", "OK");
+    }
+
+    // Detectar dinamicamente o delimitador (ponto e vírgula ou vírgula)
+    const primeiraLinha = linhas[0];
+    const delimitador = primeiraLinha.includes(';') ? ';' : ',';
+    console.log('[Conferência] Primeira linha do CSV:', primeiraLinha);
+    console.log('[Conferência] Delimitador detectado:', delimitador === ';' ? 'ponto e vírgula (;)' : 'vírgula (,)');
+
+    // Detectar os cabeçalhos para encontrar a coluna de mandados ("Número" ou índice 0)
+    const cabecalho = primeiraLinha.split(delimitador);
+    console.log('[Conferência] Cabeçalhos detectados:', cabecalho);
+    let indiceNumero = 0; // Fallback para primeira coluna
+    let indiceNome = 1;   // Fallback para segunda coluna
+
+    cabecalho.forEach((col, idx) => {
+      // Limpar aspas que podem envolver os cabeçalhos
+      const colLimpa = col.replace(/^["']|["']$/g, '').trim().toLowerCase();
+      if (colLimpa === "número" || colLimpa === "numero" || colLimpa === "nº" || colLimpa.includes("mandado")) {
+        indiceNumero = idx;
+      }
+      if (colLimpa === "nome" || colLimpa.includes("nome da pessoa")) {
+        indiceNome = idx;
+      }
+    });
+    console.log('[Conferência] Índice da coluna de número de mandado detectado:', indiceNumero, '(Cabeçalho:', cabecalho[indiceNumero], ')');
+    console.log('[Conferência] Índice da coluna de nome detectado:', indiceNome, '(Cabeçalho:', cabecalho[indiceNome], ')');
+
+    // Extrair mandados do CSV e normalizar (remover espaços extras e aspas)
+    const mandadosCsvList = [];
+    for (let i = 1; i < linhas.length; i++) {
+      const linha = linhas[i].trim();
+      if (linha === "") continue;
+      
+      const colunas = linha.split(delimitador);
+      const mandadoNum = (colunas[indiceNumero] || "").replace(/^["']|["']$/g, '').trim();
+      const nomePessoa = (colunas[indiceNome] || "").replace(/^["']|["']$/g, '').trim();
+      
+      if (mandadoNum !== "") {
+        mandadosCsvList.push({ numero: mandadoNum, nome: nomePessoa });
+      }
+    }
+    console.log('[Conferência] Mandados válidos extraídos do CSV:', mandadosCsvList.length);
+
+    if (mandadosCsvList.length === 0) {
+      console.warn('[Conferência] Nenhum mandado foi extraído das linhas do CSV.');
+      return chamarAlertaTatico("NENHUM DADO EXTRAÍDO", "Não foi possível extrair números de mandados válidos deste CSV.", "OK");
+    }
+
+    // 2. CONVERSÃO PARA SET DO JAVASCRIPT - COMPLEXIDADE O(1) PARA BUSCA
+    const setCsv = new Set(mandadosCsvList.map(m => normalizarMandadoParaConferencia(m.numero)));
+    console.log('[Conferência] Tamanho do Set do CSV (valores únicos):', setCsv.size);
+
+    // 3. Determinar fonte de dados local (apenas banco real)
+    // Procuramos alvos com status "Procurado" (ou ativo)
+    let bancoLocal = [];
+    console.log('[Conferência] Verificando existência da variável global dadosMandados...');
+    if (typeof dadosMandados !== 'undefined' && Array.isArray(dadosMandados) && dadosMandados.length > 0) {
+      console.log('[Conferência] dadosMandados encontrado com', dadosMandados.length, 'itens.');
+      bancoLocal = dadosMandados.filter(d => d.status && d.status.trim().toLowerCase() === "procurado");
+      console.log('[Conferência] Total de registros ativos ("procurado") no banco local:', bancoLocal.length);
+    } else {
+      console.warn('[Conferência] dadosMandados indefinido, vazio ou não é Array.');
+      return chamarAlertaTatico("SEM DADOS LOCAIS", "Nenhum mandado ativo foi encontrado na base de dados local para conferência.", "OK");
+    }
+
+    // 4. Cruzamento de Dados
+    // Validados: Constam localmente e também no Set do CSV
+    const validados = bancoLocal.filter(d => setCsv.has(normalizarMandadoParaConferencia(d.mandado)));
+    alvosValidadosDetectados = validados;
+    console.log('[Conferência] Cruzamento: Validados (local e no CSV):', validados.length);
+
+    // Capturados: Constam localmente mas NÃO estão no Set do CSV (sumiram da listagem oficial)
+    alvosOrfaosDetectados = bancoLocal.filter(d => !setCsv.has(normalizarMandadoParaConferencia(d.mandado)));
+    console.log('[Conferência] Cruzamento: Capturados (local mas NÃO no CSV):', alvosOrfaosDetectados.length);
+
+    // Inéditos: Estão no CSV mas não constam no banco local
+    const setLocal = new Set(bancoLocal.map(d => normalizarMandadoParaConferencia(d.mandado)));
+    const ineditos = mandadosCsvList.filter(m => !setLocal.has(normalizarMandadoParaConferencia(m.numero)));
+    console.log('[Conferência] Cruzamento: Inéditos (no CSV mas NÃO local):', ineditos.length);
+
+    // 5. Exibir Dashboard de Resumo (Relatório de Impacto)
+    const validadosCountEl = document.getElementById('validados-count');
+    const ineditosCountEl = document.getElementById('ineditos-count');
+    const orfaosCountEl = document.getElementById('orfaos-count');
+    const dashboardImpactoEl = document.getElementById('dashboard-impacto');
+
+    if (validadosCountEl) {
+      validadosCountEl.innerText = formatarNumeroConferencia(validados.length);
+      validadosCountEl.title = validados.length.toLocaleString('pt-BR') + ' procurados';
+    }
+    if (ineditosCountEl) {
+      ineditosCountEl.innerText = formatarNumeroConferencia(ineditos.length);
+      ineditosCountEl.title = ineditos.length.toLocaleString('pt-BR') + ' mandados';
+    }
+    if (orfaosCountEl) {
+      orfaosCountEl.innerText = formatarNumeroConferencia(alvosOrfaosDetectados.length);
+      orfaosCountEl.title = alvosOrfaosDetectados.length.toLocaleString('pt-BR') + ' procurados';
+    }
+    if (dashboardImpactoEl) {
+      dashboardImpactoEl.style.display = 'grid';
+      console.log('[Conferência] Dashboard de impacto configurado para display: grid');
+    } else {
+      console.error('[Conferência] Elemento dashboard-impacto não encontrado!');
+    }
+
+    // 6. Exibir Seção de Auditoria e Renderizar Cartões
+    const secaoAuditoria = document.getElementById('secao-auditoria');
+    if (secaoAuditoria) secaoAuditoria.style.display = 'flex';
+    
+    if (alvosOrfaosDetectados.length > 0) {
+      console.log('[Conferência] Capturados detectados (>0). Exibindo seção de auditoria e chamando renderizarOrfaos().');
+      marcarTodosEstado = true; // Reinicia marcando todos
+      atualizarBotaoMarcarTodosIcone();
+      renderizarOrfaos();
+    } else {
+      console.log('[Conferência] Nenhum capturado detectado. Informando validação total.');
+      const btnMarcarTodos = document.getElementById('btn-marcar-todos');
+      if (btnMarcarTodos) btnMarcarTodos.style.display = 'none';
+      
+      const container = document.getElementById('lista-orfaos-container');
+      if (container) {
+        container.innerHTML = `
+          <div style="background:rgba(16,185,129,0.1); border:1px solid rgba(16,185,129,0.2); padding:20px; border-radius:12px; text-align:center; color:#10b981; font-weight:800; font-size:13px; display:flex; flex-direction:column; align-items:center; gap:8px;">
+            <span class="material-symbols-outlined" style="font-size:32px;">verified_user</span>
+            TODOS OS PROCURADOS DO SISTEMA FORAM VALIDADOS NO CSV DO BNMP. NENHUM ALVO CAPTURADO DETECTADO!
+          </div>
+        `;
+      }
+      atualizarBotaoBaixa();
+    }
+  }
+
+  /**
+   * Renderiza a lista de cartões compactos de órfãos na interface.
+   */
+  function renderizarOrfaos() {
+    console.log('[Conferência] renderizarOrfaos() chamada. Quantidade de capturados a renderizar:', alvosOrfaosDetectados.length);
+    const container = document.getElementById('lista-orfaos-container');
+    if (!container) {
+      console.error('[Conferência] Elemento lista-orfaos-container não encontrado no DOM!');
+      return;
+    }
+
+    container.innerHTML = '';
+    console.log('[Conferência] Container lista-orfaos-container limpo.');
+
+    alvosOrfaosDetectados.forEach((alvo, idx) => {
+      console.log(`[Conferência] Renderizando capturado [${idx}]:`, alvo.nome, 'Mandado:', alvo.mandado);
+      const card = document.createElement('div');
+      card.className = 'neu-card card-orfao-item';
+      card.style.cssText = `
+        background: var(--bg-surface);
+        border: 1px solid var(--border);
+        padding: 12px 16px;
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        box-shadow: var(--neu-flat);
+      `;
+
+      card.innerHTML = `
+        <div style="display:flex;align-items:center;gap:12px;flex:1;min-width:0;">
+          <div style="width:36px;height:36px;border-radius:50%;background:rgba(245,158,11,0.1);display:flex;align-items:center;justify-content:center;color:var(--warning);flex-shrink:0;">
+            <span class="material-symbols-outlined" style="font-size:20px;">person_outline</span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:2px;min-width:0;flex:1;">
+            <span style="font-size:13px;font-weight:800;color:var(--text-primary);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${alvo.nome}</span>
+            <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">MANDADO: ${alvo.mandado}</span>
+          </div>
+        </div>
+        <div style="flex-shrink:0;">
+          <label class="check-conferencia-container" style="display:block;position:relative;cursor:pointer;user-select:none;padding-left:22px;height:22px;width:22px;">
+            <input type="checkbox" checked value="${alvo.mandado}" onchange="atualizarBotaoBaixa()" class="chk-baixa-conferencia" style="position:absolute;opacity:0;cursor:pointer;height:0;width:0;">
+            <span class="checkmark-conferencia" style="position:absolute;top:0;left:0;height:22px;width:22px;background-color:var(--bg-depressed);border:1px solid var(--border);border-radius:6px;transition:var(--transition);"></span>
+          </label>
+        </div>
+      `;
+
+      container.appendChild(card);
+    });
+
+    console.log('[Conferência] Todos os órfãos renderizados. Atualizando botão de baixa...');
+    // Atualiza a exibição da barra de ação
+    atualizarBotaoBaixa();
+  }
+
+  /**
+   * Controla a ativação/desativação da barra fixada no fundo (Sticky Footer) e atualiza a quantidade de alvos selecionados.
+   */
+  function atualizarBotaoBaixa() {
+    const checkboxes = document.querySelectorAll('.chk-baixa-conferencia');
+    const btnTexto = document.getElementById('btn-confirmar-baixa-texto');
+    const actionBar = document.getElementById('conferencia-action-bar');
+    
+    let selecionados = 0;
+    checkboxes.forEach(chk => {
+      if (chk.checked) selecionados++;
+    });
+
+    const totalValidados = alvosValidadosDetectados ? alvosValidadosDetectados.length : 0;
+
+    if (selecionados > 0 || totalValidados > 0) {
+      let textoBotao = "";
+      if (selecionados > 0 && totalValidados > 0) {
+        textoBotao = `CONFIRMAR CONFERÊNCIA (BAIXAR ${selecionados} E VALIDAR ${totalValidados})`;
+      } else if (selecionados > 0) {
+        textoBotao = `CONFIRMAR CONFERÊNCIA (BAIXAR ${selecionados})`;
+      } else {
+        textoBotao = `CONFIRMAR CONFERÊNCIA (VALIDAR ${totalValidados})`;
+      }
+      
+      if (btnTexto) btnTexto.innerText = textoBotao;
+      if (actionBar) {
+        actionBar.style.display = 'flex';
+        // Efeito de subida/entrada suave
+        setTimeout(() => actionBar.style.transform = 'translateY(0)', 10);
+      }
+    } else {
+      if (actionBar) {
+        actionBar.style.transform = 'translateY(100%)';
+        setTimeout(() => actionBar.style.display = 'none', 300);
+      }
+    }
+  }
+
+  /**
+   * Marca ou desmarca todos os checkboxes dos alvos órfãos.
+   */
+  function toggleMarcarTodosConferencia() {
+    const checkboxes = document.querySelectorAll('.chk-baixa-conferencia');
+    marcarTodosEstado = !marcarTodosEstado;
+    
+    checkboxes.forEach(chk => {
+      chk.checked = marcarTodosEstado;
+    });
+
+    atualizarBotaoMarcarTodosIcone();
+    atualizarBotaoBaixa();
+  }
+
+  /**
+   * Atualiza visualmente o botão do topo da auditoria baseado no estado de marcar todos
+   */
+  function atualizarBotaoMarcarTodosIcone() {
+    const icone = document.getElementById('icon-marcar-todos');
+    const texto = document.getElementById('txt-marcar-todos');
+    
+    if (icone && texto) {
+      if (marcarTodosEstado) {
+        icone.innerText = 'check_box';
+        texto.innerText = 'DESMARCAR TODOS';
+      } else {
+        icone.innerText = 'check_box_outline_blank';
+        texto.innerText = 'MARCAR TODOS';
+      }
+    }
+  }
+
+  /**
+   * Executa a inativação/baixa dos mandados selecionados.
+   */
+  function executarBaixaEmMassa() {
+    const checkboxes = document.querySelectorAll('.chk-baixa-conferencia');
+    const mandadosSelecionados = [];
+    
+    checkboxes.forEach(chk => {
+      if (chk.checked) {
+        mandadosSelecionados.push(chk.value);
+      }
+    });
+
+    const mandadosValidados = alvosValidadosDetectados.map(v => v.mandado);
+
+    if (mandadosSelecionados.length === 0 && mandadosValidados.length === 0) {
+      return chamarAlertaTatico("SELEÇÃO VAZIA", "Nenhum alvo para baixar ou validar.", "OK");
+    }
+
+    const btn = document.getElementById('btn-confirmar-baixa-massa');
+    const btnTexto = document.getElementById('btn-confirmar-baixa-texto');
+    
+    if (btn) btn.disabled = true;
+    if (btnTexto) btnTexto.innerText = "PROCESSANDO...";
+
+    // 1. Verificar se estamos em ambiente real do Google Apps Script
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(function(resposta) {
+          if (btn) btn.disabled = false;
+          
+          if (resposta && resposta.sucesso) {
+            // Sucesso real na gravação: recarregar dados do sistema
+            chamarAlertaTatico("SUCESSO", resposta.mensagem, "OK");
+            
+            // Força a atualização local limpando a visão e pedindo novos dados
+            limparAbaConferencia();
+            
+            if (typeof processarDados === 'function') {
+              // Recarrega os dados do mapa/tabela do Sentinela
+              google.script.run.withSuccessHandler(processarDados).obterDados();
+            }
+          } else {
+            chamarAlertaTatico("FALHA", (resposta && resposta.mensagem) ? resposta.mensagem : "Não foi possível gravar as alterações.", "OK");
+            atualizarBotaoBaixa();
+          }
+        })
+        .withFailureHandler(function(erro) {
+          if (btn) btn.disabled = false;
+          chamarAlertaTatico("ERRO DE COMUNICAÇÃO", "Falha de rede ou no servidor: " + erro.message, "OK");
+          atualizarBotaoBaixa();
+        })
+        .baixarMandadosEmMassa(mandadosSelecionados, mandadosValidados);
+    } else {
+      // 2. Simulação local no Mock (Fictício) para testes no navegador
+      setTimeout(function() {
+        if (btn) btn.disabled = false;
+        
+        // Simular a baixa e conferência no mock local
+        const setMandadosBaixa = new Set(mandadosSelecionados);
+        const setMandadosValidar = new Set(mandadosValidados);
+        const dataConferenciaMock = new Date().toLocaleString('pt-BR');
+        
+        // Se houver banco local real
+        if (typeof dadosMandados !== 'undefined' && Array.isArray(dadosMandados) && dadosMandados.length > 0) {
+          dadosMandados.forEach(d => {
+            if (setMandadosBaixa.has(d.mandado.trim())) {
+              d.status = "Capturado";
+              d.dataConferencia = dataConferenciaMock;
+            } else if (setMandadosValidar.has(d.mandado.trim())) {
+              d.dataConferencia = dataConferenciaMock;
+            }
+          });
+        }
+
+        chamarAlertaTatico("MOCK: CONFERÊNCIA PROCESSADA", `Sucesso! Foram baixados ${mandadosSelecionados.length} alvos órfãos e validados ${mandadosValidados.length} alvos em simulação local.`, "OK");
+        
+        // Limpar visualização da aba
+        limparAbaConferencia();
+        
+        // Se houver rotinas de mapa/tabela ativas, refiltrar
+        if (typeof filtrarNoMapa === 'function') filtrarNoMapa();
+      }, 1500);
+    }
+  }
+
+  /**
+   * Reseta o estado da aba de Conferência para o padrão inicial
+   */
+  function limparAbaConferencia() {
+    alvosOrfaosDetectados = [];
+    alvosValidadosDetectados = [];
+    marcarTodosEstado = true;
+
+    const btnMarcarTodos = document.getElementById('btn-marcar-todos');
+    if (btnMarcarTodos) btnMarcarTodos.style.display = 'flex';
+
+    // Reset da Área de Upload
+    const info = document.getElementById('info-arquivo-carregado');
+    const textoPrincipal = document.getElementById('texto-principal-upload');
+    const iconUpload = document.getElementById('icon-upload-csv');
+    const inputFile = document.getElementById('input-file-csv');
+    
+    if (info) {
+      info.style.display = 'none';
+      info.innerText = '';
+    }
+    if (textoPrincipal) {
+      textoPrincipal.innerText = "ARRASTE O RELATORIO.CSV OU CLIQUE AQUI";
+    }
+    if (iconUpload) {
+      iconUpload.innerText = "cloud_upload";
+      iconUpload.style.color = "var(--accent)";
+    }
+    if (inputFile) {
+      inputFile.value = '';
+    }
+
+    const btnReset = document.getElementById('btn-reset-conferencia');
+    if (btnReset) btnReset.style.display = 'none';
+
+    // Reset dos Contadores no Dashboard
+    const validadosCountEl = document.getElementById('validados-count');
+    const ineditosCountEl = document.getElementById('ineditos-count');
+    const orfaosCountEl = document.getElementById('orfaos-count');
+
+    if (validadosCountEl) {
+      validadosCountEl.innerText = '0';
+      validadosCountEl.title = '0 procurados';
+    }
+    if (ineditosCountEl) {
+      ineditosCountEl.innerText = '0';
+      ineditosCountEl.title = '0 mandados';
+    }
+    if (orfaosCountEl) {
+      orfaosCountEl.innerText = '0';
+      orfaosCountEl.title = '0 procurados';
+    }
+
+    // Ocultar elementos auxiliares com checagem de existência
+    const dashboardImpacto = document.getElementById('dashboard-impacto');
+    if (dashboardImpacto) {
+      dashboardImpacto.style.display = 'none';
+    }
+
+    const secaoAuditoria = document.getElementById('secao-auditoria');
+    if (secaoAuditoria) {
+      secaoAuditoria.style.display = 'none';
+    }
+
+    const listaOrfaosContainer = document.getElementById('lista-orfaos-container');
+    if (listaOrfaosContainer) {
+      listaOrfaosContainer.innerHTML = '';
+    }
+    
+    const actionBar = document.getElementById('conferencia-action-bar');
+    if (actionBar) {
+      actionBar.style.transform = 'translateY(100%)';
+      setTimeout(() => {
+        const bar = document.getElementById('conferencia-action-bar');
+        if (bar) bar.style.display = 'none';
+      }, 300);
+    }
+  }
+</script>
