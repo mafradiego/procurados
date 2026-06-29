@@ -16,6 +16,25 @@
   let configsSistema = {};
   let secundariosVisiveis = {}; // { mandado: { markers: [], polylines: [] } }
   let lastPendingCount = 0; // Para notificar novos cadastros
+  let _gpsResolvido = false; // Indica se o GPS já respondeu (sucesso ou falha)
+  let _dadosCarregados = false; // Indica se os mandados já foram carregados do servidor
+  let _semGpsJaExibiu = false; // Evita chamadas duplicadas de _tentarExibirSemGPS
+
+  // RASTREADOR DE ATIVIDADE (Heartbeat Controlado)
+  let timestampUltimaAtividade = Date.now();
+  
+  document.addEventListener('mousemove', () => { timestampUltimaAtividade = Date.now(); }, { passive: true });
+  document.addEventListener('keydown', () => { timestampUltimaAtividade = Date.now(); }, { passive: true });
+  document.addEventListener('touchstart', () => { timestampUltimaAtividade = Date.now(); }, { passive: true });
+  
+  setInterval(() => {
+    if (usuarioLogado && usuarioLogado.autorizado) {
+      // Se houve movimento na tela nos últimos 5 segundos
+      if ((Date.now() - timestampUltimaAtividade) < 5000) {
+        google.script.run.registrarHeartbeat();
+      }
+    }
+  }, 5000);
 
   /* ================================================================
      MÓDULO 2: AUTENTICAÇÃO E INICIALIZAÇÃO
@@ -33,6 +52,9 @@
     }).obterConfiguracoesSimples();
   }
 
+  // Expõe iniciarMapa globalmente para o callback da API do Google Maps
+  window.iniciarMapa = iniciarMapa;
+
   function avaliarAcessoSistema(resposta) {
     const boxCarregando = document.getElementById("seg-estado-carregando");
     const telaSeguranca = document.getElementById("tela-seguranca");
@@ -42,7 +64,6 @@
       if (lblStatus) lblStatus.innerText = "CARREGANDO OS MANDADOS E O MAPA...";
       usuarioLogado = resposta;
       perfilUsuario = resposta.perfil || '';
-      // Nota: telaSeguranca será escondida apenas após o carregamento dos mandados no JS_Map.html
 
       // Atualizar sidebar
       document.getElementById('sidebarNomeEl').textContent = resposta.nome;
@@ -50,18 +71,54 @@
       if (resposta.fotoUrl) {
         document.getElementById('sidebarAvatarContainer').innerHTML =
           '<img src="' + resposta.fotoUrl + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />';
+        const hdrImg = document.getElementById('userPhotoHeader');
+        if (hdrImg) { hdrImg.src = resposta.fotoUrl; hdrImg.style.display = 'block'; }
       }
 
-      if (resposta.perfil === "Admin") {
+      // Controle de Botões de Importar PDF (Admin ou Colaborador)
+      const perfilNormalizado = (resposta.perfil || "").trim().toLowerCase();
+      if (perfilNormalizado !== "patrulheiro") {
         const btnNovo = document.getElementById("btnAdminNovo");
+        if (btnNovo) btnNovo.style.display = "flex";
+        document.querySelectorAll('.btn-importar-pdf-desktop').forEach(function(el) {
+          el.style.display = 'flex';
+        });
+      } else {
+        document.querySelectorAll('.btn-importar-pdf-desktop').forEach(function(el) {
+          el.style.display = 'none';
+        });
+      }
+
+      // Controle de visibilidade do Ranking
+      const gamifAtiva = configsSistema['gamif_ativo'] === 'SIM' || configsSistema['gamif_ativo'] === true || configsSistema['gamif_ativo'] === 'true';
+      const rankingPublico = configsSistema['ranking_publico'] === 'SIM' || configsSistema['ranking_publico'] === true || configsSistema['ranking_publico'] === 'true';
+      
+      const btnRanking = document.getElementById("nav-btn-ranking");
+      if (btnRanking) {
+        if (!gamifAtiva) {
+          btnRanking.style.display = 'none';
+        } else {
+          if (perfilNormalizado === "patrulheiro" && !rankingPublico) {
+            btnRanking.style.display = 'none';
+          } else {
+            btnRanking.style.display = 'flex';
+          }
+        }
+      }
+
+      if (perfilNormalizado === "admin") {
         const btnMenu = document.getElementById("btnMenuAdmin");
         const btnAjustes = document.getElementById("btnMenuAjustes");
         const btnConferencia = document.getElementById("btnMenuConferencia");
-        if (btnNovo) btnNovo.style.display = "flex";
+        const btnAuditoria   = document.getElementById("btnMenuAuditoria");
         if (btnMenu) btnMenu.style.display = "block";
         if (btnAjustes) btnAjustes.style.display = "block";
         if (btnConferencia) btnConferencia.style.display = "block";
-        
+        if (btnAuditoria)   btnAuditoria.style.display   = "block";
+
+        // Badge auditoria: carregar em background após dados prontos (4s)
+        setTimeout(function() { if (typeof carregarAuditoria === 'function') carregarAuditoria(); }, 4000);
+
         // Polling para novos cadastros (a cada 2 min)
         setInterval(function() {
           google.script.run.withSuccessHandler(function(usuarios) {
@@ -83,11 +140,16 @@
           }).obterTodosUsuarios();
         }, 120000);
       }
-      
+
       if (typeof mapaPrincipal === 'undefined' || !mapaPrincipal) {
         configurarEstruturaMapa();
       } else {
         // Mapa já existe, apenas sincronizar os dados
+        const ts = document.getElementById("tela-seguranca");
+        if (ts) {
+          ts.style.opacity = "0";
+          setTimeout(function() { ts.style.display = "none"; }, 500);
+        }
         const iconeSinc = document.querySelector('button[title="Sincronizar"] span');
         if (iconeSinc) iconeSinc.style.animation = 'spin 1s linear infinite';
         google.script.run.withSuccessHandler(function(dados) {
@@ -109,7 +171,11 @@
     }
   }
 
+  // Expõe avaliarAcessoSistema globalmente
+  window.avaliarAcessoSistema = avaliarAcessoSistema;
+
   function reiniciarVerificacaoSeguranca() {
+
     document.getElementById("seg-estado-mensagem").style.display = "none";
     document.getElementById("seg-estado-cadastro").style.display = "none";
     document.getElementById("seg-estado-carregando").style.display = "block";
@@ -128,7 +194,7 @@
   function chamarAlertaTatico(titulo, mensagem, tipo, callback) {
     const modal = document.getElementById("modalAlertaTatico");
     document.getElementById("alerta-titulo").innerText = titulo;
-    document.getElementById("alerta-mensagem").innerText = mensagem;
+    document.getElementById("alerta-mensagem").innerHTML = mensagem;
     const containerBotoes = document.getElementById("alerta-botoes");
     containerBotoes.innerHTML = "";
     const alertBox = modal.querySelector(".alert-modal-box");
@@ -153,19 +219,135 @@
   }
 
   function enviarAtualizacao(mandado, btnElement) {
-    btnElement.innerText = "Sincronizando..."; btnElement.disabled = true;
+    const originalText = btnElement.innerText;
+    const originalBg = btnElement.style.background || '';
+    btnElement.innerHTML = '<span class="material-symbols-outlined" style="animation:spin 1s linear infinite;vertical-align:middle;font-size:14px;margin-right:4px;">sync</span> Sincronizando...';
+    btnElement.disabled = true;
     const radios = document.getElementsByName("status_" + mandado);
     let novoStatus = "Procurado";
     for(let i=0;i<radios.length;i++) { if(radios[i].checked) { novoStatus = radios[i].value; break; } }
-    const novaObs = document.getElementById("obs_" + mandado).value;
+    const novaObs = document.getElementById("obs_" + mandado).value.trim();
+
+    google.script.run
+      .withSuccessHandler(function(res) {
+        chamarAlertaTatico("ATUALIZAÇÃO", res.mensagem, "OK");
+        
+        btnElement.innerHTML = '✅ Concluído!';
+        btnElement.style.background = 'var(--success)';
+        const elObs = document.getElementById("obs_" + mandado);
+        if (elObs) elObs.value = "";
+        
+        setTimeout(function() {
+          btnElement.innerText = originalText;
+          btnElement.style.background = originalBg;
+          btnElement.disabled = false;
+        }, 3000);
+        
+        const alvoLocal = dadosMandados.find(function(d) { return d.mandado === mandado; });
+        if(alvoLocal) {
+          alvoLocal.status = novoStatus;
+          if (novaObs && novaObs.length > 0) {
+             alvoLocal.observacoes = novaObs;
+             const hoje = new Date();
+             const dia = hoje.getDate().toString().padStart(2,'0');
+             const mes = (hoje.getMonth()+1).toString().padStart(2,'0');
+             const ano = hoje.getFullYear().toString().slice(-2);
+             const hora = hoje.getHours().toString().padStart(2,'0');
+             const min = hoje.getMinutes().toString().padStart(2,'0');
+             const dataHoje = dia + '/' + mes + '/' + ano + ' - ' + hora + ':' + min;
+             let usuario = (typeof usuarioLogado !== 'undefined' && usuarioLogado && usuarioLogado.nome) ? usuarioLogado.nome : 'Usuário';
+             let objObs = { data: dataHoje, usuario: usuario, texto: novaObs };
+             let hist = [];
+             try { hist = JSON.parse(alvoLocal.historicoObservacoes || "[]"); } catch(e){}
+             hist.push(objObs);
+             alvoLocal.historicoObservacoes = JSON.stringify(hist);
+             alvoLocal.observacoes = "";
+          }
+        }
+        filtrarNoMapa();
+      })
+      .withFailureHandler(function(erro) {
+        chamarAlertaTatico("ERRO NA ATUALIZAÇÃO", "Falha ao sincronizar: " + erro, "OK");
+        btnElement.innerText = originalText;
+        btnElement.style.background = originalBg;
+        btnElement.disabled = false;
+      })
+      .atualizarRegistro(mandado, novoStatus, novaObs);
+  }
+
+  function salvarStatusBNMP(mandado, statusBnmp, btnElement) {
+    let originalText = btnElement.innerText;
+    btnElement.innerText = "⏳ Sincronizando..."; btnElement.disabled = true;
 
     google.script.run.withSuccessHandler(function(res) {
-      chamarAlertaTatico("ATUALIZAÇÃO", res.mensagem, "OK");
-      infoWindowAtiva.close();
+      chamarAlertaTatico("BNMP", res.mensagem, "OK");
+      btnElement.innerText = "✅ " + statusBnmp;
+      
       const alvoLocal = dadosMandados.find(function(d) { return d.mandado === mandado; });
-      if(alvoLocal) { alvoLocal.status = novoStatus; alvoLocal.observacoes = novaObs; }
-      filtrarNoMapa();
-    }).atualizarRegistro(mandado, novoStatus, novaObs);
+      if(alvoLocal) {
+        let dataHoje = new Date().toLocaleString('pt-BR');
+        let usuario = (typeof usuarioLogado !== 'undefined' && usuarioLogado && usuarioLogado.nome) ? usuarioLogado.nome : 'Usuário';
+        alvoLocal.bnmpConferencia = statusBnmp + " em " + dataHoje + " por " + usuario;
+      }
+    }).withFailureHandler(function(erro) {
+      chamarAlertaTatico("ERRO BNMP", "Falha ao sincronizar: " + erro, "OK");
+      btnElement.innerText = originalText; btnElement.disabled = false;
+    }).salvarConferenciaBNMP(mandado, statusBnmp);
+  }
+
+  function verHistoricoObservacoes(mandado, btnElement) {
+    console.log("verHistoricoObservacoes executada. mandado recebido:", mandado);
+    try {
+      console.log("Procurando mandado na lista dadosMandados...", dadosMandados);
+      const alvoLocal = dadosMandados.find(function(d) { return d.mandado === mandado; });
+      console.log("Resultado da busca pelo mandado:", alvoLocal);
+      
+      if (!alvoLocal) {
+        chamarAlertaTatico("ERRO DE BUSCA", "Mandado " + mandado + " não encontrado na memória local.", "FECHAR");
+        return;
+      }
+      
+      if (!alvoLocal.historicoObservacoes) {
+        chamarAlertaTatico("HISTÓRICO VAZIO", "Nenhuma observação registrada para este mandado.", "FECHAR");
+        return;
+      }
+
+      let hist = [];
+      try { 
+        hist = JSON.parse(alvoLocal.historicoObservacoes || "[]"); 
+      } catch(e){
+         chamarAlertaTatico("ERRO DE PARSE", "Erro ao tentar ler o histórico: " + e.message, "FECHAR");
+         return;
+      }
+
+      if (!Array.isArray(hist) || hist.length === 0) {
+        chamarAlertaTatico("HISTÓRICO VAZIO", "Nenhuma observação registrada.", "FECHAR");
+        return;
+      }
+
+      let html = '<div style="text-align:left; max-height: 250px; overflow-y: auto; padding-right: 4px; margin-bottom: 8px;" class="custom-scrollbar">';
+      hist.reverse().forEach((h) => {
+        let textoEscapado = "";
+        try { textoEscapado = window.escapeHTML ? window.escapeHTML(h.texto) : String(h.texto); } catch(e) { textoEscapado = String(h.texto); }
+        let obsFormatada = '<strong>' + (h.data || 'Sem data') + ' - ' + (h.usuario || 'Desconhecido') + '</strong><br>' + textoEscapado;
+        html += '<div style="margin-bottom: 6px; padding: 6px; background: rgba(255,255,255,0.05); border-left: 3px solid var(--brand-red); border-radius: 4px;">';
+        html += '<div style="font-size:11px; color:var(--text-primary); white-space: pre-wrap; line-height: 1.4;">' + obsFormatada + '</div>';
+        html += '</div>';
+      });
+      html += '</div>';
+
+      if (btnElement && btnElement.previousElementSibling && btnElement.previousElementSibling.id && btnElement.previousElementSibling.id.startsWith("hist-container-")) {
+          btnElement.previousElementSibling.innerHTML = html;
+          btnElement.previousElementSibling.style.display = "block";
+          btnElement.style.display = "none";
+          return;
+      }
+
+      chamarAlertaTatico("HISTÓRICO DE OBSERVAÇÕES", html, "FECHAR");
+    } catch(err) {
+      console.error("Erro CRÍTICO capturado no catch:", err);
+      chamarAlertaTatico("ERRO CRÍTICO", "O botão falhou com o seguinte erro:<br>" + err.message, "FECHAR");
+    }
   }
 
   function conferirMandadoClick(mandado, btn) {
@@ -176,47 +358,98 @@
       const alvo = dadosMandados.find(function(d) { return d.mandado === mandado; });
       if (alvo) {
         const hoje = new Date();
-        alvo.dataConferencia = hoje.getDate().toString().padStart(2,'0') + '/' + (hoje.getMonth()+1).toString().padStart(2,'0') + '/' + hoje.getFullYear();
+        const dia = hoje.getDate().toString().padStart(2,'0');
+        const mes = (hoje.getMonth()+1).toString().padStart(2,'0');
+        const ano = hoje.getFullYear();
+        const hora = hoje.getHours().toString().padStart(2,'0');
+        const min = hoje.getMinutes().toString().padStart(2,'0');
+        const seg = hoje.getSeconds().toString().padStart(2,'0');
+        alvo.dataConferencia = dia + '/' + mes + '/' + ano + ' ' + hora + ':' + min + ':' + seg;
       }
     }).conferirMandado(mandado);
+  }
+
+  function normalizarArea(txt) {
+    if (!txt) return "";
+    return String(txt)
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "") // remove acentos
+      .replace(/\./g, "")             // remove pontos
+      .replace(/\s+/g, "")            // remove todos os espaços
+      .replace(/[\-\_\/]/g, "")       // remove traços, sublinhados, barras
+      .replace(/^0+/, "")             // remove zeros à esquerda (ex: "02º" -> "2º")
+      .trim();
   }
 
   function filtrarNoMapa() {
     const termoNome = document.getElementById('filtroNome').value.toLowerCase();
     const filtroCPI = document.getElementById('filtroCPI').value;
+    const filtroCPM = (() => { const el = document.getElementById('filtroCPMMobile'); return el ? el.value : 'TODOS'; })();
     const filtroBPM = document.getElementById('filtroBatalhao').value;
     const filtroCIA = document.getElementById('filtroCIA').value;
+    const elDP = document.getElementById('filtroDP');
+    const filtroDP = elDP ? elDP.value : 'TODOS';
     
-    // Filtros avançados (drawer)
-    const elCrime = document.getElementById('filtroCrime');
+    // Filtros avançados (modal/drawer) - Suporte aos IDs mobile
+    const elCrime = document.getElementById('filtroCrime') || document.getElementById('filtroCrimeMobile');
     const filtroCrime = elCrime ? elCrime.value : 'TODOS';
-    const elSexo = document.getElementById('filtroSexo');
+    const elArtigo = document.getElementById('filtroArtigo') || document.getElementById('filtroArtigoMobile');
+    const filtroArtigo = elArtigo ? elArtigo.value : 'TODOS';
+    const elParagrafo = document.getElementById('filtroParagrafo') || document.getElementById('filtroParagrafoMobile');
+    const filtroParagrafo = elParagrafo ? elParagrafo.value : 'TODOS';
+    const elInciso = document.getElementById('filtroInciso') || document.getElementById('filtroIncisoMobile');
+    const filtroInciso = elInciso ? elInciso.value : 'TODOS';
+    
+    const elSexo = document.getElementById('filtroSexo') || document.getElementById('filtroSexoMobile');
     const filtroSexo = elSexo ? elSexo.value : 'TODOS';
-    const elTipoMandado = document.getElementById('filtroTipoMandado');
+    const elTipoMandado = document.getElementById('filtroTipoMandado') || document.getElementById('filtroTipoMandadoMobile');
     const filtroTipo = elTipoMandado ? elTipoMandado.value : 'TODOS';
+
+    // Filtro de validade por prazo (chips ≤N dias)
+    const elValidDias = document.getElementById('filtroValidadeDias');
+    const validDiasStr = elValidDias ? elValidDias.value : '';
+    const validDias = validDiasStr ? parseInt(validDiasStr) : null;
+    const hoje = new Date();
+    hoje.setHours(0,0,0,0);
+    const prazoLimite = validDias ? new Date(hoje.getTime() + validDias * 86400000) : null;
     
     const filtrados = dadosMandados.filter(function(alvo) {
-      const nomeAlvo = (alvo.nome || "").toLowerCase();
-      const mandadoAlvo = (alvo.mandado || "").toLowerCase();
-      const matchNome = (nomeAlvo.includes(termoNome) || mandadoAlvo.includes(termoNome));
+      // Busca ampliada: nome, mandado, tipificação/crime
+      const nomeAlvo = (alvo.nome || '').toLowerCase();
+      const mandadoAlvo = (alvo.mandado || '').toLowerCase();
+      const infoAlvo = (alvo.infoProcessuais || '').toLowerCase();
+      const matchNome = !termoNome || nomeAlvo.includes(termoNome) || mandadoAlvo.includes(termoNome) || infoAlvo.includes(termoNome);
       
       // Filtros de Área (Principal ou Secundários)
       let matchPrincipal = false;
-      let okCPI = (filtroCPI === "TODOS" || alvo.cpiArea === filtroCPI);
-      let okBPM = (filtroBPM === "TODOS" || alvo.bpmArea === filtroBPM || alvo.batalhao === filtroBPM);
-      let okCIA = (filtroCIA === "TODOS" || alvo.ciaArea === filtroCIA);
-      if (okCPI && okBPM && okCIA) matchPrincipal = true;
+      const normFiltroCPI = normalizarArea(filtroCPI);
+      const normFiltroCPM = normalizarArea(filtroCPM);
+      const normFiltroBPM = normalizarArea(filtroBPM);
+      const normFiltroCIA = normalizarArea(filtroCIA);
+      const normFiltroDP = normalizarArea(filtroDP);
+
+      // CPI inclui tanto CPI quanto CPM (um campo no banco)
+      const cpiAlvoNorm = normalizarArea(alvo.cpiArea);
+      let okCPI = filtroCPI === 'TODOS' || cpiAlvoNorm === normFiltroCPI || alvo.semEndereco;
+      let okCPM = filtroCPM === 'TODOS' || cpiAlvoNorm === normFiltroCPM || alvo.semEndereco;
+      let okBPM = filtroBPM === 'TODOS' || normalizarArea(alvo.bpmArea) === normFiltroBPM || normalizarArea(alvo.batalhao) === normFiltroBPM || alvo.semEndereco;
+      let okCIA = filtroCIA === 'TODOS' || normalizarArea(alvo.ciaArea) === normFiltroCIA || alvo.semEndereco;
+      let okDP = filtroDP === 'TODOS' || normalizarArea(alvo.dpArea) === normFiltroDP || alvo.semEndereco;
+      if (okCPI && okCPM && okBPM && okCIA && okDP) matchPrincipal = true;
 
       let matchSecundario = false;
-      if (filtroCPI !== "TODOS" || filtroBPM !== "TODOS" || filtroCIA !== "TODOS") {
+      if (filtroCPI !== 'TODOS' || filtroCPM !== 'TODOS' || filtroBPM !== 'TODOS' || filtroCIA !== 'TODOS' || filtroDP !== 'TODOS') {
         try {
-          const listaSec = JSON.parse(alvo.geodataSecundarios || "[]");
+          const listaSec = JSON.parse(alvo.geodataSecundarios || '[]');
           for (let i = 0; i < listaSec.length; i++) {
             let sec = listaSec[i];
-            let secOkCPI = (filtroCPI === "TODOS" || sec.cpi === filtroCPI);
-            let secOkBPM = (filtroBPM === "TODOS" || sec.batalhao === filtroBPM);
-            let secOkCIA = (filtroCIA === "TODOS" || sec.cia === filtroCIA);
-            if (secOkCPI && secOkBPM && secOkCIA) {
+            let secOkCPI = filtroCPI === 'TODOS' || normalizarArea(sec.cpi) === normFiltroCPI;
+            let secOkCPM = filtroCPM === 'TODOS' || normalizarArea(sec.cpi) === normFiltroCPM;
+            let secOkBPM = filtroBPM === 'TODOS' || normalizarArea(sec.batalhao) === normFiltroBPM;
+            let secOkCIA = filtroCIA === 'TODOS' || normalizarArea(sec.cia) === normFiltroCIA;
+            let secOkDP = filtroDP === 'TODOS' || normalizarArea(sec.delegacia || sec.dpArea) === normFiltroDP;
+            if (secOkCPI && secOkCPM && secOkBPM && secOkCIA && secOkDP) {
               matchSecundario = true;
               break;
             }
@@ -226,58 +459,154 @@
 
       const matchArea = (matchPrincipal || matchSecundario);
       
-      // Filtro Crime
+      // Filtro Crime e Subfiltros
       var matchCrime = true;
-      if (filtroCrime !== "TODOS") {
-        var crimeAlvo = classificarCrime(alvo.infoProcessuais || '');
+      if (filtroCrime !== 'TODOS') {
+        var crimeAlvo = typeof classificarCrime === 'function' ? classificarCrime(alvo.infoProcessuais || '') : {nome:''};
         matchCrime = (crimeAlvo.nome === filtroCrime);
+      }
+      
+      var matchArtigo = true;
+      if (filtroArtigo !== 'TODOS') {
+        var aRegex = new RegExp('Artigo:\\s*([^|\\n]+)', 'i');
+        var aMatch = (alvo.infoProcessuais || '').match(aRegex);
+        matchArtigo = aMatch && aMatch[1].trim().toUpperCase() === filtroArtigo.toUpperCase();
+      }
+
+      var matchParagrafo = true;
+      if (filtroParagrafo !== 'TODOS') {
+        var pRegex = new RegExp('Parágrafo:\\s*([^|\\n]+)', 'i');
+        var pMatch = (alvo.infoProcessuais || '').match(pRegex);
+        matchParagrafo = pMatch && pMatch[1].trim().toUpperCase() === filtroParagrafo.toUpperCase();
+      }
+
+      var matchInciso = true;
+      if (filtroInciso !== 'TODOS') {
+        var iRegex = new RegExp('Inciso:\\s*([^|\\n]+)', 'i');
+        var iMatch = (alvo.infoProcessuais || '').match(iRegex);
+        matchInciso = iMatch && iMatch[1].trim().toUpperCase() === filtroInciso.toUpperCase();
       }
 
       // Filtro Sexo
       var matchSexo = true;
-      if (filtroSexo !== "TODOS") {
-        matchSexo = ((alvo.sexo || "").toUpperCase() === filtroSexo);
+      if (filtroSexo !== 'TODOS') {
+        var valSexo = (alvo.sexo || '').toUpperCase().trim();
+        if (valSexo === 'M') valSexo = 'MASCULINO';
+        if (valSexo === 'F') valSexo = 'FEMININO';
+        matchSexo = (valSexo === filtroSexo);
       }
 
       // Filtro Tipo Mandado
       var matchTipo = true;
-      if (filtroTipo !== "TODOS") {
-        var tituloMandado = "";
+      if (filtroTipo !== 'TODOS') {
+        var tituloMandado = '';
         try {
-          var extras = alvo.dadosExtrasJSON || "{}";
-          var parsed = JSON.parse(extras);
-          tituloMandado = (parsed.titulo || "").toUpperCase();
+          var extras = alvo.dadosExtrasJSON ? JSON.parse(alvo.dadosExtrasJSON) : {};
+          tituloMandado = (extras.titulo || alvo.mandado || '').toUpperCase();
         } catch(e) {}
-        matchTipo = (tituloMandado === filtroTipo.toUpperCase());
+        matchTipo = tituloMandado.includes(filtroTipo.toUpperCase());
+      }
+
+      // Filtro de Validade por Prazo
+      var matchValidade = true;
+      if (prazoLimite) {
+        var validadeAlvoStr = (alvo.validade || '').trim();
+        var validadeAlvo = null;
+        var partsV = validadeAlvoStr.split(/[-\/]/);
+        if (partsV.length === 3) {
+          var dv = parseInt(partsV[0]), mv = parseInt(partsV[1]), yv = parseInt(partsV[2]);
+          if (!isNaN(dv) && !isNaN(mv) && !isNaN(yv)) {
+            validadeAlvo = new Date(yv, mv - 1, dv);
+            validadeAlvo.setHours(0,0,0,0);
+          }
+        }
+        if (!validadeAlvo || validadeAlvo > prazoLimite) matchValidade = false;
       }
       
-      return matchNome && matchArea && matchCrime && matchSexo && matchTipo;
+      return matchNome && matchArea && matchCrime && matchArtigo && matchParagrafo && matchInciso && matchSexo && matchTipo && matchValidade;
     });
     
     renderizarPinos(filtrados);
     if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(filtrados);
-    if (typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono(filtroCPI, filtroBPM, filtroCIA);
+    if (typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono(filtroCPI, filtroBPM, filtroCIA, filtroDP);
   }
 
   function abrirGpsNativo(lat, lng) {
     window.open('https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng + '&travelmode=driving', '_blank');
   }
 
+  // ---- STREET VIEW COM TOAST E OCULTAÇÃO DE CARD ----
   function abrirStreetView(lat, lng) {
     if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return;
-    
-    // Fechar o card/InfoWindow antes de abrir o Street View
-    if (typeof infoWindowAtiva !== 'undefined' && infoWindowAtiva) infoWindowAtiva.close();
 
-    // Garantir que o mapa está visível
-    var mapDiv = document.getElementById('mapaPrincipal');
+    // 1. Ocultar card com classe .card-disabled
+    var cardEl = document.querySelector('.card-container');
+    if (cardEl) cardEl.classList.add('card-disabled');
+
+    // 2. Mostrar toast com instrução
+    var toastExist = document.getElementById('toastStreetView');
+    if (toastExist) toastExist.remove();
+    var toast = document.createElement('div');
+    toast.id = 'toastStreetView';
+    toast.className = 'toast-streetview';
+    toast.innerHTML =
+      '<span class="material-symbols-outlined toast-icon">streetview</span>' +
+      '<span>Street View ativo — pressione <strong>ESC</strong> ou clique em Voltar para fechar</span>' +
+      '<button class="toast-close-btn" onclick="fecharStreetView()">✖ Voltar</button>';
+    document.body.appendChild(toast);
+
+    // 3. Listener ESC para fechar
+    document.addEventListener('keydown', _svEscHandler);
+
+    // 4. Garantir que o mapa está visível
+    var mapDiv = document.getElementById('mapa');
     if (mapDiv) mapDiv.style.display = 'block';
 
+    // 5. Abrir panorama
     var panorama = mapaPrincipal.getStreetView();
     panorama.setPosition({ lat: lat, lng: lng });
     panorama.setPov({ heading: 0, pitch: 0 });
     panorama.setVisible(true);
+
+    // 6. Listener nativo do Maps para detectar fechamento pelo botão ← do Street View
+    if (window._svVisibleListener) {
+      google.maps.event.removeListener(window._svVisibleListener);
+    }
+    window._svVisibleListener = panorama.addListener('visible_changed', function() {
+      if (!panorama.getVisible()) fecharStreetView();
+    });
   }
+
+  function fecharStreetView() {
+    // Remover toast
+    var toast = document.getElementById('toastStreetView');
+    if (toast) toast.remove();
+
+    // Restaurar card
+    var cardEl = document.querySelector('.card-container');
+    if (cardEl) cardEl.classList.remove('card-disabled');
+
+    // Remover listener ESC
+    document.removeEventListener('keydown', _svEscHandler);
+
+    // Remover listener do Maps
+    if (window._svVisibleListener) {
+      google.maps.event.removeListener(window._svVisibleListener);
+      window._svVisibleListener = null;
+    }
+
+    // Fechar panorama se ainda estiver visível
+    if (typeof mapaPrincipal !== 'undefined' && mapaPrincipal) {
+      var panorama = mapaPrincipal.getStreetView();
+      if (panorama && panorama.getVisible()) panorama.setVisible(false);
+    }
+  }
+
+  function _svEscHandler(e) {
+    if (e.key === 'Escape') fecharStreetView();
+  }
+
+
 
   function abrirModalSuperBloco() { document.getElementById('modalSuperBloco').style.display = 'flex'; }
 
@@ -292,6 +621,8 @@
     const btnProcessar = document.getElementById('btnProcessarTexto'); if(btnProcessar) btnProcessar.style.display = 'block';
     const textoUpload = document.getElementById('foto-texto-upload'); if (textoUpload) textoUpload.style.display = 'flex';
     const preview = document.getElementById('preview-foto-admin'); if(preview) { preview.style.display = 'none'; preview.className = ""; }
+    const painelProgresso = document.getElementById('painelProgressoLote'); if(painelProgresso) painelProgresso.style.display = 'none';
+    const painelProgressoInd = document.getElementById('painelProgressoIndividual'); if(painelProgressoInd) painelProgressoInd.style.display = 'none';
   }
 
   function copiarDadoTatico(texto, btnElement) {
@@ -351,7 +682,7 @@
         if (whatsAtivo) {
           chamarAlertaTatico("CADASTRO ENVIADO", "Deseja notificar o administrador via WhatsApp para agilizar a liberação?", "CONFIRMAR", function(confirma) {
             if (confirma) {
-              const textoMsg = "Solicito liberação de acesso ao Sentinela.\n\n• Operador: " + nomeGuerra + "\n• Unidade: " + batalhao + "\n• Login: " + email;
+              const textoMsg = "Solicito liberação de acesso ao PAPA-ROMEUS.\n\n• Operador: " + nomeGuerra + "\n• Unidade: " + batalhao + "\n• Login: " + email;
               window.open("https://api.whatsapp.com/send?phone=" + numero + "&text=" + encodeURIComponent(textoMsg), '_blank');
             }
             mostrarMensagemPendente();
@@ -378,102 +709,413 @@
      MÓDULO 11: GESTÃO DE USUÁRIOS (Admin) — v2.5
      ================================================================ */
   function carregarListaUsuarios() { carregarUsuariosGrade(); }
+  
+  window.listaUsuariosAdmin = [];
+  window.filtroPerfilAdmin = 'Todos';
+  let _userEmail = '';
+  let _userName = '';
+
+  // Logoff imediato
+  function encerrarSessao() {
+    // Exibe a tela de segurança (que cobre tudo)
+    const telaSeg = document.getElementById("tela-seguranca");
+    if (telaSeg) {
+      telaSeg.style.display = "flex";
+      telaSeg.style.opacity = "1";
+    }
+    
+    // Mostra feedback para o usuário
+    const segCarregando = document.getElementById("seg-estado-carregando");
+    const segCadastro = document.getElementById("seg-estado-cadastro");
+    const segMensagem = document.getElementById("seg-estado-mensagem");
+    const msgTitulo = document.getElementById("msg-seg-titulo");
+    const msgTexto = document.getElementById("msg-seg-texto");
+
+    if (segCarregando) segCarregando.style.display = "none";
+    if (segCadastro) segCadastro.style.display = "none";
+    if (segMensagem) segMensagem.style.display = "block";
+    
+    if (msgTitulo) {
+      msgTitulo.innerText = "SESSÃO ENCERRADA";
+      msgTitulo.style.color = "var(--text-muted)";
+    }
+    if (msgTexto) {
+      msgTexto.innerText = "Você foi desconectado com sucesso. Recarregue a página para entrar novamente.";
+    }
+    
+    // Chama o backend para registrar a saída (assíncrono)
+    google.script.run.registrarSaidaSistema();
+  }
 
   function carregarUsuariosGrade() {
-    const pendentesContainer = document.getElementById('containerUsuariosPendentes');
-    const ativosContainer = document.getElementById('containerUsuariosAtivos');
-    const bloqueadosContainer = document.getElementById('containerUsuariosBloqueados');
-    if (pendentesContainer) pendentesContainer.innerHTML = '<p style="color:var(--text-muted);font-size:12px;">Carregando...</p>';
-    if (ativosContainer) ativosContainer.innerHTML = '<p style="color:var(--text-muted);font-size:12px;">Carregando...</p>';
-    if (bloqueadosContainer) bloqueadosContainer.innerHTML = '';
+    const cAuth = document.getElementById('containerTropaAutorizada');
+    const cPend = document.getElementById('containerTropaPendente');
+    const cBloq = document.getElementById('containerTropaBloqueada');
+    
+    const loadingHtml = '<div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px;background:var(--bg-surface);border-radius:var(--radius-md);"><span class="material-symbols-outlined" style="font-size:32px;opacity:0.5;animation:spin 1s linear infinite;margin-bottom:8px;">refresh</span><p>Carregando...</p></div>';
+    
+    if (cAuth) cAuth.innerHTML = loadingHtml;
+    if (cPend) cPend.innerHTML = '';
+    if (cBloq) cBloq.innerHTML = '';
 
     google.script.run.withSuccessHandler(function(usuarios) {
       if (!usuarios) return;
+      window.listaUsuariosAdmin = usuarios;
+      renderListaAdmin();
+      renderListaConexao();
+    }).obterTodosUsuarios();
+  }
+  
+  // Variável para armazenar o ID do Polling e não encavalar
+  window.pollingConexaoAtivo = null;
+  
+  // Observador de aba para ligar/desligar o Polling seletivamente
+  function iniciarPollingConexao() {
+    if (!window.pollingConexaoAtivo) {
+      window.pollingConexaoAtivo = setInterval(() => {
+        const viewAdmin = document.getElementById('view-usuarios');
+        // Só rodar o ping invisível de 30s se o usuário for Admin e a tela estiver aberta
+        if (viewAdmin && viewAdmin.style.display !== 'none') {
+          google.script.run.withSuccessHandler(function(usuarios) {
+            if (usuarios) {
+              window.listaUsuariosAdmin = usuarios;
+              renderListaConexao();
+            }
+          }).obterTodosUsuarios();
+        }
+      }, 30000); // 30 segundos
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', iniciarPollingConexao);
+  } else {
+    iniciarPollingConexao();
+  }
+  
+  function selecionarFiltroPerfil(btn) {
+    document.querySelectorAll('.filtro-perfil-btn').forEach(b => b.classList.remove('neu-btn-accent'));
+    btn.classList.add('neu-btn-accent');
+    window.filtroPerfilAdmin = btn.getAttribute('data-perfil');
+    renderListaAdmin();
+  }
+
+  function renderListaAdmin() {
+    const cAuth = document.getElementById('containerTropaAutorizada');
+    const cPend = document.getElementById('containerTropaPendente');
+    const cBloq = document.getElementById('containerTropaBloqueada');
+    if (!cAuth || !cPend || !cBloq) return;
+    
+    const badgeVersaoMain = document.getElementById('badgeVersao');
+    const badgeVersaoAdmin = document.getElementById('badgeVersaoAdmin');
+    if (badgeVersaoMain && badgeVersaoAdmin) {
+      badgeVersaoAdmin.textContent = badgeVersaoMain.textContent;
+    }
+    
+    let usuarios = window.listaUsuariosAdmin || [];
+    const pendentesTotais = usuarios.filter(u => u.status === 'PENDENTE');
+    
+    var badge = document.getElementById('badgeUsuariosPendentes');
+    if (badge) {
+      if (pendentesTotais.length > 0) { 
+        badge.textContent = pendentesTotais.length; 
+        badge.style.display = 'inline-block'; 
+      } else { 
+        badge.style.display = 'none'; 
+      }
+    }
+    
+    const textoBusca = (document.getElementById('filtroTextoAdmin') ? document.getElementById('filtroTextoAdmin').value.trim().toLowerCase() : '');
+    
+    // Filtrar não excluídos, texto e perfil
+    let filtrados = usuarios.filter(function(u) {
+      if (u.status === 'EXCLUIDO') return false;
       
-      const pendentes = usuarios.filter(function(u) { return u.status === 'PENDENTE'; });
-      const ativos = usuarios.filter(function(u) { return u.status === 'ATIVO'; });
-      const bloqueados = usuarios.filter(function(u) { return u.status === 'BLOQUEADO' || u.status === 'INATIVO'; });
-
-      // Stats
-      var elTotal = document.getElementById('statUsuTotal');
-      var elAtivos = document.getElementById('statUsuAtivos');
-      var elPendentes = document.getElementById('statUsuPendentes');
-      var elBloqueados = document.getElementById('statUsuBloqueados');
-      if (elTotal) elTotal.textContent = usuarios.length;
-      if (elAtivos) elAtivos.textContent = ativos.length;
-      if (elPendentes) elPendentes.textContent = pendentes.length;
-      if (elBloqueados) elBloqueados.textContent = bloqueados.length;
-
-      // Badge na sidebar
-      var badge = document.getElementById('badgeUsuariosPendentes');
-      if (badge) {
-        if (pendentes.length > 0) { badge.textContent = pendentes.length; badge.style.display = 'inline-block'; }
-        else { badge.style.display = 'none'; }
+      if (window.filtroPerfilAdmin === 'Pendente') {
+        if (u.status !== 'PENDENTE') return false;
+      } else if (window.filtroPerfilAdmin === 'Bloqueado') {
+        if (u.status !== 'BLOQUEADO' && u.status !== 'INATIVO' && u.status !== 'REPROVADO') return false;
+      } else if (window.filtroPerfilAdmin !== 'Todos') {
+        if (u.perfil !== window.filtroPerfilAdmin) return false;
       }
-
-      // Renderizar Pendentes
-      if (pendentes.length === 0) {
-        pendentesContainer.innerHTML = '<div style="padding:16px;background:var(--bg-deep);border-radius:8px;color:var(--text-muted);font-size:12px;text-align:center;">Nenhuma solicitação pendente.</div>';
-      } else {
-        pendentesContainer.innerHTML = pendentes.map(function(op) {
-          var emailSeg = op.email.replace(/'/g, "\\'");
-          return '<div class="card-operador" style="background:var(--bg-deep);padding:14px;border-radius:10px;box-shadow:var(--neu-raised-sm);border-left:3px solid var(--warning);">' +
-            '<div style="display:flex;justify-content:space-between;align-items:flex-start;">' +
-              '<div>' +
-                '<div style="font-weight:800;font-size:14px;color:var(--text-primary);">' + op.nome + '</div>' +
-                '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">' + op.unidade + '</div>' +
-                '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono);">' + op.email + '</div>' +
-              '</div>' +
-              '<span style="font-size:9px;font-weight:800;background:var(--warning)20;color:var(--warning);padding:3px 8px;border-radius:99px;">PENDENTE</span>' +
-            '</div>' +
-            '<div style="display:flex;gap:8px;margin-top:12px;">' +
-              '<button class="neu-btn neu-btn-accent" style="flex:1;padding:10px;font-size:11px;" onclick="processarDecisaoAdmin(\'' + emailSeg + '\', \'ATIVO\', this)"><span class="material-symbols-outlined" style="font-size:14px;">check</span> APROVAR</button>' +
-              '<button class="neu-btn" style="flex:1;padding:10px;font-size:11px;color:var(--danger);" onclick="processarDecisaoAdmin(\'' + emailSeg + '\', \'BLOQUEADO\', this)"><span class="material-symbols-outlined" style="font-size:14px;">block</span> REJEITAR</button>' +
-            '</div></div>';
-        }).join('');
-      }
-
-      // Renderizar Ativos
-      if (ativos.length === 0) {
-        ativosContainer.innerHTML = '<div style="padding:16px;background:var(--bg-deep);border-radius:8px;color:var(--text-muted);font-size:12px;text-align:center;">Nenhum operador ativo.</div>';
-      } else {
-        ativosContainer.innerHTML = ativos.map(function(op) {
-          var emailSeg = op.email.replace(/'/g, "\\'");
-          return '<div class="card-operador" style="background:var(--bg-deep);padding:14px;border-radius:10px;box-shadow:var(--neu-pressed-sm);border-left:3px solid var(--success);">' +
-            '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-              '<div style="flex:1;min-width:0;">' +
-                '<div style="font-weight:700;font-size:13px;color:var(--text-primary);display:flex;align-items:center;gap:6px;">' + op.nome +
-                  ' <span style="font-size:9px;background:var(--accent)15;color:var(--accent);padding:2px 6px;border-radius:4px;font-weight:800;">' + (op.perfil || 'Operador') + '</span>' +
-                '</div>' +
-                '<div style="font-size:11px;color:var(--text-secondary);margin-top:2px;">' + op.unidade + '</div>' +
-                '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;font-family:var(--font-mono);overflow:hidden;text-overflow:ellipsis;">' + op.email + '</div>' +
-              '</div>' +
-              '<button class="neu-btn" style="padding:8px;color:var(--danger);flex-shrink:0;" onclick="processarDecisaoAdmin(\'' + emailSeg + '\', \'BLOQUEADO\', this)" title="Bloquear"><span class="material-symbols-outlined" style="font-size:16px;">block</span></button>' +
-            '</div>' +
-          '</div>';
-        }).join('');
-      }
-
-      // Renderizar Bloqueados
-      if (bloqueadosContainer) {
-        if (bloqueados.length === 0) {
-          bloqueadosContainer.innerHTML = '<div style="padding:16px;background:var(--bg-deep);border-radius:8px;color:var(--text-muted);font-size:12px;text-align:center;">Nenhum operador bloqueado.</div>';
-        } else {
-          bloqueadosContainer.innerHTML = bloqueados.map(function(op) {
-            var emailSeg = op.email.replace(/'/g, "\\'");
-            return '<div class="card-operador" style="background:var(--bg-deep);padding:14px;border-radius:10px;border-left:3px solid var(--danger);opacity:0.7;">' +
-              '<div style="display:flex;justify-content:space-between;align-items:center;">' +
-                '<div style="flex:1;min-width:0;">' +
-                  '<div style="font-weight:700;font-size:13px;color:var(--text-primary);">' + op.nome + '</div>' +
-                  '<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">' + op.email + '</div>' +
-                '</div>' +
-                '<button class="neu-btn" style="padding:8px;color:var(--success);flex-shrink:0;" onclick="processarDecisaoAdmin(\'' + emailSeg + '\', \'ATIVO\', this)" title="Reativar"><span class="material-symbols-outlined" style="font-size:16px;">check_circle</span></button>' +
-              '</div>' +
-            '</div>';
-          }).join('');
+      
+      if (textoBusca !== '') {
+        const tEmail = (u.email || '').toLowerCase();
+        const tNome = (u.nome || '').toLowerCase();
+        const tPerfil = (u.perfil || '').toLowerCase();
+        if (!tEmail.includes(textoBusca) && !tNome.includes(textoBusca) && !tPerfil.includes(textoBusca)) {
+          return false;
         }
       }
-    }).obterTodosUsuarios();
+      return true;
+    });
+
+    const arrCadastrados = filtrados.filter(u => u.status === 'ATIVO');
+    const arrPendentes = filtrados.filter(u => u.status === 'PENDENTE');
+    const arrBloqueados = filtrados.filter(u => u.status === 'BLOQUEADO' || u.status === 'INATIVO' || u.status === 'REPROVADO');
+
+    if (arrCadastrados.length === 0) {
+      cAuth.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;background:var(--bg-surface);border-radius:var(--radius-md);">Nenhum agente cadastrado encontrado.</div>';
+    } else {
+      cAuth.innerHTML = arrCadastrados.map(gerarHtmlCard).join('');
+    }
+
+    if (arrPendentes.length === 0) {
+      cPend.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;background:var(--bg-surface);border-radius:var(--radius-md);">Não há cadastros pendentes.</div>';
+    } else {
+      cPend.innerHTML = arrPendentes.map(gerarHtmlCard).join('');
+    }
+
+    if (arrBloqueados.length === 0) {
+      cBloq.innerHTML = '<div style="padding:24px;text-align:center;color:var(--text-muted);font-size:13px;background:var(--bg-surface);border-radius:var(--radius-md);">Nenhum agente bloqueado.</div>';
+    } else {
+      cBloq.innerHTML = arrBloqueados.map(gerarHtmlCard).join('');
+    }
+
+    // Removido da renderListaAdmin e repassado para o polling:
+    // renderListaConexao() cuidará da Coluna 2
+
+    // Ocultar seções vazias ou não relacionadas ao filtro
+    const secaoCad = document.getElementById('secao-agentes-cadastrados');
+    const secaoPen = document.getElementById('secao-agentes-pendentes');
+    const secaoBlo = document.getElementById('secao-agentes-bloqueados');
+    
+    if (window.filtroPerfilAdmin === 'Pendente') {
+      if(secaoCad) secaoCad.style.display = 'none';
+      if(secaoPen) secaoPen.style.display = 'block';
+      if(secaoBlo) secaoBlo.style.display = 'none';
+    } else if (window.filtroPerfilAdmin === 'Bloqueado') {
+      if(secaoCad) secaoCad.style.display = 'none';
+      if(secaoPen) secaoPen.style.display = 'none';
+      if(secaoBlo) secaoBlo.style.display = 'block';
+    } else if (window.filtroPerfilAdmin !== 'Todos') {
+      if(secaoCad) secaoCad.style.display = 'block';
+      if(secaoPen) secaoPen.style.display = 'none';
+      if(secaoBlo) secaoBlo.style.display = 'none';
+    } else {
+      if(secaoCad) secaoCad.style.display = 'block';
+      if(secaoPen) secaoPen.style.display = 'block';
+      if(secaoBlo) secaoBlo.style.display = 'block';
+    }
+  }
+
+  function selecionarFiltroConexao(btn) {
+    document.querySelectorAll('.filtro-conexao-btn').forEach(b => {
+      b.classList.remove('neu-btn-accent');
+      if(b.getAttribute('data-conexao') === 'Todos') { b.style.color = 'var(--text-secondary)'; b.style.borderColor = 'rgba(255,255,255,0.1)'; b.style.background = 'transparent'; }
+      if(b.getAttribute('data-conexao') === 'Online') { b.style.color = 'var(--success)'; b.style.borderColor = 'rgba(16,185,129,0.3)'; b.style.background = 'transparent'; }
+      if(b.getAttribute('data-conexao') === 'Offline') { b.style.color = 'var(--text-muted)'; b.style.borderColor = 'rgba(255,255,255,0.1)'; b.style.background = 'transparent'; }
+    });
+    
+    if(btn.getAttribute('data-conexao') === 'Todos') {
+      btn.classList.add('neu-btn-accent');
+      btn.style.color = ''; btn.style.borderColor = ''; btn.style.background = '';
+    } else if (btn.getAttribute('data-conexao') === 'Online') {
+      btn.style.color = '#fff'; btn.style.borderColor = 'var(--success)'; btn.style.background = 'rgba(16,185,129,0.2)';
+    } else if (btn.getAttribute('data-conexao') === 'Offline') {
+      btn.style.color = '#fff'; btn.style.borderColor = 'var(--text-muted)'; btn.style.background = 'rgba(255,255,255,0.1)';
+    }
+    
+    window.filtroConexaoAdmin = btn.getAttribute('data-conexao');
+    renderListaConexao();
+  }
+
+  function renderListaConexao() {
+    const cConex = document.getElementById('containerTropaConexao');
+    if (!cConex) return;
+    
+    let usuarios = window.listaUsuariosAdmin || [];
+    let arrCadastrados = usuarios.filter(u => u.status === 'ATIVO');
+    
+    // Aplicar Filtro de Busca Local (Conexão)
+    const textoBuscaConexao = (document.getElementById('filtroTextoConexao') ? document.getElementById('filtroTextoConexao').value.trim().toLowerCase() : '');
+    if (textoBuscaConexao !== '') {
+      arrCadastrados = arrCadastrados.filter(u => {
+        const tEmail = (u.email || '').toLowerCase();
+        const tNome = (u.nome || '').toLowerCase();
+        return tEmail.includes(textoBuscaConexao) || tNome.includes(textoBuscaConexao);
+      });
+    }
+
+    function parseDataBr(str) {
+      if (!str || str === 'Nunca') return 0;
+      const parts = str.split(' ');
+      if(parts.length < 2) return 0;
+      const d = parts[0].split('/');
+      const t = parts[1].split(':');
+      if(d.length<3 || t.length<3) return 0;
+      return new Date(d[2], d[1]-1, d[0], t[0], t[1], t[2]).getTime();
+    }
+    
+    const agora = new Date().getTime();
+    const arrOnline = arrCadastrados.filter(u => u.isOnline !== undefined ? u.isOnline : !(u.ultimoLogin || '').includes('Offline'));
+    const arrOffline = arrCadastrados.filter(u => u.isOnline !== undefined ? !u.isOnline : (u.ultimoLogin || '').includes('Offline'));
+    
+    // Filtro Online / Offline Buttons
+    const filtroStatus = window.filtroConexaoAdmin || 'Todos';
+
+    let htmlConexao = '';
+    if ((filtroStatus === 'Todos' || filtroStatus === 'Online') && arrOnline.length > 0) {
+      htmlConexao += '<div style="font-size:10px;font-weight:900;color:var(--success);margin-top:4px;letter-spacing:0.5px;">ONLINE AGORA (' + arrOnline.length + ')</div>';
+      htmlConexao += arrOnline.map(u => gerarHtmlConexao(u, true)).join('');
+    }
+    if ((filtroStatus === 'Todos' || filtroStatus === 'Offline') && arrOffline.length > 0) {
+      htmlConexao += '<div style="font-size:10px;font-weight:900;color:var(--text-muted);margin-top:12px;letter-spacing:0.5px;">OFFLINE (' + arrOffline.length + ')</div>';
+      htmlConexao += arrOffline.map(u => gerarHtmlConexao(u, false)).join('');
+    }
+    if (htmlConexao === '') htmlConexao = '<div style="font-size:11px;color:var(--text-muted);text-align:center;padding:16px;">Nenhum usuário encontrado.</div>';
+    
+    cConex.innerHTML = htmlConexao;
+  }
+
+  function gerarHtmlConexao(op, isOnline) {
+    let avatarHtml = '';
+    if (op.fotoUrl && op.fotoUrl.trim() !== '') {
+      avatarHtml = `<img src="${op.fotoUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`;
+    } else {
+      avatarHtml = `<span class="material-symbols-outlined" style="font-size:18px;color:var(--text-muted);">shield_person</span>`;
+    }
+    
+    let strData = (op.ultimoLogin || 'Nunca').replace(' (Offline)', '').replace('Offline', '');
+    let infoAcesso = isOnline ? 'Conectado' : 'Último login: ' + (strData.trim() || 'Nunca');
+    let corStatus = isOnline ? 'var(--success)' : 'var(--text-muted)';
+    
+    return `
+    <div style="display:flex;align-items:center;gap:12px;padding:12px;background:var(--bg-surface);border:1px solid rgba(255,255,255,0.05);border-radius:var(--radius-sm);">
+      <div style="position:relative;width:32px;height:32px;border-radius:50%;background:var(--bg-depressed);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+        ${avatarHtml}
+        <div style="position:absolute;bottom:-2px;right:-2px;width:10px;height:10px;background:${corStatus};border-radius:50%;border:2px solid var(--bg-surface);"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;flex:1;min-width:0;">
+        <div style="font-size:12px;font-weight:700;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${op.nome !== 'Nome a Definir' ? op.nome : op.email}</div>
+        <div style="font-size:10px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${infoAcesso}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;">
+        <span style="font-size:9px;font-weight:800;color:var(--text-muted);">${op.qtdAcessos || 0} acessos</span>
+      </div>
+    </div>`;
+  }
+
+  function gerarHtmlCard(op) {
+    var emailSeg = op.email.replace(/'/g, "\\'");
+    
+    let estiloSeloPatente = '';
+    let perfilExibido = op.perfil;
+    if (op.perfil === 'Admin') {
+      estiloSeloPatente = 'background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25);';
+      perfilExibido = 'Administrador';
+    } else if (op.perfil === 'Colaborador') {
+      estiloSeloPatente = 'background: rgba(59, 130, 246, 0.12); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.25);';
+    } else {
+      estiloSeloPatente = 'background: rgba(16, 185, 129, 0.12); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.25);';
+      perfilExibido = 'Patrulheiro';
+    }
+    
+    let statusSeloHtml = '';
+    if (op.status === 'PENDENTE') {
+      statusSeloHtml = `<span style="font-size:9px;font-weight:900;padding:2px 8px;border-radius:99px;text-transform:uppercase;background: rgba(245, 158, 11, 0.12); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.25);">PENDENTE</span>`;
+    } else if (op.status === 'BLOQUEADO' || op.status === 'INATIVO' || op.status === 'REPROVADO') {
+      statusSeloHtml = `<span style="font-size:9px;font-weight:900;padding:2px 8px;border-radius:99px;text-transform:uppercase;background: rgba(239, 68, 68, 0.12); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.25);">BLOQUEADO</span>`;
+    }
+    
+    let botoesHtml = '';
+    if (op.status === 'PENDENTE') {
+      botoesHtml += `<button class="neu-btn" style="padding:8px 12px;font-size:10px;height:36px;background:var(--success);color:white;border-color:rgba(16,185,129,0.3);box-shadow:none;margin:0;font-weight:800;" onclick="acionarBotaoUsuario('${emailSeg}', 'ATIVO', this)"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">check</span> AUTORIZAR</button>`;
+    } else if (op.status === 'BLOQUEADO' || op.status === 'REPROVADO') {
+      botoesHtml += `<button class="neu-btn" style="padding:8px 12px;font-size:10px;height:36px;color:var(--success);border-color:rgba(16,185,129,0.2);box-shadow:none;margin:0;font-weight:800;" onclick="acionarBotaoUsuario('${emailSeg}', 'DESBLOQUEADO', this)"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">lock_open</span> DESBLOQUEAR</button>`;
+    } else if (op.status === 'ATIVO') {
+      botoesHtml += `<button class="neu-btn" style="padding:8px 12px;font-size:10px;height:36px;color:var(--warning);border-color:rgba(245,158,11,0.2);box-shadow:none;margin:0;font-weight:800;" onclick="acionarBotaoUsuario('${emailSeg}', 'BLOQUEADO', this)"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">lock</span> BLOQUEAR</button>`;
+    }
+    
+    let avatarHtml = '';
+    if (op.fotoUrl && op.fotoUrl.trim() !== '') {
+      avatarHtml = `<img src="${op.fotoUrl}" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />`;
+    } else {
+      avatarHtml = `<span class="material-symbols-outlined" style="font-size:24px;color:var(--text-muted);">shield_person</span>`;
+    }
+    
+    let dataFormatada = "Data Desconhecida";
+    if (op.dataCadastro && op.dataCadastro !== "Desconhecida" && op.dataCadastro.trim() !== "") {
+       // O formato esperado que vem de Seguranca.gs é "dd/MM/yyyy HH:mm:ss"
+       dataFormatada = op.dataCadastro; 
+    }
+    
+    return `
+    <div class="card-operador" style="display:flex;align-items:center;justify-content:space-between;padding:16px;background:var(--bg-surface);border:var(--glass-border);border-radius:var(--radius-md);box-shadow:var(--neu-raised-sm);gap:16px;flex-wrap:wrap;transition:var(--transition);">
+      <!-- Lado Esquerdo: Avatar + Info -->
+      <div style="display:flex;align-items:center;gap:14px;flex:1;min-width:240px;">
+        <div style="width:48px;height:48px;border-radius:50%;overflow:hidden;background:var(--bg-depressed);border:1px solid rgba(255,255,255,0.1);display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+          ${avatarHtml}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:2px;overflow:hidden;text-align:left;">
+          <div style="font-weight:800;font-size:14px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${op.email}">
+            ${op.email}
+          </div>
+          <div style="font-size:11px;color:var(--text-secondary);font-weight:600;">
+            ${op.nome !== 'Nome a Definir' ? op.nome : 'Sem Nome de Guerra'} · <span style="color:var(--text-muted);">${op.unidade !== 'Unidade a Definir' ? op.unidade : 'Sem Unidade'}</span>
+          </div>
+          <div style="font-size:10px;color:var(--text-muted);font-weight:500;margin-top:2px;line-height:1.4;">
+            Cadastrado em: <span style="color:var(--text-secondary);">${dataFormatada}</span><br>
+            Último Acesso: <span style="color:var(--text-secondary);">${op.ultimoLogin || 'Nunca'}</span><br>
+            Acessos Registrados: <span style="color:var(--text-secondary);">${op.qtdAcessos || 0}</span>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;margin-top:6px;flex-wrap:wrap;">
+            <span style="font-size:9px;font-weight:900;padding:2px 8px;border-radius:99px;text-transform:uppercase;${estiloSeloPatente}">${perfilExibido}</span>
+            ${statusSeloHtml}
+          </div>
+        </div>
+      </div>
+      <!-- Lado Direito: Ações (Botões de Perfil + Revogar) -->
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:8px;">
+        <div style="display:flex;background:var(--bg-depressed);border-radius:var(--radius-sm);overflow:hidden;border:1px solid var(--border);">
+          <button style="border:none;background:${op.perfil==='Patrulheiro'?'var(--accent)':'transparent'};color:${op.perfil==='Patrulheiro'?'white':'var(--text-secondary)'};font-size:9px;font-weight:800;padding:6px 10px;cursor:pointer;text-transform:uppercase;transition:all 0.2s;" onclick="mudarPerfilGkDirect('${emailSeg}', 'Patrulheiro', this)">PTRL</button>
+          <button style="border:none;border-left:1px solid var(--border);border-right:1px solid var(--border);background:${op.perfil==='Colaborador'?'var(--accent)':'transparent'};color:${op.perfil==='Colaborador'?'white':'var(--text-secondary)'};font-size:9px;font-weight:800;padding:6px 10px;cursor:pointer;text-transform:uppercase;transition:all 0.2s;" onclick="mudarPerfilGkDirect('${emailSeg}', 'Colaborador', this)">COLAB</button>
+          <button style="border:none;background:${op.perfil==='Admin'?'var(--accent)':'transparent'};color:${op.perfil==='Admin'?'white':'var(--text-secondary)'};font-size:9px;font-weight:800;padding:6px 10px;cursor:pointer;text-transform:uppercase;transition:all 0.2s;" onclick="mudarPerfilGkDirect('${emailSeg}', 'Admin', this)">ADM</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          ${botoesHtml}
+          <button class="neu-btn" style="padding:8px 12px;font-size:10px;height:36px;color:var(--danger);border-color:rgba(239,68,68,0.2);box-shadow:none;margin:0;display:flex;align-items:center;gap:4px;" onclick="excluirUsuarioDefinitivoGK('${emailSeg}', this)" title="Excluir Acesso Definitivamente">
+            <span class="material-symbols-outlined" style="font-size:16px;">delete</span> EXCLUIR
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  function acionarBotaoUsuario(email, acao, btnElement) {
+    if (acao === 'EXCLUIDO') {
+      chamarAlertaTatico("ATENÇÃO PERIGO", "Tem certeza que deseja EXCLUIR este operador permanentemente? O acesso será revogado em definitivo.", "CONFIRMAR", function(confirma) {
+        if(confirma) executarAcaoRede(email, acao, btnElement);
+      });
+    } else if (acao === 'REPROVADO' || acao === 'BLOQUEADO') {
+      chamarAlertaTatico("ATENÇÃO", "Deseja " + acao.toLowerCase() + " o acesso deste operador?", "CONFIRMAR", function(confirma) {
+        if(confirma) executarAcaoRede(email, acao, btnElement);
+      });
+    } else {
+      executarAcaoRede(email, acao, btnElement);
+    }
+  }
+
+  function executarAcaoRede(email, acao, btnElement) {
+    var txtOriginal = btnElement.innerHTML;
+    btnElement.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;animation:spin 1s linear infinite">sync</span> AGUARDE';
+    btnElement.disabled = true;
+    var card = btnElement.closest('.card-operador');
+    if(card) card.style.opacity = "0.6";
+
+    let statusFinal = acao;
+    if (acao === 'DESBLOQUEADO') statusFinal = 'ATIVO';
+
+    google.script.run.withSuccessHandler(function(res) {
+      if (res.sucesso) { 
+        carregarUsuariosGrade();
+      } else { 
+        chamarAlertaTatico("FALHA", res.mensagem, "OK"); 
+        if(card) card.style.opacity = "1"; 
+        btnElement.innerHTML = txtOriginal;
+        btnElement.disabled = false;
+      }
+    }).alterarStatusOperador(email, statusFinal);
   }
 
   function aprovarTodosPendentes() {
@@ -505,5 +1147,107 @@
         botao.disabled = false;
       }
     }).alterarStatusOperador(email, decisao);
+  }
+</script>
+
+<!-- GATEKEEPER SCRIPTS -->
+<script>
+  function selecionarNovaPatente(btn) {
+    // Remove estilos ativos de todos
+    document.querySelectorAll('.patente-btn').forEach(b => {
+      b.style.background = 'transparent';
+      if(b.getAttribute('data-val') === 'Patrulheiro') { b.style.color = 'var(--text-secondary)'; b.style.borderColor = 'var(--border)'; }
+      if(b.getAttribute('data-val') === 'Colaborador') { b.style.color = 'var(--text-secondary)'; b.style.borderColor = 'var(--border)'; }
+      if(b.getAttribute('data-val') === 'Admin') { b.style.color = 'var(--text-secondary)'; b.style.borderColor = 'var(--border)'; }
+    });
+    
+    // Adiciona estilo ativo no selecionado
+    const val = btn.getAttribute('data-val');
+    if (val === 'Patrulheiro') {
+      btn.style.background = 'rgba(59,130,246,0.1)'; btn.style.color = '#3b82f6'; btn.style.borderColor = 'rgba(59,130,246,0.4)';
+    } else if (val === 'Colaborador') {
+      btn.style.background = 'rgba(245,158,11,0.1)'; btn.style.color = '#f59e0b'; btn.style.borderColor = 'rgba(245,158,11,0.4)';
+    } else if (val === 'Admin') {
+      btn.style.background = 'rgba(16,185,129,0.1)'; btn.style.color = '#10b981'; btn.style.borderColor = 'rgba(16,185,129,0.4)';
+    }
+    document.getElementById('gk_novo_perfil').value = val;
+  }
+
+  function addUsuarioGatekeeper(btn) {
+    const email = document.getElementById('gk_novo_email').value.trim();
+    const nome = document.getElementById('gk_novo_nome').value.trim();
+    const perfil = document.getElementById('gk_novo_perfil').value;
+    
+    if (!email) {
+      chamarAlertaTatico("ATENÇÃO", "E-mail é obrigatório.", "OK");
+      return;
+    }
+    if (!nome) {
+      chamarAlertaTatico("ATENÇÃO", "Nome de guerra é obrigatório.", "OK");
+      return;
+    }
+
+    const txtOriginal = btn.innerHTML;
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:18px;animation:spin 1s linear infinite;">refresh</span> ADICIONANDO NO BANCO DE DADOS...';
+    btn.disabled = true;
+
+    google.script.run.withSuccessHandler(function(resp) {
+      btn.innerHTML = txtOriginal;
+      btn.disabled = false;
+      if (resp.sucesso) {
+        chamarAlertaTatico("SUCESSO", resp.mensagem, "OK");
+        
+        // Limpar dados do formulário
+        document.getElementById('gk_novo_email').value = '';
+        document.getElementById('gk_novo_nome').value = '';
+        document.getElementById('gk_novo_perfil').value = 'Patrulheiro';
+        document.querySelectorAll('.patente-btn').forEach(b => {
+          b.style.background = 'transparent'; b.style.color = 'var(--text-secondary)'; b.style.borderColor = 'var(--border)';
+          if (b.getAttribute('data-val') === 'Patrulheiro') {
+            b.style.background = 'rgba(59,130,246,0.1)'; b.style.color = '#3b82f6'; b.style.borderColor = 'rgba(59,130,246,0.4)';
+          }
+        });
+        
+        carregarListaUsuarios();
+      } else {
+        chamarAlertaTatico("FALHA", resp.mensagem, "OK");
+      }
+    }).adicionarUsuarioDireto(email, perfil, nome);
+  }
+
+  function mudarPerfilGkDirect(email, novoPerfil, btn) {
+    const txtOrig = btn.innerHTML;
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:12px;animation:spin 1s linear infinite;">refresh</span>';
+    btn.disabled = true;
+    
+    google.script.run.withSuccessHandler(function(resp) {
+      if(resp.sucesso) {
+        chamarAlertaTatico("SUCESSO", resp.mensagem, "OK");
+        carregarListaUsuarios();
+      } else {
+        btn.innerHTML = txtOrig;
+        btn.disabled = false;
+        chamarAlertaTatico("FALHA", resp.mensagem, "OK");
+      }
+    }).alterarPerfilUsuario(email, novoPerfil);
+  }
+
+  function excluirUsuarioDefinitivoGK(email, btn) {
+    if (!confirm("Tem certeza que deseja EXCLUIR instantaneamente o acesso de " + email + "? A exclusão será definitiva.")) return;
+    
+    const txtOriginal = btn.innerHTML;
+    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;animation:spin 1s linear infinite;">refresh</span>';
+    btn.disabled = true;
+
+    google.script.run.withSuccessHandler(function(resp) {
+      if(resp.sucesso) {
+        chamarAlertaTatico("SUCESSO", resp.mensagem, "OK");
+        carregarListaUsuarios();
+      } else {
+        btn.innerHTML = txtOriginal;
+        btn.disabled = false;
+        chamarAlertaTatico("FALHA", resp.mensagem, "OK");
+      }
+    }).excluirUsuarioDefinitivo(email);
   }
 </script>
