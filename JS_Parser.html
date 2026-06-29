@@ -3,7 +3,24 @@
      MÓDULO 8: PARSER BNMP + CADASTRO
      ================================================================ */
 
-  /* Função reutilizável de extração de dados a partir de texto bruto de PDF */
+  // Função auxiliar para retornar uma Promise para a chamada do Gemini
+  function analisarDocumentoComGeminiPromessa(texto) {
+    console.log("[DEBUG FRONTEND] Disparando chamada google.script.run para analisarTextoComGemini. Tamanho do texto:", texto.length);
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(res => {
+          console.log("[DEBUG FRONTEND] Retorno recebido de analisarTextoComGemini:", res);
+          resolve(res);
+        })
+        .withFailureHandler(err => {
+          console.error("[DEBUG FRONTEND] Erro recebido de analisarTextoComGemini:", err);
+          resolve({ sucesso: false, mensagem: err.message });
+        })
+        .analisarTextoComGemini(texto);
+    });
+  }
+
+  /* Função reutilizável de extração de dados a partir de texto bruto de PDF via Regex */
   function extrairDadosDeTextoPDF(textoBruto) {
     const texto = textoBruto;
 
@@ -18,19 +35,16 @@
       return res.replace(/^\|/, '').replace(/\|$/, '').trim() || "N/A";
     };
 
-    // Mandado: extrair apenas o número no formato NNNNNNN-NN.NNNN.N.NN.NNNN... 
     let mandado = extrairCurto('N° do (?:Mandado|Documento)\\s*:');
-    var matchMandado = mandado.match(/[\d]{5,}-[\d\.]+/); 
+    var matchMandado = mandado.match(/[\d]{5,}-[\d\.\-]+/); 
     if (matchMandado) mandado = matchMandado[0];
 
     const matchVal = texto.match(/Data de validade\s*:\s*(\d{2}[\/\.]\d{2}[\/\.]\d{4})/i);
     const validade = matchVal ? matchVal[1].replace(/\./g, '/') : "N/A";
     let nome = extrairCurto('Nome da Pessoa\\s*:'); if (!isValid(nome)) nome = extrairCurto('Pessoa Procurada\\s*:'); if (!isValid(nome)) nome = extrairCurto('Nome\\s*:');
-    // CPF: extrair apenas o padrão NNN.NNN.NNN-NN
     let cpfBruto = extrairCurto('CPF\\s*:');
     var matchCpf = cpfBruto.match(/\d{3}\.\d{3}\.\d{3}-\d{2}/);
     const cpf = matchCpf ? matchCpf[0] : cpfBruto;
-    // RG: limpar traços e espaços soltos no final
     let rg = extrairCurto('RG\\s*:').replace(/[\s-]+$/, '').trim();
     let matchNasc = texto.match(/(?:Data de Nascimento|Data de nasc\.)\s*:\s*(\d{2}[\/\.]\d{2}[\/\.]\d{4})/i);
     let nascimento = matchNasc ? matchNasc[1].replace(/\./g, '/') : "N/A";
@@ -40,10 +54,10 @@
     const rji = extrairCurto('RJI\\s*:'); const nomeSocial = extrairCurto('Nome Social\\s*:'); const alcunha = extrairCurto('Alcunha\\s*:'); const marcas = extrairCurto('Marcas e sinais\\s*:');
     const tituloMatch = texto.match(/MANDADO[^\n\r]*/i); let titulo = tituloMatch ? tituloMatch[0].trim() : "MANDADO DE PRISÃO";
     const emissaoMatch = texto.match(/([A-ZÀ-ÿ\- ]+,\s*\d{1,2}\s+de\s+[A-Za-zÀ-ÿ]+\s+de\s+\d{4})/i); let emissao = emissaoMatch ? emissaoMatch[1].trim() : "";
-    const sinteseMatch = texto.match(/Síntese da [Dd]ecisão:?\s*([\s\S]*?)(?:Advertências|Observaç[õo]es?:|Outros Mandados|Documento assinado|Lavrado por|$)/i); const sintese = sinteseMatch ? sinteseMatch[1].trim().replace(/\n/g, ' ') : "";
+    const sinteseMatch = texto.match(/S[ií]ntese da [Dd]ecisão:?\s*([\s\S]*?)(?:Advertências|Observaç[õo]es?:|Outros Mandados|Documento assinado|Lavrado por|$)/i); const sintese = sinteseMatch ? sinteseMatch[1].trim().replace(/\n/g, ' ') : "";
     const obsMatch = texto.match(/Observaç[õo]es?:?\s*([\s\S]*?)(?:Lavrado por:|Documento assinado|Para confirmar)/i); const obsPdf = obsMatch ? obsMatch[1].trim().replace(/\n/g, ' ') : "";
 
-    const endMatch = texto.match(/Endereços:?\s*([\s\S]*?)(?=Informa[çc][õo]es Processuais|Telefones:|Síntese|Outros Mandados|Advertências|Documento assinado|Lavrado por:?|Observaç[õo]es|CRIMINAIS -|DEPARTAMENTO|$)/i);
+    const endMatch = texto.match(/Endereços:?\s*([\s\S]*?)(?=Informa[çc][õo]es Processuais|Telefones:|S[ií]ntese|Outros Mandados|Advertências|Documento assinado|Lavrado por:?|Observaç[õo]es|CRIMINAIS -|DEPARTAMENTO|$)/i);
     let blocoEnd = endMatch ? endMatch[1].trim() : "N/A";
 
     blocoEnd = blocoEnd.replace(/CEP[:\s-]*\n+/gi, 'CEP ');
@@ -51,17 +65,14 @@
     const ufRegex = new RegExp('-\\s*(' + UFS_BRASIL + ')(?=\\s+[A-Z])', 'gi');
     blocoEnd = blocoEnd.replace(ufRegex, '- $1\n');
 
-    // Filtro de lixo nos endereços (textos institucionais/jurídicos que vazam do PDF)
     var lixoEndereco = /Tribunal de Justi|Documento assinado|Para confirmar|DEPARTAMENTO DE|CRIMINAL DE|CRIMINAIS|RAJ DE|EXECU[ÇC][ÕO]ES|\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}|e-mail:|telefone:|Nº do Mandado|Mandado de Pris|Mandado de Intern|Teor do Documento|Magistrado|Alcançado|competente.*conforme|jurisdição|TribunalÓrgão|portal\s*BNMP|QR\s*Code|a qualquer Autoridade|que PRENDA e RECOLHA|indicada e qualificada|à ordem e à disposição|unidade prisional|juízo expedidor|pessoa acima|CUMULATIVA DE|VARA CRIMINAL|VARA UNICA|VARA JUDICIAL|VEPEMA|Código Penal|Código de Processo|inimputável|MEDIDA DE SEGURANÇA|art\.\s*\d+|inc\.\s|fundamento no art|trânsito em julg|defesa da vítima|aplicando-lhe|absolver|condenar|sentenciado|pena privativa|regime prisional|condenação|Lei de Execução|medida de segurança|prazo mínimo|considerando o|Internação decorrente|Identificação biométrica|N° do Documento|tipificação|biométrica/i;
     let listaEndBruta = blocoEnd.split('\n').map(function(e) { return e.replace(/Telefone.*/gi, '').replace(/Logradouro:\s*/i, '').trim(); }).filter(function(e) { return e.length >= 5 && isValid(e) && !lixoEndereco.test(e); });
     
-    // Juntar linhas fragmentadas: se a linha não começa com prefixo de logradouro, é continuação da anterior
     var prefixosEnd = /^(Rua|R |R\.|Av |Av\.|Avenida|Estrada|Rodovia|Rod\.|Travessa|Tv\.|Alameda|Al\.|Praça|Pc\.|Largo|Beco|Viela|Servidão|LOCAL|FOLHA|QUADRA|LOCALIDADE|RUA|AVENIDA|ESTRADA|RODOVIA|TRAVESSA)/i;
     var listaEndJuntada = [];
     for (var ei = 0; ei < listaEndBruta.length; ei++) {
       var linhaEnd = listaEndBruta[ei];
       if (ei > 0 && !prefixosEnd.test(linhaEnd) && listaEndJuntada.length > 0) {
-        // Continuar endereço anterior
         listaEndJuntada[listaEndJuntada.length - 1] += ', ' + linhaEnd;
       } else {
         listaEndJuntada.push(linhaEnd);
@@ -75,9 +86,175 @@
     let nProcesso = extrairCurto('Nº do processo\\s*:'); if (!isValid(nProcesso)) nProcesso = extrairCurto('N° processo\\s*:');
     const orgao = extrairCurto('Órgão Judicial\\s*:');
     let especie = extrairCurto('Espécie(?: de| da) (?:prisão|Internação)\\s*:'); if (!isValid(especie)) especie = extrairCurto('Espécie de prisão\\s*:');
-    let lei = extrairCurto('Lei\\s*:'); let artigo = extrairCurto('Artigo\\s*:'); let paragrafo = extrairCurto('Parágrafo\\s*:');
+    let lei = extrairCurto('Lei\\s*:'); let artigo = extrairCurto('Artigo\\s*:'); let paragrafo = extrairCurto('Parágrafo\\s*:'); let inciso = extrairCurto('Inciso\\s*:');
     
-    // Filtro inteligente para Lei mal formatada
+    // ── PROCESSAMENTO DO CAMPO "COMPLEMENTO" ──
+    // Ex: "Art. 157 § 2º, II, V, VII c/c Art. 61 "caput", II, "h" ambos do(a) CP"
+    var complemento = extrairCurto('Complemento\\s*:');
+    var tipificacoesComplemento = [];
+    
+    if (isValid(complemento) && complemento.length > 3) {
+      console.log('[PARSER] Complemento encontrado:', complemento);
+      
+      // Dividir por "c/c" para separar crimes concorrentes
+      var partesCC = complemento.split(/\s+c\/c\s+/i);
+      
+      partesCC.forEach(function(parte, idx) {
+        parte = parte.trim();
+        // Remover "ambos do(a) CP/CPM/etc" e "do(a) CP" no final
+        parte = parte.replace(/\s+ambos\s+d[oe]\(?a?\)?\s+\w+\.?$/i, '').trim();
+        parte = parte.replace(/\s+d[oe]\(?a?\)?\s+\w+\.?$/i, '').trim();
+        
+        var tipif = { lei: '', artigo: '', paragrafo: '', inciso: '' };
+        
+        // Extrair artigo: Art. NNN ou art. NNN-A
+        var mArt = parte.match(/art\.?\s*(\d+[A-Za-z-]*)/i);
+        if (mArt) {
+          tipif.artigo = mArt[1].trim();
+          // Remover "Art. NNN" da parte para processar o resto
+          parte = parte.replace(/art\.?\s*\d+[A-Za-z-]*/i, '').trim();
+        }
+        
+        // Extrair parágrafo: § Nº ou "caput"
+        var mPar = parte.match(/§\s*(\d+[ºª]?)/);
+        if (mPar) {
+          tipif.paragrafo = '§ ' + mPar[1].trim();
+          parte = parte.replace(/§\s*\d+[ºª]?/, '').trim();
+        } else if (/caput/i.test(parte)) {
+          tipif.paragrafo = 'caput';
+          parte = parte.replace(/"?caput"?/i, '').trim();
+        }
+        
+        // Extrair incisos (romanos e/ou alíneas entre aspas): II, V, VII ou "h"
+        var incisos = [];
+        // Limpar vírgulas iniciais/finais
+        parte = parte.replace(/^[,\s]+/, '').replace(/[,\s]+$/, '');
+        
+        // Encontrar números romanos e alíneas
+        var tokens = parte.split(/\s*,\s*/);
+        tokens.forEach(function(tk) {
+          tk = tk.trim().replace(/^[""]|[""]$/g, ''); // Remove aspas
+          if (!tk) return;
+          // Número romano (I, II, III, IV, V, VI, VII, VIII, IX, X, etc.)
+          if (/^[IVXLCDM]{1,5}$/i.test(tk)) {
+            incisos.push(tk.toUpperCase());
+          }
+          // Alínea (letra entre aspas, ex: "h")
+          else if (/^[a-z]$/i.test(tk)) {
+            incisos.push('"' + tk.toLowerCase() + '"');
+          }
+        });
+        
+        tipif.inciso = incisos.join(', ');
+        
+        // Se é o primeiro crime (idx===0), usar a lei/artigo/paragrafo já extraídos se não encontrados no complemento
+        if (idx === 0) {
+          if (!tipif.artigo && isValid(artigo)) tipif.artigo = artigo;
+          tipif.lei = isValid(lei) ? lei : '';
+          if (!tipif.paragrafo && isValid(paragrafo)) tipif.paragrafo = '§ ' + paragrafo;
+        } else {
+          // Crimes subsequentes: mesma lei se não especificado
+          tipif.lei = isValid(lei) ? lei : '';
+        }
+        
+        tipificacoesComplemento.push(tipif);
+      });
+      
+      // Aplicar incisos do primeiro crime ao campo principal
+      if (tipificacoesComplemento.length > 0) {
+        var primeiro = tipificacoesComplemento[0];
+        if (primeiro.inciso && (!isValid(inciso) || inciso === 'N/A' || inciso === '-')) {
+          inciso = primeiro.inciso;
+        }
+        if (primeiro.paragrafo && (!isValid(paragrafo) || paragrafo === 'N/A' || paragrafo === '-')) {
+          paragrafo = primeiro.paragrafo;
+        }
+      }
+      
+      console.log('[PARSER] Tipificações do complemento:', JSON.stringify(tipificacoesComplemento));
+    }
+    
+    // ── DETECÇÃO DE MÚLTIPLAS TIPIFICAÇÕES PENAIS ──
+    // Exemplo de PDF: "Tipificação Penal: Lei: 2848, art. 121, § 2º, I\nLei: 2848, art. 121, § 2º, III\nLei: 2848, art. 121, § 2º, IV"
+    var blocoTipificacao = '';
+    var mTipif = texto.match(/Tipifica[çc][ãa]o Penal:?\s*([\s\S]*?)(?=Identifica[çc][ãa]o biom|Endereços|Pena restante|Regime Prisional|Motivo|Crime tentat|Violência|Lavrado por|Advertências|Observaç|Síntese da|$)/i);
+    if (mTipif) blocoTipificacao = mTipif[1].trim();
+    
+    // Procurar todas as ocorrências de "Lei:" no bloco
+    var tipificacoes = [];
+    if (blocoTipificacao) {
+      var linhasTipif = blocoTipificacao.split(/\n/).map(function(l){ return l.trim(); }).filter(function(l){ return l.length > 2; });
+      
+      // Verificar se há múltiplas linhas "Lei:"
+      var linhasComLei = linhasTipif.filter(function(l){ return /^Lei\s*:/i.test(l); });
+      
+      if (linhasComLei.length > 1) {
+        // MÚLTIPLAS TIPIFICAÇÕES: extrair cada uma
+        linhasComLei.forEach(function(linhaLei) {
+          // Formato típico: "Lei: 2848, art. 121, § 2º, IV" ou "Lei: 2848, art. 121, § 2º, I"
+          var t = { lei: '', artigo: '', paragrafo: '', inciso: '' };
+          var resto = linhaLei.replace(/^Lei\s*:\s*/i, '').trim();
+          
+          // Extrair inciso (número romano no final: I, II, III, IV, V, VI, VII, VIII, IX, X etc.)
+          var mInciso = resto.match(/,\s*([IVXLCDM]{1,5})\s*$/);
+          if (mInciso) {
+            t.inciso = mInciso[1].trim();
+            resto = resto.replace(/,\s*[IVXLCDM]{1,5}\s*$/, '').trim();
+          }
+          
+          // Extrair parágrafo (§ Nº)
+          var mPar = resto.match(/§\s*([^,]+)/);
+          if (mPar) {
+            t.paragrafo = '§ ' + mPar[1].trim();
+            resto = resto.replace(/,?\s*§\s*[^,]+/, '').trim();
+          }
+          
+          // Extrair artigo (art. NNN ou número após vírgula)
+          var mArt = resto.match(/art\.?\s*(\d+[A-Za-z-]*)/i);
+          if (mArt) {
+            t.artigo = mArt[1].trim();
+            resto = resto.replace(/,?\s*art\.?\s*\d+[A-Za-z-]*/i, '').trim();
+          }
+          
+          // O que sobrou é a lei
+          t.lei = resto.replace(/,\s*$/, '').trim();
+          
+          tipificacoes.push(t);
+        });
+        
+        // As tipificações foram extraídas e colocadas em 'tipificacoes'.
+        // A consolidação global será feita mais abaixo.
+      } else if (linhasComLei.length === 1) {
+        // Uma única tipificação inline: "Lei: 2848, art. 121, § 2º, I"
+        var linhaUnica = linhasComLei[0].replace(/^Lei\s*:\s*/i, '').trim();
+        
+        // Extrair inciso
+        var mInc1 = linhaUnica.match(/,\s*([IVXLCDM]{1,5})\s*$/);
+        if (mInc1) {
+          if (!isValid(inciso) || inciso === 'N/A') inciso = mInc1[1].trim();
+          linhaUnica = linhaUnica.replace(/,\s*[IVXLCDM]{1,5}\s*$/, '').trim();
+        }
+        
+        // Extrair parágrafo
+        var mPar1 = linhaUnica.match(/§\s*([^,]+)/);
+        if (mPar1) {
+          if (!isValid(paragrafo) || paragrafo === 'N/A') paragrafo = '§ ' + mPar1[1].trim();
+          linhaUnica = linhaUnica.replace(/,?\s*§\s*[^,]+/, '').trim();
+        }
+        
+        // Extrair artigo
+        var mArt1 = linhaUnica.match(/art\.?\s*(\d+[A-Za-z-]*)/i);
+        if (mArt1) {
+          if (!isValid(artigo) || artigo === 'N/A') artigo = mArt1[1].trim();
+          linhaUnica = linhaUnica.replace(/,?\s*art\.?\s*\d+[A-Za-z-]*/i, '').trim();
+        }
+        
+        // Lei
+        if (!isValid(lei) || lei === 'N/A') lei = linhaUnica.replace(/,\s*$/, '').trim();
+      }
+    }
+    
+    // Fallback: Se lei contém "art." embutido (formato antigo)
     if (lei && lei.match(/art\./i) && (!isValid(artigo) || artigo === 'N/A' || artigo === '')) {
       var partesLei = lei.split(/art\./i);
       lei = partesLei[0].replace(/,\s*$/, '').trim();
@@ -94,81 +271,281 @@
     let pena = extrairCurto('Pena restante\\s*:'); if (!isValid(pena)) pena = extrairCurto('Prazo Mínimo da Internação\\s*:');
     const regime = extrairCurto('Regime Prisional\\s*:'); const motivo = extrairCurto('Motivo\\s*:'); const tentado = extrairCurto('Crime tentat[do]\\s*:'); const vd = extrairCurto('Violência Doméstica\\s*:');
 
-    let infoProc = 'Nº do processo: ' + nProcesso + ' | Órgão Judicial: ' + orgao + ' | Espécie de prisão: ' + especie + ' | Lei: ' + lei + ' | Artigo: ' + artigo + ' | Parágrafo: ' + paragrafo + ' | Pena restante: ' + pena + ' | Regime Prisional: ' + regime + ' | Motivo: ' + motivo + ' | Crime tentado: ' + tentado + ' | Violência Doméstica: ' + vd;
+    // --- CONSOLIDAÇÃO GLOBAL DAS TIPIFICAÇÕES ---
+    // Recolher a principal, as extras e as do complemento
+    var todasTipif = [];
+    if (isValid(lei) || isValid(artigo)) todasTipif.push({ lei: lei, artigo: artigo, paragrafo: paragrafo, inciso: inciso });
+    tipificacoes.forEach(function(t) { todasTipif.push(t); });
+    tipificacoesComplemento.forEach(function(t) { todasTipif.push(t); });
+
+    var mapTipif = {};
+    var ordemTipif = [];
+    todasTipif.forEach(function(t) {
+      var l = isValid(t.lei) ? t.lei.trim().toLowerCase() : '';
+      var a = isValid(t.artigo) ? t.artigo.trim().toLowerCase() : '';
+      var key = l + '|' + a;
+      if (key === '|') return; // Vazio
+      
+      if (!mapTipif[key]) {
+        mapTipif[key] = { lei: t.lei, artigo: t.artigo, paragrafo: t.paragrafo, incisos: [] };
+        ordemTipif.push(key);
+      }
+      
+      // Se não tem parágrafo e esse tem (e não é falso), absorve
+      if ((!isValid(mapTipif[key].paragrafo) || mapTipif[key].paragrafo === 'N/A') && isValid(t.paragrafo)) {
+        mapTipif[key].paragrafo = t.paragrafo;
+      }
+      
+      // Mesclar incisos únicos
+      if (isValid(t.inciso)) {
+        var incs = t.inciso.split(',').map(function(x) { return x.trim(); }).filter(function(x) { return x; });
+        incs.forEach(function(inc) {
+          if (mapTipif[key].incisos.indexOf(inc) === -1) {
+            mapTipif[key].incisos.push(inc);
+          }
+        });
+      }
+    });
+
+    var resultTipif = ordemTipif.map(function(k) { return mapTipif[k]; });
+    
+    // Atualiza as variáveis globais com o 1º crime consolidado
+    if (resultTipif.length > 0) {
+      lei = resultTipif[0].lei || lei;
+      artigo = resultTipif[0].artigo || artigo;
+      paragrafo = resultTipif[0].paragrafo || paragrafo;
+      inciso = resultTipif[0].incisos.length > 0 ? resultTipif[0].incisos.join(', ') : 'N/A';
+    }
+
+    let infoProc = 'Nº do processo: ' + nProcesso + ' | Órgão Judicial: ' + orgao + ' | Espécie de prisão: ' + especie + ' | Lei: ' + lei + ' | Artigo: ' + artigo + ' | Parágrafo: ' + paragrafo + ' | Inciso: ' + inciso + ' | Pena restante: ' + pena + ' | Regime Prisional: ' + regime + ' | Motivo: ' + motivo + ' | Crime tentado: ' + tentado + ' | Violência Doméstica: ' + vd;
+    
+    // Anexar complemento bruto para referência
+    if (isValid(complemento) && complemento.length > 3) {
+      infoProc += ' | Complemento: ' + complemento;
+    }
+    
+    // Anexar os OUTROS crimes consolidados (do 2º em diante)
+    if (resultTipif.length > 1) {
+      for (var i = 1; i < resultTipif.length; i++) {
+        var tr = resultTipif[i];
+        var trInc = tr.incisos.length > 0 ? tr.incisos.join(', ') : 'N/A';
+        infoProc += ' | Lei: ' + (tr.lei||'N/A') + ' | Artigo: ' + (tr.artigo||'N/A') + ' | Parágrafo: ' + (tr.paragrafo||'N/A') + ' | Inciso: ' + trInc;
+      }
+    }
 
     return {
-      nome, cpf, mandado, validade, rg, naturalidade, nascimento, sexo, cor, filiacao,
-      batalhao: "A DEFINIR (GEO)", infoProcessuais: infoProc,
-      enderecoPrincipal: endPrincipal, latPrincipal: null, lngPrincipal: null, secundarios: endsSec.map(function(s) { return {endereco: s, lat: null, lng: null}; }),
-      extras: { titulo: titulo, emissao: emissao, nomeSocial: isValid(nomeSocial)?nomeSocial:"", rji: isValid(rji)?rji:"", alcunha: isValid(alcunha)?alcunha:"", marcas: isValid(marcas)?marcas.replace(/\n/g,' '):"", sintese: isValid(sintese)?sintese:"", obsPdf: isValid(obsPdf)?obsPdf:"" }
+      sucesso: true,
+      dados: {
+        nome, cpf, mandado, validade, rg, naturalidade, nascimento, sexo, cor, filiacao,
+        batalhao: "A DEFINIR (GEO)", infoProcessuais: infoProc,
+        enderecoPrincipal: endPrincipal, latPrincipal: null, lngPrincipal: null, secundarios: endsSec.map(function(s) { return {endereco: s, lat: null, lng: null}; }),
+        extras: { titulo: titulo, emissao: emissao, nomeSocial: isValid(nomeSocial)?nomeSocial:"", rji: isValid(rji)?rji:"", alcunha: isValid(alcunha)?alcunha:"", marcas: isValid(marcas)?marcas.replace(/\n/g,' '):"", sintese: isValid(sintese)?sintese:"", obsPdf: isValid(obsPdf)?obsPdf:"" },
+        tipoImportacao: "REGEX"
+      }
     };
   }
 
   /* Processa um único mandado a partir do texto colado */
   async function processarSuperBloco() {
+    console.log("[DEBUG FRONTEND] processarSuperBloco iniciado.");
     const texto = document.getElementById('textoPdfBruto').value;
     if(texto.length < 50) return chamarAlertaTatico("FALTA INFORMAÇÃO", "Cole o texto do PDF oficial antes de extrair.", "OK");
     
-    document.getElementById('btnProcessarTexto').innerText = "Processando inteligência...";
+    const overlay = document.getElementById('loadingOverlayIA');
+    const overlayTitulo = document.getElementById('overlayIATitulo');
+    const overlaySub = document.getElementById('overlayIASub');
+    const overlayBarra = document.getElementById('overlayIABarra');
+    const overlayPercent = document.getElementById('overlayIAPercent');
 
-    let dadosTemporarios = extrairDadosDeTextoPDF(texto);
+    if (overlay) {
+      overlayTitulo.innerText = "Analisando com IA";
+      overlaySub.innerHTML = "O modelo <strong>gemini-3.1-flash-lite</strong> está extraindo e estruturando as informações...";
+      overlayBarra.style.width = "50%";
+      overlayPercent.innerText = "50%";
+      overlay.style.display = 'flex';
+    }
 
-    if (dadosTemporarios.mandado && dadosTemporarios.mandado !== "N/A") {
-      const existente = dadosMandados.find(function(d) { return d.mandado === dadosTemporarios.mandado; });
-      if (existente) {
-        document.getElementById('btnProcessarTexto').innerText = "EXTRAIR DADOS E PREVER ALVOS";
-        return chamarAlertaTatico("⚠️ DUPLICIDADE", "Mandado já no banco.\n\nAlvo: " + existente.nome + "\nStatus: " + existente.status, "OK");
+    const btn = document.getElementById('btnProcessarTexto');
+    const wrapperFicha = document.getElementById('wrapper-ficha-normal');
+    const painelProgressoInd = document.getElementById('painelProgressoIndividual');
+
+    if (wrapperFicha) wrapperFicha.style.display = 'none';
+    if (btn) btn.style.display = 'none';
+    if (painelProgressoInd) painelProgressoInd.style.display = 'flex';
+    document.getElementById('textoPdfBruto').disabled = true;
+
+    try {
+      // ── PRÉ-VERIFICAÇÃO DE DUPLICIDADE (Poupa tempo e limite da API) ──
+      const mNumero = texto.match(/N° do (?:Mandado|Documento)\s*:?\s*([\d]{5,}-[\d\.\-]+)/i);
+      if (mNumero) {
+        const mandadoPreCheck = mNumero[1].trim();
+        const existente = dadosMandados.find(function(d) { return d.mandado === mandadoPreCheck; });
+        if (existente) {
+          if (overlay) overlay.style.display = 'none';
+          if (painelProgressoInd) painelProgressoInd.style.display = 'none';
+          if (wrapperFicha) wrapperFicha.style.display = 'flex';
+          if (btn) { btn.style.display = 'block'; btn.disabled = false; }
+          document.getElementById('textoPdfBruto').disabled = false;
+          console.warn("[DEBUG FRONTEND] Pré-check evitou chamada da IA (Duplicado):", mandadoPreCheck);
+          return chamarAlertaTatico("⚠️ DUPLICIDADE", "Mandado já no banco.\n\nAlvo: " + existente.nome + "\nStatus: " + existente.status, "OK");
+        }
       }
-    }
 
-    // Pega a foto do cropper se existir
-    if (fotoBase64Temporaria && fotoBase64Temporaria !== "") {
-      dadosTemporarios.fotoBase64 = fotoBase64Temporaria;
-    }
-    
-    // Adicionar os endereços secundários como string para poder editar e ler no mesmo formato
-    var txtSec = dadosTemporarios.secundarios.map(function(s){return s.endereco;}).join(' || ');
-    dadosTemporarios.secundariosText = txtSec;
+      const resposta = await analisarDocumentoComGeminiPromessa(texto);
+      
+      if (overlay) overlay.style.display = 'none';
+      if (painelProgressoInd) painelProgressoInd.style.display = 'none';
+      if (wrapperFicha) wrapperFicha.style.display = 'flex';
+      if (btn) {
+        btn.style.display = 'block';
+        btn.innerText = "EXTRAIR DADOS E PREVER ALVOS";
+        btn.disabled = false;
+      }
+      document.getElementById('textoPdfBruto').disabled = false;
 
-    filaImportacao.push(dadosTemporarios);
-    
-    document.getElementById('btnProcessarTexto').innerText = "EXTRAIR DADOS E PREVER ALVOS";
-    document.getElementById('textoPdfBruto').value = "";
-    fecharModalSuperBloco();
-    
-    document.getElementById('view-revisao-importacao').style.display = 'flex';
-    renderizarTabelaFilaRevisao();
+      if (!resposta.sucesso) {
+        console.error("[DEBUG FRONTEND] Falha na análise com Gemini:", resposta.mensagem);
+        return chamarAlertaTatico("⚠️ FALHA NA ANÁLISE", resposta.mensagem, "OK");
+      }
+
+      let dadosTemporarios = resposta.dados;
+      dadosTemporarios.tipoImportacao = dadosTemporarios.tipoImportacao || "GEMINI";
+      console.log("[DEBUG FRONTEND] Dados estruturados recebidos com sucesso:", dadosTemporarios);
+
+      if (dadosTemporarios.mandado && dadosTemporarios.mandado !== "N/A") {
+        const existente = dadosMandados.find(function(d) { return d.mandado === dadosTemporarios.mandado; });
+        if (existente) {
+          console.warn("[DEBUG FRONTEND] Mandado duplicado detectado:", dadosTemporarios.mandado);
+          return chamarAlertaTatico("⚠️ DUPLICIDADE", "Mandado já no banco.\n\nAlvo: " + existente.nome + "\nStatus: " + existente.status, "OK");
+        }
+      }
+
+      // Pega a foto do cropper se existir
+      if (fotoBase64Temporaria && fotoBase64Temporaria !== "") {
+        dadosTemporarios.fotoBase64 = fotoBase64Temporaria;
+      }
+      
+      // Adicionar os endereços secundários como string para poder editar e ler no mesmo formato
+      var txtSec = dadosTemporarios.secundarios.map(function(s){return s.endereco;}).join(' || ');
+      dadosTemporarios.secundariosText = txtSec;
+
+      filaImportacao.push(dadosTemporarios);
+      console.log("[DEBUG FRONTEND] Documento adicionado à filaImportacao. Tamanho atual da fila:", filaImportacao.length);
+      
+      document.getElementById('textoPdfBruto').value = "";
+      fecharModalSuperBloco();
+      
+      document.getElementById('view-revisao-importacao').style.display = 'flex';
+      renderizarTabelaFilaRevisao();
+    } catch (erro) {
+      if (overlay) overlay.style.display = 'none';
+      if (painelProgressoInd) painelProgressoInd.style.display = 'none';
+      if (wrapperFicha) wrapperFicha.style.display = 'flex';
+      if (btn) {
+        btn.style.display = 'block';
+        btn.innerText = "EXTRAIR DADOS E PREVER ALVOS";
+        btn.disabled = false;
+      }
+      document.getElementById('textoPdfBruto').disabled = false;
+      console.error("[DEBUG FRONTEND] Erro capturado no processarSuperBloco:", erro);
+      chamarAlertaTatico("FALHA CRÍTICA", "Erro ao chamar o back-end: " + erro.message, "OK");
+    }
   }
 
   /* ================================================================
      MÓDULO 9: PROCESSAMENTO EM LOTE DE PDFs (Vai para a fila)
      ================================================================ */
-  async function processarLotePdf(textosPdfs) {
-    var adicionados = 0;
+  async function iniciarProcessamentoLotePdf(textosPdfs, useIA = true) {
+    const total = textosPdfs.length;
+    console.log("[DEBUG FRONTEND] processarLotePdf iniciado. Total no lote:", total);
+    let adicionados = 0;
+    let concluidos = 0;
 
-    for (var i = 0; i < textosPdfs.length; i++) {
-      var dados = extrairDadosDeTextoPDF(textosPdfs[i]);
-      if (dados.mandado && dados.mandado !== "N/A") {
-        var existente = dadosMandados.find(function(d) { return d.mandado === dados.mandado; });
-        var existeNaFila = filaImportacao.find(function(f) { return f.mandado === dados.mandado; });
-        if (existente || existeNaFila) continue;
+    const overlay = document.getElementById('loadingOverlayIA');
+    const overlayTitulo = document.getElementById('overlayIATitulo');
+    const overlaySub = document.getElementById('overlayIASub');
+    const overlayBarra = document.getElementById('overlayIABarra');
+    const overlayPercent = document.getElementById('overlayIAPercent');
+
+    if (overlay) {
+      overlayTitulo.innerText = useIA ? "Analisando Lote com IA" : "Processando Lote (Regex)";
+      overlaySub.innerHTML = "Analisando: <strong>0</strong> de <strong>" + total + "</strong> arquivos...";
+      overlayBarra.style.width = "0%";
+      overlayPercent.innerText = "0%";
+      overlay.style.display = 'flex';
+    }
+
+    function atualizarProgressoUI() {
+      const pct = Math.round((concluidos / total) * 100);
+      if (overlaySub) overlaySub.innerHTML = "Analisando: <strong>" + concluidos + "</strong> de <strong>" + total + "</strong> arquivos...";
+      if (overlayBarra) overlayBarra.style.width = pct + "%";
+      if (overlayPercent) overlayPercent.innerText = pct + "%";
+    }
+
+    const indicesParaProcessar = [...Array(total).keys()];
+    let mensagensErroLote = [];
+    const limiteConcorrencia = useIA ? 1 : 10; // 1 worker para IA (rate limit: 13/min)
+
+    async function worker() {
+      while (indicesParaProcessar.length > 0) {
+        const idx = indicesParaProcessar.shift();
+        const textoBruto = textosPdfs[idx];
+
+        try {
+          // ── PRÉ-VERIFICAÇÃO DE DUPLICIDADE ──
+          let pularParaProximo = false;
+          const mNumero = textoBruto.match(/N° do (?:Mandado|Documento)\s*:?\s*([\d]{5,}-[\d\.\-]+)/i);
+          if (mNumero) {
+            const mandadoPreCheck = mNumero[1].trim();
+            const existente = dadosMandados.find(function(d) { return d.mandado === mandadoPreCheck; });
+            if (existente) {
+              mensagensErroLote.push(`- Doc ${idx + 1}: Duplicado (Mandado ${mandadoPreCheck})`);
+              pularParaProximo = true;
+            }
+          }
+
+          if (!pularParaProximo) {
+            let resposta;
+            if (useIA) {
+              // Rate limit: 500ms delay + tempo API. Retry no backend protege contra sobrecarga.
+              await new Promise(resolve => setTimeout(resolve, 500));
+              resposta = await analisarDocumentoComGeminiPromessa(textoBruto);
+            } else {
+              resposta = extrairDadosDeTextoPDF(textoBruto);
+            }
+
+            if (resposta.sucesso) {
+              let dados = resposta.dados;
+              dados.tipoImportacao = dados.tipoImportacao || (useIA ? "GEMINI" : "REGEX");
+              var txtSec = dados.secundarios.map(function(s){return s.endereco;}).join(' || ');
+              dados.secundariosText = txtSec;
+              filaImportacao.push(dados);
+              adicionados++;
+            } else {
+              mensagensErroLote.push(`- Doc ${idx + 1}: ${resposta.mensagem}`);
+            }
+          }
+        } catch (erro) {
+          mensagensErroLote.push(`- Doc ${idx + 1}: Falha técnica.`);
+        } finally {
+          concluidos++;
+          atualizarProgressoUI();
+        }
       }
-      
-      var txtSec = dados.secundarios.map(function(s){return s.endereco;}).join(' || ');
-      dados.secundariosText = txtSec;
-      
-      filaImportacao.push(dados);
-      adicionados++;
     }
 
-    if (adicionados === 0) {
-      return chamarAlertaTatico("LOTE VAZIO", "Nenhum mandado novo encontrado. Todos os PDFs selecionados já estão no banco de dados ou na fila atual.", "OK");
-    }
+    const workers = Array(Math.min(limiteConcorrencia, total)).fill(0).map(() => worker());
+    await Promise.all(workers);
 
-    fecharModalSuperBloco();
-    document.getElementById('view-revisao-importacao').style.display = 'flex';
-    renderizarTabelaFilaRevisao();
+    if (overlay) overlay.style.display = 'none';
+    if (adicionados > 0) {
+      fecharModalSuperBloco();
+      document.getElementById('view-revisao-importacao').style.display = 'flex';
+      renderizarTabelaFilaRevisao();
+    }
+    if (mensagensErroLote.length > 0) chamarAlertaTatico("RESULTADO", `Sucesso: ${adicionados}. Falhas: ${mensagensErroLote.length}`, "OK");
   }
+
 
   /* ================================================================
      MÓDULO 10: SALVAR MANDADO INDIVIDUAL 
@@ -245,70 +622,84 @@
   })();
 
   /* ================================================================
-     MÓDULO 12: LEITURA DE PDF VIA PDF.JS (SUPORTE A LOTE)
+     MÓDULO 12: LEITURA DE PDF VIA PDF.JS E COLAR TEXTO
      ================================================================ */
   (function() {
-    const inputPdf = document.getElementById('inputPdfUpload');
+    const inputPdfIA = document.getElementById('inputPdfUploadIA');
+    const inputPdfRegex = document.getElementById('inputPdfUploadRegex');
     const textArea = document.getElementById('textoPdfBruto');
     const loadingMsg = document.getElementById('loadingPdfMsg');
-    const btnProcessar = document.getElementById('btnProcessarTexto');
+    const btnProcessarIA = document.getElementById('btnProcessarTextoIA');
+    const btnProcessarRegex = document.getElementById('btnProcessarTextoRegex');
 
-    if (inputPdf) {
-      inputPdf.addEventListener('change', async function(e) {
-        const files = e.target.files;
-        if (!files || files.length === 0) return;
+    async function handlePdfUpload(e, useIA) {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
 
-        loadingMsg.style.display = 'block';
-        textArea.disabled = true;
-        btnProcessar.disabled = true;
+      loadingMsg.style.display = 'block';
+      textArea.disabled = true;
+      if(btnProcessarIA) btnProcessarIA.disabled = true;
+      if(btnProcessarRegex) btnProcessarRegex.disabled = true;
 
-        try {
-          var textosLote = [];
+      try {
+        var textosLote = [];
 
-          for (var f = 0; f < files.length; f++) {
-            const file = files[f];
-            const arrayBuffer = await file.arrayBuffer();
-            const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
-            var fullText = '';
+        for (var f = 0; f < files.length; f++) {
+          const file = files[f];
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+          var fullText = '';
 
-            for (var i = 1; i <= pdf.numPages; i++) {
-              const page = await pdf.getPage(i);
-              const content = await page.getTextContent();
+          for (var i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
 
-              var lastY, text = '';
-              for (var item of content.items) {
-                if (lastY == item.transform[5] || !lastY) {
-                  text += item.str;
-                } else {
-                  text += '\n' + item.str;
-                }
-                lastY = item.transform[5];
+            var lastY, text = '';
+            for (var item of content.items) {
+              if (lastY == item.transform[5] || !lastY) {
+                text += item.str;
+              } else {
+                text += '\n' + item.str;
               }
-              fullText += text + '\n';
+              lastY = item.transform[5];
             }
-            textosLote.push(fullText.replace(/\s{2,}/g, ' '));
+            fullText += text + '\n';
           }
-
-          if (textosLote.length === 1) {
-            textArea.value = textosLote[0];
-            setTimeout(processarSuperBloco, 500);
-          } else {
-            setTimeout(function() { processarLotePdf(textosLote); }, 500);
-          }
-
-        } catch (erro) {
-          if (typeof chamarAlertaTatico === 'function') {
-            chamarAlertaTatico("ERRO AO LER PDF", "Não foi possível extrair o texto: " + erro.message, "OK");
-          } else {
-            alert("Erro ao ler PDF: " + erro.message);
-          }
-        } finally {
-          loadingMsg.style.display = 'none';
-          textArea.disabled = false;
-          btnProcessar.disabled = false;
-          inputPdf.value = '';
+          textosLote.push(fullText.replace(/\s{2,}/g, ' '));
         }
-      });
+
+        setTimeout(function() { iniciarProcessamentoLotePdf(textosLote, useIA); }, 500);
+
+      } catch (erro) {
+        if (typeof chamarAlertaTatico === 'function') {
+          chamarAlertaTatico("ERRO AO LER PDF", "Não foi possível extrair o texto: " + erro.message, "OK");
+        } else {
+          alert("Erro ao ler PDF: " + erro.message);
+        }
+      } finally {
+        loadingMsg.style.display = 'none';
+        textArea.disabled = false;
+        if(btnProcessarIA) btnProcessarIA.disabled = false;
+        if(btnProcessarRegex) btnProcessarRegex.disabled = false;
+        if(inputPdfIA) inputPdfIA.value = '';
+        if(inputPdfRegex) inputPdfRegex.value = '';
+      }
     }
+
+    if (inputPdfIA) {
+      inputPdfIA.addEventListener('change', function(e) { handlePdfUpload(e, true); });
+    }
+    if (inputPdfRegex) {
+      inputPdfRegex.addEventListener('change', function(e) { handlePdfUpload(e, false); });
+    }
+    
+    // Tratamento de colagem de texto via botão
+    window.processarTextoColado = function(useIA) {
+      const texto = textArea.value;
+      if(texto.length < 50) return chamarAlertaTatico("FALTA INFORMAÇÃO", "Cole o texto do PDF oficial antes de extrair.", "OK");
+      iniciarProcessamentoLotePdf([texto], useIA);
+      textArea.value = '';
+    };
+
   })();
 </script>
