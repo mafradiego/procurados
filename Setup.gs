@@ -131,20 +131,92 @@ function getHeadersGeral() {
     "BPM Area",               // Z (25)
     "CIA Area",               // AA (26)
     "DP Area",                // AB (27)
-    "Cidade"                  // AC (28)
+    "Cidade",                 // AC (28)
+    "TipoImportacao"          // AD (29)
   ];
+}
+
+/**
+ * v4.1.0: Garante que a aba Mandados existe e possui o cabeçalho correto.
+ * - Se a aba não existir, cria com cabeçalho completo.
+ * - Se existir mas o cabeçalho estiver vazio, insere os headers.
+ * - Se existir com cabeçalho, verifica colunas faltantes e adiciona ao final.
+ * 
+ * Pode ser executada diretamente pelo editor ou chamada por outras funções.
+ */
+function garantirCabecalhoMandados() {
+  const planilha = SpreadsheetApp.getActiveSpreadsheet();
+  let aba = planilha.getSheetByName("Mandados");
+  const headersEsperados = getHeadersGeral();
+
+  // Se a aba não existir, cria do zero
+  if (!aba) {
+    aba = planilha.insertSheet("Mandados");
+    aba.getRange(1, 1, 1, headersEsperados.length).setValues([headersEsperados]);
+    aba.getRange(1, 1, 1, headersEsperados.length)
+      .setFontWeight("bold")
+      .setBackground("#1e293b")
+      .setFontColor("#e2e8f0");
+    aba.setFrozenRows(1);
+    Logger.log("✅ Aba Mandados criada com " + headersEsperados.length + " colunas.");
+    return { criada: true, colunasFaltantes: [], total: headersEsperados.length };
+  }
+
+  // Se existir, verificar cabeçalho atual
+  const lastCol = aba.getLastColumn();
+  const colunasFaltantes = [];
+
+  if (lastCol === 0) {
+    // Aba existe mas está totalmente vazia
+    aba.getRange(1, 1, 1, headersEsperados.length).setValues([headersEsperados]);
+    aba.getRange(1, 1, 1, headersEsperados.length)
+      .setFontWeight("bold")
+      .setBackground("#1e293b")
+      .setFontColor("#e2e8f0");
+    aba.setFrozenRows(1);
+    Logger.log("✅ Cabeçalho inserido na aba Mandados vazia (" + headersEsperados.length + " colunas).");
+    return { criada: false, colunasFaltantes: headersEsperados, total: headersEsperados.length };
+  }
+
+  // Aba existe com dados — verificar quais colunas estão faltando
+  const headersAtuais = aba.getRange(1, 1, 1, lastCol).getValues()[0].map(function(h) { return String(h).trim(); });
+
+  headersEsperados.forEach(function(h) {
+    if (headersAtuais.indexOf(h) === -1) {
+      colunasFaltantes.push(h);
+    }
+  });
+
+  // Adicionar colunas faltantes ao final
+  if (colunasFaltantes.length > 0) {
+    const startCol = lastCol + 1;
+    aba.getRange(1, startCol, 1, colunasFaltantes.length).setValues([colunasFaltantes]);
+    aba.getRange(1, startCol, 1, colunasFaltantes.length)
+      .setFontWeight("bold")
+      .setBackground("#1e293b")
+      .setFontColor("#e2e8f0");
+    Logger.log("✅ " + colunasFaltantes.length + " coluna(s) adicionada(s): " + colunasFaltantes.join(", "));
+  } else {
+    Logger.log("✅ Cabeçalho da aba Mandados está completo. Nenhuma coluna faltante.");
+  }
+
+  return { criada: false, colunasFaltantes: colunasFaltantes, total: headersAtuais.length + colunasFaltantes.length };
 }
 
 function getHeadersUsuarios() {
   return [
-    "Email",          // A (0)
-    "Nome",           // B (1)
-    "Unidade",        // C (2)
-    "Perfil",         // D (3)
-    "Status",         // E (4)
-    "Foto URL",       // F (5)  ← NOVO
-    "Pontos",         // G (6)  ← Gamificação
-    "Badges"          // H (7)  ← Gamificação
+    "Email",              // A (0)
+    "Nome",               // B (1)
+    "Unidade",            // C (2)
+    "Perfil",             // D (3)
+    "Status",             // E (4)
+    "Foto URL",           // F (5)
+    "Pontos",             // G (6)
+    "Badges",             // H (7)
+    "Data Cadastro",      // I (8)
+    "Ultimo acesso",      // J (9)
+    "Qtd de acesso",      // K (10)
+    "Status de Conexao"   // L (11)
   ];
 }
 
@@ -384,7 +456,13 @@ function getHeadersLeis() {
     "Icone SVG",        // D — SVG path (legado)
     "Ordem",            // E — Ordem de exibição
     "Ativo",            // F — SIM/NAO
-    "PinoTexto"         // G — Texto curto para o pino do mapa (ex: ROUBO, JACK, 171)
+    "PinoTexto",        // G — Texto curto para o pino do mapa (ex: ROUBO, JACK, 171)
+    "Lei Nome",         // H — Nome extenso da lei (ex: Código Penal)
+    "Numero Lei",       // I — Número (ex: 11.343)
+    "Artigo",           // J — Artigo (ex: 33)
+    "Paragrafo",        // K — Parágrafo (ex: 1)
+    "Inciso",           // L — Inciso (ex: I)
+    "Tipificacao Completa" // M — Descrição completa do crime
   ];
 }
 
@@ -453,7 +531,8 @@ function instalarTriggers() {
   var removidos = 0;
   triggers.forEach(function(trigger) {
     var fn = trigger.getHandlerFunction();
-    if (fn === 'onChange' || fn === 'onEdit') {
+    // Inclui auditarIntegridadePlanilha para limpar triggers antigos do Antigravity (removido na v4.6.0)
+    if (fn === 'onChange' || fn === 'onEdit' || fn === 'executarCeifador' || fn === 'auditarIntegridadePlanilha') {
       ScriptApp.deleteTrigger(trigger);
       removidos++;
     }
@@ -470,18 +549,46 @@ function instalarTriggers() {
     .forSpreadsheet(ss)
     .onEdit()
     .create();
+    
+  // 4. Criar trigger de Tempo para o Ceifador (executa a cada 1 minuto)
+  ScriptApp.newTrigger('executarCeifador')
+    .timeBased()
+    .everyMinutes(1)
+    .create();
   
-  Logger.log("✅ Triggers instalados com sucesso! (Removidos " + removidos + " antigos)");
-  Logger.log("  → onChange: Detecta inserção/exclusão de linhas");
-  Logger.log("  → onEdit: Detecta edições em células");
+  Logger.log("Triggers instalados com sucesso! (Removidos " + removidos + " antigos)");
+  Logger.log("  onChange: Detecta inserção/exclusão de linhas");
+  Logger.log("  onEdit: Detecta edições em células");
+  Logger.log("  executarCeifador: A cada 1 minuto");
   
   try {
     SpreadsheetApp.getUi().alert(
-      "✅ TRIGGERS INSTALADOS!\n\n" +
-      "• onChange — Detecta inserção e exclusão de linhas\n" +
-      "• onEdit — Detecta edições em células\n\n" +
+      "TRIGGERS INSTALADOS!\n\n" +
+      "onChange — Detecta inserção e exclusão de linhas\n" +
+      "onEdit — Detecta edições em células\n" +
+      "executarCeifador — Verifica inatividade a cada 1 min\n\n" +
       (removidos > 0 ? "(" + removidos + " triggers antigos foram removidos para evitar duplicatas)" : "") +
       "\nAgora o sistema atualiza automaticamente quando\nalguém exclui ou edita direto na planilha."
     );
   } catch(e) {}
+}
+
+/**
+ * ATUALIZADOR AUTOMÁTICO DA ABA LEIS (V3.9.76+)
+ * Execute essa função para recriar a aba Leis com os novos 13 cabeçalhos.
+ */
+function atualizarAbaLeisParaV3() {
+  var planilha = SpreadsheetApp.getActiveSpreadsheet();
+  var abaAntiga = planilha.getSheetByName("Leis");
+  
+  if (abaAntiga) {
+    var dataAgora = new Date().getTime();
+    abaAntiga.setName("Leis_BKP_" + dataAgora);
+    Logger.log("Aba antiga renomeada para Leis_BKP_" + dataAgora);
+  }
+  
+  criarAbaSeNaoExiste(planilha, "Leis", getHeadersLeis());
+  popularLeisPadrao(planilha);
+  
+  SpreadsheetApp.getUi().alert("✅ ABA LEIS ATUALIZADA!\n\nA nova aba 'Leis' foi criada com as 13 colunas necessárias para a v3.9.76.\nSua aba antiga foi renomeada para 'Leis_BKP_...'.\n\nAgora você pode copiar seus dados da planilha CSV e colar na nova aba.");
 }
