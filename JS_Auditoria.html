@@ -1,0 +1,555 @@
+<script>
+/* ================================================================
+     MÓDULO DE AUDITORIA DE INCONSISTÊNCIAS
+     Versão: v3.9.67
+     Novidades:
+       - Validação de formato do nº do Mandado
+       - Validação de formato do nº do Processo
+       - Validação de tamanho do Título do Mandado
+     ================================================================ */
+
+  // Cache dos dados de auditoria
+  var _auditoriaCache = [];
+  var _auditoriaFiltroAtivo = 'todos';
+
+  /* ── Constantes de validação de formato ─────────────────────────── */
+
+  // Nº Mandado padrão: 2000467-10.2019.8.08.0024.27.0007-08  (exatamente 36 chars)
+  var _REGEX_MANDADO  = /^\d{7}-\d{2}\.\d{4}\.\d{1,2}\.\d{2}\.\d{4}\.\d{2}\.\d{4}-\d{2}$/;
+  var _LEN_MANDADO_MIN = 36;
+  var _LEN_MANDADO_MAX = 36;
+
+  // Nº Processo padrão: 0001370-15.2017.8.26.0294  (exatamente 25 chars)
+  var _REGEX_PROCESSO  = /^\d{7}-\d{2}\.\d{4}\.\d{1,2}\.\d{2}\.\d{4}$/;
+  var _LEN_PROCESSO_MIN = 25;
+  var _LEN_PROCESSO_MAX = 25;
+
+  // Título: mínimo "Mandado de Prisão" (17), máximo "Mandado de Internação Recaptura" (31)
+  var _LEN_TITULO_MIN = 17;
+  var _LEN_TITULO_MAX = 31;
+
+  /* ── Helper: extrair campo do infoProcessuais ────────────────────── */
+  var _extP = function(txt, lbl) {
+    var r = new RegExp(lbl + '\\s*([^|\\n]+)', 'i');
+    var m = (txt || '').match(r);
+    return m ? m[1].trim() : '';
+  };
+
+  /* ── Helper: obter título do mandado ────────────────────────────── */
+  function _obterTitulo(d) {
+    // 1º tenta dadosExtrasJSON.titulo
+    try {
+      var ext = JSON.parse(d.dadosExtrasJSON || '{}');
+      if (ext.titulo && ext.titulo.trim()) return ext.titulo.trim();
+    } catch(e) {}
+    // 2º tenta d.titulo direto (alias)
+    if (d.titulo && d.titulo.trim()) return d.titulo.trim();
+    // 3º tenta extrair do infoProcessuais (Espécie de prisão ou Tipo:)
+    var raw = d.infoProcessuais || '';
+    var esp = _extP(raw, 'Espécie de pris[aã]o:') || _extP(raw, 'Tipo:');
+    if (esp && esp.toLowerCase() !== 'n/a' && esp.trim()) return esp.trim();
+    return '';
+  }
+
+  /* ── Helper: obter número do processo ───────────────────────────── */
+  function _obterNumeroProcesso(d) {
+    var raw = d.infoProcessuais || '';
+    // Extrai "Nº do processo: XXXX"
+    var p = _extP(raw, 'N[º°]? do processo:') || _extP(raw, 'Processo:');
+    if (p) return p;
+    // Fallback: procura padrão numérico CNJ embutido
+    var m = raw.match(/\d{7}-\d{2}\.\d{4}\.\d{1,2}\.\d{2}\.\d{4}/);
+    return m ? m[0] : '';
+  }
+
+  /* ── Helpers de detecção de inconsistências ─────────────────────── */
+
+  function _semTipificacao(d) {
+    if (!d || d.status !== 'Procurado') return false;
+    var ci = (typeof classificarCrime === 'function') ? classificarCrime(d.infoProcessuais || '') : null;
+    return ci ? ci.naoClassificado === true : false;
+  }
+
+  function _semLeiArtigo(d) {
+    if (!d || d.status !== 'Procurado') return false;
+    var raw = d.infoProcessuais || '';
+    if (!raw || raw.trim().length < 5) return true;
+    var lei    = _extP(raw, 'Lei:');
+    var artigo = _extP(raw, 'Artigo:');
+    var invalidos = ['', 'n/a', '-', 'não informado', 'nao informado', 'vide info proc.'];
+    return invalidos.includes((lei || '').toLowerCase()) && invalidos.includes((artigo || '').toLowerCase());
+  }
+
+  function _semEndereco(d) {
+    return d && d.status === 'Procurado' && (d.semEndereco === true || !d.enderecoPrincipal || d.enderecoPrincipal.trim() === '');
+  }
+
+  function _semCidade(d) {
+    if (!d || d.status !== 'Procurado') return false;
+    if (d.semEndereco) return false;
+    var end = (d.enderecoPrincipal || '').trim();
+    if (!end) return false;
+    var temCidade = d.cidade && d.cidade.trim().length > 2;
+    var virgulas = (end.match(/,/g) || []).length;
+    return !temCidade && virgulas < 2;
+  }
+
+  /* ── NOVAS verificações de formato ──────────────────────────────── */
+
+  function _mandadoFormatoInvalido(d) {
+    if (!d || d.status !== 'Procurado') return false;
+    var num = (d.mandado || '').trim();
+    if (!num) return false; // sem mandado → já pega em outra categoria
+    var tamanhoOk = num.length >= _LEN_MANDADO_MIN && num.length <= _LEN_MANDADO_MAX;
+    var formatoOk = _REGEX_MANDADO.test(num);
+    return !tamanhoOk || !formatoOk;
+  }
+
+  function _processoFormatoInvalido(d) {
+    if (!d || d.status !== 'Procurado') return false;
+    var num = _obterNumeroProcesso(d).trim();
+    if (!num) return false; // sem processo cadastrado → não penaliza aqui (já falta lei/artigo)
+    var tamanhoOk = num.length >= _LEN_PROCESSO_MIN && num.length <= _LEN_PROCESSO_MAX;
+    var formatoOk = _REGEX_PROCESSO.test(num);
+    return !tamanhoOk || !formatoOk;
+  }
+
+  function _tituloFormatoInvalido(d) {
+    if (!d || d.status !== 'Procurado') return false;
+    var titulo = _obterTitulo(d);
+    if (!titulo) return false; // título não preenchido → outro problema
+    var len = titulo.length;
+    return len < _LEN_TITULO_MIN || len > _LEN_TITULO_MAX;
+  }
+
+  function _usouFallback(d) {
+    if (!d || d.status !== 'Procurado') return false;
+    var raw = d.infoProcessuais || '';
+    var artigo = _extP(raw, 'Artigo:');
+    // Se o artigo é "Vide Info Proc." significa que o parser não extraiu corretamente
+    if (artigo && artigo.toLowerCase().includes('vide info')) return true;
+    // Se classificarCrime existe, verificar se usou fallback (tabela de leis não bateu)
+    if (typeof classificarCrime === 'function' && window._tabelaLeis && window._tabelaLeis.length > 0) {
+      var ci = classificarCrime(raw);
+      // Se o crime foi classificado mas não tem tipificacaoCompleta, significa que usou o fallback hardcoded
+      if (ci && !ci.naoClassificado && !ci.tipificacaoCompleta && ci.nome !== 'Outros') return true;
+    }
+    return false;
+  }
+
+  function _getInconsistencias(d) {
+    var cats = [];
+    if (_semTipificacao(d))          cats.push('tipificacao');
+    if (_semLeiArtigo(d))            cats.push('lei');
+    if (_usouFallback(d))            cats.push('tipificacao-fallback');
+    if (_semEndereco(d))             cats.push('endereco');
+    if (_semCidade(d))               cats.push('cidade');
+    if (_mandadoFormatoInvalido(d))  cats.push('fmt-mandado');
+    if (_processoFormatoInvalido(d)) cats.push('fmt-processo');
+    if (_tituloFormatoInvalido(d))   cats.push('fmt-titulo');
+    return cats;
+  }
+
+  /* ── Carregar e renderizar ─────────────────────────────────────── */
+
+  function carregarAuditoria() {
+    var loading  = document.getElementById('auditoria-loading');
+    var lista    = document.getElementById('auditoria-lista');
+    var vazio    = document.getElementById('auditoria-vazio');
+    var resumo   = document.getElementById('auditoria-resumo');
+    var filtros  = document.getElementById('auditoria-filtros');
+    var iconReload = document.getElementById('iconReloadAuditoria');
+
+    if (iconReload) { iconReload.classList.add('spin-anim'); }
+
+    if (loading)  { loading.style.display = 'flex'; }
+    if (lista)    { lista.style.display = 'none'; lista.innerHTML = ''; }
+    if (vazio)    { vazio.style.display = 'none'; }
+    if (resumo)   { resumo.style.display = 'none'; }
+    if (filtros)  { filtros.style.display = 'none'; }
+
+    if (!(typeof dadosMandados !== 'undefined' ? dadosMandados : null) || !Array.isArray(dadosMandados) || dadosMandados.length === 0) {
+      if (loading) loading.innerHTML = '<span class="material-symbols-outlined" style="font-size:48px;opacity:0.4;">error_outline</span><div style="font-size:13px;font-weight:700;color:#ef4444;">Banco de dados não carregado ainda. Aguarde e tente novamente.</div>';
+      return;
+    }
+
+    setTimeout(function() { _processarAuditoria(); }, 60);
+  }
+
+  function _processarAuditoria() {
+    var iconReload = document.getElementById('iconReloadAuditoria');
+    if (iconReload) { iconReload.classList.remove('spin-anim'); }
+
+    var cntTip = 0, cntLei = 0, cntEnd = 0, cntCid = 0,
+        cntFmtM = 0, cntFmtP = 0, cntFmtT = 0, cntFallback = 0;
+    _auditoriaCache = [];
+
+    dadosMandados.forEach(function(d) {
+      var cats = _getInconsistencias(d);
+      if (cats.length === 0) return;
+      _auditoriaCache.push({ d: d, cats: cats });
+      if (cats.includes('tipificacao'))          cntTip++;
+      if (cats.includes('lei'))                   cntLei++;
+      if (cats.includes('tipificacao-fallback'))   cntFallback++;
+      if (cats.includes('endereco'))              cntEnd++;
+      if (cats.includes('cidade'))                cntCid++;
+      if (cats.includes('fmt-mandado'))           cntFmtM++;
+      if (cats.includes('fmt-processo'))          cntFmtP++;
+      if (cats.includes('fmt-titulo'))            cntFmtT++;
+    });
+
+    var _s = function(id, v) { var el = document.getElementById(id); if(el) el.textContent = v; };
+    _s('cnt-sem-tipificacao', cntTip);
+    _s('cnt-sem-lei',         cntLei);
+    _s('cnt-tipif-fallback',  cntFallback);
+    _s('cnt-sem-endereco',    cntEnd);
+    _s('cnt-sem-cidade',      cntCid);
+    _s('cnt-fmt-mandado',     cntFmtM);
+    _s('cnt-fmt-processo',    cntFmtP);
+    _s('cnt-fmt-titulo',      cntFmtT);
+    _s('cnt-total-auditoria', _auditoriaCache.length);
+
+    var badge = document.getElementById('badgeAuditoriaNav');
+    if (badge) {
+      badge.textContent = _auditoriaCache.length;
+      badge.style.display = _auditoriaCache.length > 0 ? 'flex' : 'none';
+    }
+
+    var loading = document.getElementById('auditoria-loading');
+    if (loading) loading.style.display = 'none';
+
+    var resumo  = document.getElementById('auditoria-resumo');
+    var filtros = document.getElementById('auditoria-filtros');
+    if (resumo)  resumo.style.display  = 'grid';
+    if (filtros) filtros.style.display = 'flex';
+
+    if (_auditoriaCache.length === 0) {
+      var vazio = document.getElementById('auditoria-vazio');
+      if (vazio) vazio.style.display = 'block';
+      return;
+    }
+
+    _auditoriaFiltroAtivo = 'todos';
+    document.querySelectorAll('.audit-filter-btn').forEach(function(b) {
+      b.classList.remove('active'); b.style.opacity = '0.7';
+    });
+    var btnTodos = document.querySelector('.audit-filter-btn[data-cat="todos"]');
+    if (btnTodos) { btnTodos.classList.add('active'); btnTodos.style.opacity = '1'; }
+
+    _renderizarAuditoria(_auditoriaCache);
+  }
+
+  function filtrarAuditoria(cat, btn) {
+    _auditoriaFiltroAtivo = cat;
+    document.querySelectorAll('.audit-filter-btn').forEach(function(b) {
+      b.classList.remove('active'); b.style.opacity = '0.6';
+    });
+    if (btn) { btn.classList.add('active'); btn.style.opacity = '1'; }
+
+    var filtrados = cat === 'todos'
+      ? _auditoriaCache
+      : _auditoriaCache.filter(function(item) { return item.cats.includes(cat); });
+
+    _renderizarAuditoria(filtrados);
+  }
+
+  function _renderizarAuditoria(itens) {
+    var lista = document.getElementById('auditoria-lista');
+    if (!lista) return;
+    lista.innerHTML = '';
+    lista.style.display = 'flex';
+
+    if (itens.length === 0) {
+      lista.innerHTML = '<div style="text-align:center;padding:40px;color:#475569;font-size:13px;font-weight:700;">Nenhum mandado nesta categoria.</div>';
+      return;
+    }
+
+    itens.forEach(function(item) {
+      var d    = item.d;
+      var cats = item.cats;
+
+      var catColors = {
+        tipificacao:             { cor: '#ef4444', label: '⚠ Lei não cadastrada' },
+        lei:                     { cor: '#f59e0b', label: '⚠ Sem Lei/Artigo' },
+        'tipificacao-fallback':   { cor: '#f97316', label: '⚠ Artigo não vinculado' },
+        endereco:                { cor: '#8b5cf6', label: '⚠ Sem Endereço' },
+        cidade:                  { cor: '#3b82f6', label: '⚠ Sem Cidade' },
+        'fmt-mandado':           { cor: '#f43f5e', label: '⚠ Nº do Mandado Inválido' },
+        'fmt-processo':          { cor: '#fb923c', label: '⚠ Nº Processo Inválido' },
+        'fmt-titulo':            { cor: '#a78bfa', label: '⚠ Título Inválido' }
+      };
+      var badgesHtml = cats.map(function(c) {
+        var info = catColors[c] || { cor: '#6b7280', label: c };
+        return '<span style="font-size:9px;font-weight:800;padding:2px 8px;background:' + info.cor + '22;border:1px solid ' + info.cor + '55;color:' + info.cor + ';border-radius:99px;">' + info.label + '</span>';
+      }).join('');
+
+      var raw          = d.infoProcessuais || '';
+      var leiAtual     = _extP(raw, 'Lei:') || '';
+      var artigoAtual  = _extP(raw, 'Artigo:') || '';
+      var endAtual     = d.enderecoPrincipal || '';
+      var numMandado   = (d.mandado || '').trim();
+      var numProcesso  = _obterNumeroProcesso(d);
+      var tituloAtual  = _obterTitulo(d);
+
+      // Dicas de validação para exibir no card
+      var dicaMandado  = cats.includes('fmt-mandado')
+        ? '<div style="font-size:9px;color:#f43f5e;margin-top:2px;">Formato esperado: <code>0001370-15.2017.8.26.0294.10.0002-05</code> (' + _LEN_MANDADO_MIN + '–' + _LEN_MANDADO_MAX + ' chars). Atual: ' + numMandado.length + ' chars.</div>' : '';
+      var dicaProcesso = cats.includes('fmt-processo')
+        ? '<div style="font-size:9px;color:#fb923c;margin-top:2px;">Formato esperado: <code>0001370-15.2017.8.26.0294</code> (' + _LEN_PROCESSO_MIN + '–' + _LEN_PROCESSO_MAX + ' chars). Atual: ' + numProcesso.length + ' chars.</div>' : '';
+      var dicaTitulo   = cats.includes('fmt-titulo')
+        ? '<div style="font-size:9px;color:#a78bfa;margin-top:2px;">Tamanho esperado: ' + _LEN_TITULO_MIN + '–' + _LEN_TITULO_MAX + ' chars (ex: "Mandado de Prisão" … "Mandado de Internação Recaptura"). Atual: <b>' + tituloAtual.length + '</b> chars.</div>' : '';
+
+      var card = document.createElement('div');
+      card.className = 'audit-card';
+      card.setAttribute('data-mandado', d.mandado);
+      card.style.cssText = 'background:#1e293b;border:1px solid #334155;border-radius:14px;overflow:hidden;transition:box-shadow 0.2s;';
+
+      card.innerHTML = '\
+        <div style="padding:14px 16px;display:flex;align-items:flex-start;gap:14px;cursor:pointer;" onclick="_toggleAuditCard(this.closest(\'.audit-card\'))">\
+          <div style="flex:1;min-width:0;">\
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">\
+              <span style="font-size:13px;font-weight:900;color:#f8fafc;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">' + (d.nome || 'Nome não informado') + '</span>\
+              <span onclick="event.stopPropagation(); navigator.clipboard.writeText(\'' + _esc(d.nome) + '\'); this.innerText=\'check\'; setTimeout(()=>this.innerText=\'content_copy\', 1000);" class="material-symbols-outlined" style="font-size:14px;color:#94a3b8;cursor:pointer;" title="Copiar Nome">content_copy</span>\
+              ' + badgesHtml + '\
+            </div>\
+            <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">\
+              <span style="font-size:10px;color:#64748b;font-family:monospace;">Mandado: ' + (numMandado || '-') + '</span>\
+              <span onclick="event.stopPropagation(); navigator.clipboard.writeText(\'' + _esc(numMandado) + '\'); this.innerText=\'check\'; setTimeout(()=>this.innerText=\'content_copy\', 1000);" class="material-symbols-outlined" style="font-size:14px;color:#94a3b8;cursor:pointer;" title="Copiar Mandado">content_copy</span>\
+              <span style="font-size:10px;color:#64748b;">CPF: ' + (d.cpf || '-') + '</span>\
+              <span style="font-size:10px;color:#64748b;">Validade: ' + (d.validade || '-') + '</span>\
+            </div>\
+          </div>\
+          <span class="material-symbols-outlined audit-chevron" style="font-size:20px;color:#475569;flex-shrink:0;transition:transform 0.2s;">expand_more</span>\
+        </div>\
+        <div class="audit-card-body" style="display:none;padding:0 16px 16px;border-top:1px solid #1e3a5f;">\
+          <div style="padding-top:14px;display:flex;flex-direction:column;gap:14px;">\
+            ' + _buildEditFieldExtra('Nº Mandado', 'mand-' + d.mandado, numMandado, cats.includes('fmt-mandado') ? '#f43f5e' : '#334155', dicaMandado) + '\
+            ' + _buildEditFieldExtra('Nº Processo (de infoProcessuais)', 'proc-num-' + d.mandado, numProcesso, cats.includes('fmt-processo') ? '#fb923c' : '#334155', dicaProcesso) + '\
+            ' + _buildEditFieldExtra('Título do Mandado (dadosExtras.titulo)', 'tit-' + d.mandado, tituloAtual, cats.includes('fmt-titulo') ? '#a78bfa' : '#334155', dicaTitulo) + '\
+            ' + _buildEditField('Lei', 'lei-' + d.mandado, leiAtual, cats.includes('lei') ? '#f59e0b' : '#334155') + '\
+            ' + _buildEditField('Artigo', 'art-' + d.mandado, artigoAtual, cats.includes('lei') ? '#f59e0b' : '#334155') + '\
+            ' + _buildEditField('Info Processual completa', 'proc-' + d.mandado, raw, '#334155', true) + '\
+            ' + _buildEditField('Endereço Principal', 'end-' + d.mandado, endAtual, cats.includes('endereco') || cats.includes('cidade') ? '#8b5cf6' : '#334155') + '\
+            ' + _buildEditField('Cidade', 'cidade-' + d.mandado, d.cidade || '', cats.includes('cidade') ? '#3b82f6' : '#334155') + '\
+            <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">\
+              <button onclick="_salvarAuditoria(\'' + d.mandado + '\')" style="background:linear-gradient(135deg,#7a1515,#a92020);border:none;color:#fff;font-size:12px;font-weight:800;padding:8px 20px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;">\
+                <span class="material-symbols-outlined" style="font-size:15px;">save</span>SALVAR CORREÇÃO\
+              </button>\
+              <button onclick="_marcarRevisado(\'' + d.mandado + '\')" style="background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.3);color:#10b981;font-size:12px;font-weight:800;padding:8px 14px;border-radius:8px;cursor:pointer;">\
+                ✔ Ignorar\
+              </button>\
+            </div>\
+          </div>\
+        </div>\
+      ';
+
+      lista.appendChild(card);
+    });
+  }
+
+  function _buildEditField(label, id, value, borderColor, isTextarea) {
+    var style = 'width:100%;background:#0f172a;border:1px solid ' + borderColor + ';color:#f8fafc;border-radius:8px;padding:8px 10px;font-size:11px;font-family:monospace;resize:vertical;box-sizing:border-box;';
+    if (isTextarea) {
+      return '<div><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div><textarea id="' + id + '" rows="4" style="' + style + '">' + _esc(value) + '</textarea></div>';
+    }
+    return '<div><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div><input type="text" id="' + id + '" value="' + _esc(value) + '" style="' + style + '"></div>';
+  }
+
+  function _buildEditFieldExtra(label, id, value, borderColor, dicaHtml) {
+    var style = 'width:100%;background:#0f172a;border:1px solid ' + borderColor + ';color:#f8fafc;border-radius:8px;padding:8px 10px;font-size:11px;font-family:monospace;box-sizing:border-box;';
+    return '<div><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div>'
+      + '<input type="text" id="' + id + '" value="' + _esc(value) + '" style="' + style + '">'
+      + (dicaHtml || '') + '</div>';
+  }
+
+  function _esc(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function _toggleAuditCard(card) {
+    if (!card) return;
+    var body    = card.querySelector('.audit-card-body');
+    var chevron = card.querySelector('.audit-chevron');
+    if (!body) return;
+    var isOpen = body.style.display !== 'none';
+    body.style.display   = isOpen ? 'none' : 'block';
+    if (chevron) chevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
+    card.style.boxShadow = isOpen ? '' : '0 0 0 2px rgba(99,102,241,0.4), 0 8px 24px rgba(0,0,0,0.4)';
+  }
+
+  function _salvarAuditoria(mandado) {
+    var leiEl      = document.getElementById('lei-'      + mandado);
+    var artEl      = document.getElementById('art-'      + mandado);
+    var procEl     = document.getElementById('proc-'     + mandado);
+    var endEl      = document.getElementById('end-'      + mandado);
+    var cidadeEl   = document.getElementById('cidade-'   + mandado);
+    var mandEl     = document.getElementById('mand-'     + mandado);
+    var procNumEl  = document.getElementById('proc-num-' + mandado);
+    var titEl      = document.getElementById('tit-'      + mandado);
+
+    var lei        = leiEl     ? leiEl.value.trim()     : '';
+    var artigo     = artEl     ? artEl.value.trim()     : '';
+    var infoProc   = procEl    ? procEl.value.trim()    : '';
+    var endereco   = endEl     ? endEl.value.trim()     : '';
+    var cidade     = cidadeEl  ? cidadeEl.value.trim()  : '';
+    var novoMandado= mandEl    ? mandEl.value.trim()    : '';
+    var novoProc   = procNumEl ? procNumEl.value.trim() : '';
+    var novoTitulo = titEl     ? titEl.value.trim()     : '';
+
+    if (!lei && !artigo && !infoProc && !endereco && !cidade && !novoMandado && !novoProc && !novoTitulo) {
+      return chamarAlertaTatico('ATENÇÃO', 'Preencha ao menos um campo antes de salvar.', 'OK');
+    }
+
+    var payload = {
+      mandado: mandado,
+      novoNumeroMandado: novoMandado !== mandado ? novoMandado : '',
+      novoNumeroProcesso: novoProc,
+      novoTitulo: novoTitulo,
+      lei: lei,
+      artigo: artigo,
+      infoProcessuais: infoProc,
+      enderecoPrincipal: endereco,
+      cidade: cidade
+    };
+
+    var btn = event && event.target ? event.target.closest('button') : null;
+    if (btn) { btn.disabled = true; btn.textContent = 'Salvando...'; }
+
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(function(resp) {
+          if (btn) { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">save</span>SALVAR CORREÇÃO'; }
+          if (resp && resp.sucesso) {
+            chamarAlertaTatico('SALVO', 'Correção aplicada com sucesso no banco de dados.', 'OK');
+            _removerCardAuditoria(mandado);
+            if ((typeof dadosMandados !== 'undefined' ? dadosMandados : null)) {
+              var idx = dadosMandados.findIndex(function(x) { return x.mandado === mandado; });
+              if (idx >= 0) {
+                if (infoProc) dadosMandados[idx].infoProcessuais = infoProc;
+                if (endereco) dadosMandados[idx].enderecoPrincipal = endereco;
+                if (cidade)   dadosMandados[idx].cidade = cidade;
+              }
+            }
+          } else {
+            chamarAlertaTatico('ERRO', (resp && resp.mensagem) ? resp.mensagem : 'Falha ao salvar.', 'OK');
+          }
+        })
+        .withFailureHandler(function(err) {
+          if (btn) { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">save</span>SALVAR CORREÇÃO'; }
+          chamarAlertaTatico('ERRO DE REDE', 'Falha na comunicação: ' + err.message, 'OK');
+        })
+        .corrigirInconsistenciaMandado(payload);
+    } else {
+      setTimeout(function() {
+        if (btn) { btn.disabled = false; btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:15px;">save</span>SALVAR CORREÇÃO'; }
+        chamarAlertaTatico('MOCK OK', 'Salvo localmente (modo teste).', 'OK');
+        _removerCardAuditoria(mandado);
+      }, 600);
+    }
+  }
+
+  function _marcarRevisado(mandado) { _removerCardAuditoria(mandado); }
+
+  function _removerCardAuditoria(mandado) {
+    var card = document.querySelector('.audit-card[data-mandado="' + mandado + '"]');
+    if (card) {
+      card.style.transition = 'opacity 0.3s, transform 0.3s';
+      card.style.opacity = '0';
+      card.style.transform = 'translateX(20px)';
+      setTimeout(function() { if (card.parentNode) card.parentNode.removeChild(card); }, 300);
+    }
+
+    _auditoriaCache = _auditoriaCache.filter(function(item) { return item.d.mandado !== mandado; });
+
+    var badge = document.getElementById('badgeAuditoriaNav');
+    if (badge) {
+      badge.textContent = _auditoriaCache.length;
+      badge.style.display = _auditoriaCache.length > 0 ? 'flex' : 'none';
+    }
+
+    // Recalcular contadores
+    var cnt = { tipificacao:0, lei:0, 'tipificacao-fallback':0, endereco:0, cidade:0, 'fmt-mandado':0, 'fmt-processo':0, 'fmt-titulo':0 };
+    _auditoriaCache.forEach(function(it) {
+      it.cats.forEach(function(c) { if (cnt[c] !== undefined) cnt[c]++; });
+    });
+    var _s = function(id, v) { var el = document.getElementById(id); if(el) el.textContent = v; };
+    _s('cnt-sem-tipificacao', cnt.tipificacao);
+    _s('cnt-sem-lei',         cnt.lei);
+    _s('cnt-tipif-fallback',  cnt['tipificacao-fallback']);
+    _s('cnt-sem-endereco',    cnt.endereco);
+    _s('cnt-sem-cidade',      cnt.cidade);
+    _s('cnt-fmt-mandado',     cnt['fmt-mandado']);
+    _s('cnt-fmt-processo',    cnt['fmt-processo']);
+    _s('cnt-fmt-titulo',      cnt['fmt-titulo']);
+    _s('cnt-total-auditoria', _auditoriaCache.length);
+
+    var lista = document.getElementById('auditoria-lista');
+    if (lista && lista.children.length === 0) {
+      lista.style.display = 'none';
+      var vazio = document.getElementById('auditoria-vazio');
+      if (vazio) vazio.style.display = 'block';
+    }
+  }
+
+  // Expor globais
+  window.carregarAuditoria = carregarAuditoria;
+  window.filtrarAuditoria  = filtrarAuditoria;
+  window._toggleAuditCard  = _toggleAuditCard;
+  window._salvarAuditoria  = _salvarAuditoria;
+  window._marcarRevisado   = _marcarRevisado;
+
+  // =========================================================
+  // RELATÓRIO DE IMPORTAÇÕES (PDF VS GOOGLE MAPS API)
+  // =========================================================
+  function gerarRelatorioImportacao() {
+    if (!dadosMandados || dadosMandados.length === 0) {
+      chamarAlertaTatico("RELATÓRIO VAZIO", "Não há mandados carregados na memória.", "OK");
+      return;
+    }
+
+    var importados = dadosMandados.slice(-100).reverse().filter(function(d) {
+      return d.enderecoPrincipal && (d.lat || d.cidade);
+    });
+
+    if (importados.length === 0) {
+      chamarAlertaTatico("RELATÓRIO VAZIO", "Nenhum mandado geocodificado encontrado para gerar o relatório.", "OK");
+      return;
+    }
+
+    var html = '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:12px;">Comparativo entre o endereço original lido no PDF e o resultado resolvido pela IA / Google Maps API. Exibindo os últimos ' + importados.length + ' localizados.</div>';
+    html += '<div style="max-height:60vh;overflow-y:auto;padding-right:8px;display:flex;flex-direction:column;gap:8px;" class="custom-scrollbar">';
+    
+    importados.forEach(function(d) {
+      var endPdf = d.enderecoPrincipal || "Não informado";
+      var endApi = d.cidade ? "Cidade: " + d.cidade : "Sede Tática Fallback";
+      if (d.lat && d.lng) endApi += ' (' + parseFloat(d.lat).toFixed(4) + ', ' + parseFloat(d.lng).toFixed(4) + ')';
+      
+      var isFallback = !d.cidade || (d.observacoes && (d.observacoes.includes('Pino Sede') || d.observacoes.includes('Pino na sede')));
+      var statusIcon = isFallback ? '<span class="material-symbols-outlined" style="color:var(--danger);font-size:16px;">error</span>' : '<span class="material-symbols-outlined" style="color:var(--success);font-size:16px;">check_circle</span>';
+      
+      html += '<div style="background:var(--bg-depressed);border:1px solid var(--border);border-radius:8px;padding:12px;">';
+      html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:6px;">';
+      html += '    <div style="font-weight:900;font-size:12px;color:var(--text-primary);">' + escapeHTML(d.nome) + '</div>';
+      html += '    <div style="font-family:var(--font-mono);font-size:10px;font-weight:800;color:var(--text-muted);">' + d.mandado + '</div>';
+      html += '  </div>';
+      html += '  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:10px;">';
+      html += '    <div>';
+      html += '      <div style="color:var(--warning);font-weight:700;margin-bottom:2px;">Original (PDF/Lido):</div>';
+      html += '      <div style="color:var(--text-secondary);">' + escapeHTML(endPdf) + '</div>';
+      html += '    </div>';
+      html += '    <div>';
+      html += '      <div style="color:var(--brand-blue);font-weight:700;margin-bottom:2px;display:flex;align-items:center;gap:4px;">' + statusIcon + ' Result (Google Maps/IA):</div>';
+      html += '      <div style="color:' + (isFallback ? 'var(--danger)' : 'var(--success)') + ';">' + escapeHTML(endApi) + '</div>';
+      html += '    </div>';
+      html += '  </div>';
+      html += '</div>';
+    });
+    
+    html += '</div>';
+    
+    chamarAlertaTatico("RELATÓRIO DE IMPORTAÇÕES (PDF vs API)", html, "FECHAR");
+  }
+
+  window.gerarRelatorioImportacao = gerarRelatorioImportacao;
+
+</script>
