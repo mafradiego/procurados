@@ -1,5 +1,6 @@
 // ================================================================
-// SENTINELA v2.0 — MÓDULO DE GEOCODIFICAÇÃO
+// SENTINELA v4.2.0 — MÓDULO DE GEOCODIFICAÇÃO
+// Motor: Gemini Map Grounding + Fallback Sedes Táticas
 // ================================================================
 
 const COORDENADAS_SEDES = {
@@ -15,6 +16,154 @@ const COORDENADAS_SEDES = {
 };
 
 const UFS_BRASIL = "AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO";
+
+// ================================================================
+// MOTOR DE GEOCODIFICAÇÃO VIA GEMINI MAP GROUNDING (v4.2.0)
+// Substitui o Google Maps Geocoder clássico.
+// Usa a ferramenta google_maps do Gemini para resolver endereços
+// informais e incompletos com precisão superior.
+// Cota: 500 RPD (Request Per Day) / 15 RPM (Request Per Minute).
+// ================================================================
+
+/**
+ * Geocodifica um endereço usando Gemini 3.1 Flash Lite com Map Grounding.
+ * Retorna { lat, lng } ou null se não localizar.
+ *
+ * @param {string} endereco O endereço a geocodificar.
+ * @return {{ lat: number, lng: number } | null}
+ */
+function geocodificarComGeminiGrounding(endereco) {
+  if (!endereco || endereco.length < 5) return null;
+
+  const apiKey = PropertiesService.getScriptProperties().getProperty("GEMINI_API_KEY");
+  if (!apiKey) {
+    Logger.log("[GEO-GROUNDING] GEMINI_API_KEY não configurada.");
+    return null;
+  }
+
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=" + apiKey;
+
+  const payload = {
+    "contents": [{
+      "parts": [{
+        "text": "Retorne APENAS as coordenadas geográficas (latitude e longitude) do seguinte endereço brasileiro em JSON puro, sem explicações: " + endereco
+      }]
+    }],
+    "tools": [{
+      "google_maps": {}
+    }],
+    "generationConfig": {
+      "responseMimeType": "application/json",
+      "responseSchema": {
+        "type": "OBJECT",
+        "properties": {
+          "latitude": { "type": "NUMBER" },
+          "longitude": { "type": "NUMBER" }
+        },
+        "required": ["latitude", "longitude"]
+      }
+    }
+  };
+
+  const options = {
+    "method": "post",
+    "contentType": "application/json",
+    "payload": JSON.stringify(payload),
+    "muteHttpExceptions": true
+  };
+
+  try {
+    // CADÊNCIA v4.2.0: 4.2s de delay para respeitar teto de 15 RPM
+    Utilities.sleep(4200);
+
+    var response = UrlFetchApp.fetch(url, options);
+    var code = response.getResponseCode();
+    var content = response.getContentText();
+
+    // Retry para erros temporários (429/503)
+    if (code === 429 || code === 503) {
+      Logger.log("[GEO-GROUNDING] Erro " + code + " — aguardando 10s para retry...");
+      Utilities.sleep(10000);
+      response = UrlFetchApp.fetch(url, options);
+      code = response.getResponseCode();
+      content = response.getContentText();
+    }
+
+    if (code !== 200) {
+      Logger.log("[GEO-GROUNDING] Erro HTTP " + code + ": " + content.substring(0, 200));
+      return null;
+    }
+
+    var parsed = JSON.parse(content);
+    if (!parsed.candidates || !parsed.candidates[0] || !parsed.candidates[0].content ||
+        !parsed.candidates[0].content.parts || parsed.candidates[0].content.parts.length === 0) {
+      Logger.log("[GEO-GROUNDING] Resposta vazia do Gemini para: " + endereco);
+      return null;
+    }
+
+    var jsonStr = parsed.candidates[0].content.parts[0].text;
+    var coords = JSON.parse(jsonStr);
+
+    if (coords.latitude && coords.longitude &&
+        !isNaN(coords.latitude) && !isNaN(coords.longitude) &&
+        Math.abs(coords.latitude) > 0.1 && Math.abs(coords.longitude) > 0.1) {
+      Logger.log("[GEO-GROUNDING] Sucesso: " + endereco + " → " + coords.latitude + ", " + coords.longitude);
+      incrementarCotaGemini_("GEOCODIFICACAO");
+      return { lat: coords.latitude, lng: coords.longitude };
+    }
+
+    Logger.log("[GEO-GROUNDING] Coordenadas inválidas retornadas para: " + endereco);
+    return null;
+
+  } catch (e) {
+    var msg = e.message ? e.message.toLowerCase() : "";
+    if (msg.includes("quota") || msg.includes("limit") || msg.includes("429")) {
+      throw new Error("QUOTA_LIMIT");
+    }
+    Logger.log("[GEO-GROUNDING] Erro ao geocodificar: " + e.message);
+    return null;
+  }
+}
+
+// ================================================================
+// VALIDAÇÃO DE CIDADES E CEP (Economia de Cota)
+// ================================================================
+
+var _cacheCidades = null;
+function carregarCidadesCache_() {
+  if (_cacheCidades) return _cacheCidades;
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Cidades");
+  if (!sheet) {
+    _cacheCidades = [];
+    return [];
+  }
+  var data = sheet.getDataRange().getValues();
+  var cidades = [];
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0]) cidades.push(data[i][0].toString().trim().toLowerCase());
+  }
+  _cacheCidades = cidades;
+  return cidades;
+}
+
+function validarEnderecoAntesDeGeocodificar_(endereco) {
+  if (!endereco) return false;
+  // Se tiver CEP explícito, permite
+  if (/\b\d{5}-?\d{3}\b/.test(endereco) || /\bCEP\s*\d+\b/i.test(endereco)) return true;
+  
+  var cidades = carregarCidadesCache_();
+  // Se a aba Cidades não existir ou estiver vazia, ignora a validação restrita
+  if (cidades.length === 0) return true;
+  
+  var endLower = endereco.toLowerCase();
+  for (var i = 0; i < cidades.length; i++) {
+    // Tratar regex seguro para nome da cidade
+    var cidRegex = cidades[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    var regex = new RegExp("\\b" + cidRegex + "\\b", "i");
+    if (regex.test(endLower)) return true;
+  }
+  return false;
+}
 
 // ================================================================
 // IDENTIFICAÇÃO DE ÁREA POR COORDENADAS (Point-in-Polygon)
@@ -39,24 +188,40 @@ function carregarPoligonosCache_() {
     if (ativo !== "SIM") continue;
 
     var geoJsonStr = String(data[i][5] || "");
+    for (var col = 8; col < data[i].length; col++) {
+      if (data[i][col]) geoJsonStr += String(data[i][col]);
+    }
     if (!geoJsonStr) continue;
 
     try {
       var geo = JSON.parse(geoJsonStr);
       if (!geo || !geo.coordinates || !geo.coordinates[0]) continue;
 
-      // Converter GeoJSON [lng, lat] para array de {lat, lng}
-      var coords = geo.coordinates[0].map(function(c) {
-        return { lat: c[1], lng: c[0] };
-      });
+      var outerRings = [];
 
-      poligonos.push({
-        cpi: String(data[i][0] || ""),
-        batalhao: String(data[i][1] || ""),
-        cia: String(data[i][2] || ""),
-        cidade: String(data[i][3] || ""),
-        delegacia: String(data[i][4] || ""),
-        coords: coords
+      if (geo.type === "MultiPolygon") {
+        geo.coordinates.forEach(function(polygon) {
+          if (polygon.length > 0) outerRings.push(polygon[0]);
+        });
+      } else if (geo.type === "Polygon") {
+        if (geo.coordinates.length > 0) outerRings.push(geo.coordinates[0]);
+      }
+
+      if (outerRings.length === 0) continue;
+
+      outerRings.forEach(function(ring) {
+        var coords = ring.map(function(c) {
+          return { lat: c[1], lng: c[0] };
+        });
+
+        poligonos.push({
+          cpi: String(data[i][0] || ""),
+          batalhao: String(data[i][1] || ""),
+          cia: String(data[i][2] || ""),
+          cidade: String(data[i][3] || ""),
+          delegacia: String(data[i][4] || ""),
+          coords: coords
+        });
       });
     } catch (e) {
       // Polígono inválido, pular
@@ -133,6 +298,9 @@ function gravarAreaNaLinha_(sheet, linhaIdx, lat, lng) {
     sheet.getRange(linhaIdx, 27).setValue(area.cia);         // AA = CIA_Area
     sheet.getRange(linhaIdx, 28).setValue(area.delegacia);   // AB = DP_Area
     sheet.getRange(linhaIdx, 29).setValue(area.cidade);      // AC = Cidade
+    if (area.batalhao) {
+      sheet.getRange(linhaIdx, 14).setValue(area.batalhao);  // N = Batalhão Principal
+    }
   }
 }
 
@@ -171,19 +339,89 @@ function processarPendentes() {
     return;
   }
 
-  // Limpar cache para forçar leitura fresca dos polígonos
+  // Limpar cache para forçar leitura fresca dos polígonos e cidades
   _cachePoligonos = null;
+  _cacheCidades = null;
 
   const dataRange = sheet.getDataRange();
   const numRows = dataRange.getNumRows();
   let atualizados = 0;
+  
+  const startTime = Date.now();
+  const TIME_LIMIT = 4.5 * 60 * 1000; // 4.5 minutos
+  let lastPropCheck = Date.now();
+  
+  // Limpar flag antiga se houver (para permitir que ele rode de novo se o usuário der play)
+  PropertiesService.getScriptProperties().deleteProperty('STOP_GEO');
 
   for (let i = 2; i <= numRows; i++) {
-    if (executarGeocodificacaoLinha(sheet, i, true)) {
-      atualizados++;
+    // A cada 5 segundos, verifica se o usuário apertou o botão "Parar"
+    if (Date.now() - lastPropCheck > 5000) {
+      if (PropertiesService.getScriptProperties().getProperty('STOP_GEO') === 'true') {
+        PropertiesService.getScriptProperties().deleteProperty('STOP_GEO');
+        try { SpreadsheetApp.getUi().alert("Processo cancelado pelo usuário!"); } catch(e){}
+        return;
+      }
+      lastPropCheck = Date.now();
+    }
+    try {
+      if (executarGeocodificacaoLinha(sheet, i, true)) {
+        atualizados++;
+      }
+    } catch (erro) {
+      if (erro.message === "QUOTA_LIMIT") {
+        pararGeocodificacaoAutomatica(true);
+        try {
+          SpreadsheetApp.getUi().alert("⛔ LIMITE DIÁRIO DO GOOGLE MAPS ATINGIDO!\nO Google permite cerca de 1.000 buscas de endereço por dia.\n\n" + atualizados + " mandados foram processados com sucesso agora.\nAguarde 24h para processar o resto.");
+        } catch(e){}
+        return;
+      }
+    }
+    
+    // Evitar erro de limite de tempo de execução do Google (6 minutos)
+    if (Date.now() - startTime > TIME_LIMIT) {
+      // Criar o gatilho para continuar rodando automaticamente em 30 segundos
+      ScriptApp.newTrigger('processarPendentes').timeBased().after(30 * 1000).create();
+      
+      try {
+        SpreadsheetApp.getActiveSpreadsheet().toast(
+          atualizados + " mandados processados. Retomando automaticamente em 30 segundos...",
+          "⏱️ Pausa de Segurança", 
+          10
+        );
+      } catch (e) {
+        // Ignora erro caso esteja rodando por trigger (UI indisponível)
+      }
+      return;
     }
   }
-  SpreadsheetApp.getUi().alert("Varredura Concluída!\n" + atualizados + " mandados foram processados.");
+  
+  pararGeocodificacaoAutomatica(true); // Deleta triggers anteriores porque já acabou tudo
+  try {
+    SpreadsheetApp.getUi().alert("Varredura Total Concluída!\n" + atualizados + " mandados foram processados na rodada final.");
+  } catch (e) {}
+}
+
+/**
+ * Interrompe qualquer execução engatilhada pendente.
+ */
+function pararGeocodificacaoAutomatica(silencioso) {
+  PropertiesService.getScriptProperties().setProperty('STOP_GEO', 'true');
+  
+  const triggers = ScriptApp.getProjectTriggers();
+  let deletados = 0;
+  for (let i = 0; i < triggers.length; i++) {
+    if (triggers[i].getHandlerFunction() === 'processarPendentes') {
+      ScriptApp.deleteTrigger(triggers[i]);
+      deletados++;
+    }
+  }
+  
+  if (!silencioso) {
+    try {
+      SpreadsheetApp.getUi().alert("Sinal de parada enviado!\nSe o sistema estava rodando, ele vai abortar imediatamente.\nTriggers pendentes cancelados: " + deletados);
+    } catch (e) {}
+  }
 }
 
 /**
@@ -224,6 +462,9 @@ function executarGeocodificacaoLinha(sheet, linhaIdx, isBatchMode) {
     if (enderecoPrincipal.length < 5) {
       pinoNaSede = true;
       mensagemObs = "Endereço inválido.";
+    } else if (!validarEnderecoAntesDeGeocodificar_(enderecoPrincipal)) {
+      pinoNaSede = true;
+      mensagemObs = "Cidade não coberta na tabela Cidades e sem CEP. Pino na Sede.";
     }
   }
 
@@ -233,23 +474,29 @@ function executarGeocodificacaoLinha(sheet, linhaIdx, isBatchMode) {
     lng = coords.lng;
   } else {
     try {
-      const geocoder = Maps.newGeocoder();
-      const response = geocoder.geocode(enderecoPrincipal);
+      // v4.2.0: Motor de geocodificação via Gemini Map Grounding
+      const geoResult = geocodificarComGeminiGrounding(enderecoPrincipal);
 
-      if (response.status === 'OK' && response.results.length > 0) {
-        lat = response.results[0].geometry.location.lat;
-        lng = response.results[0].geometry.location.lng;
+      if (geoResult) {
+        lat = geoResult.lat;
+        lng = geoResult.lng;
       } else {
         const coords = COORDENADAS_SEDES[batalhao] || COORDENADAS_SEDES["DEFAULT"];
         lat = coords.lat;
         lng = coords.lng;
-        mensagemObs = "Endereço principal não localizado no mapa.";
+        mensagemObs = "Endereço principal não localizado pela IA. Pino na sede.";
       }
     } catch (erro) {
-      if (isBatchMode) Utilities.sleep(2000);
-      return false;
+      const msg = erro.message ? erro.message.toLowerCase() : "";
+      if (msg === "quota_limit" || msg.includes("quota") || msg.includes("limit")) {
+        throw new Error("QUOTA_LIMIT");
+      }
+      
+      const coords = COORDENADAS_SEDES[batalhao] || COORDENADAS_SEDES["DEFAULT"];
+      lat = coords.lat;
+      lng = coords.lng;
+      mensagemObs = "Erro Geo IA: " + (erro.message ? erro.message.substring(0, 50) : "Desconhecido") + " Pino Sede.";
     }
-    if (isBatchMode) Utilities.sleep(1000);
   }
 
   if (lat && lng) {
