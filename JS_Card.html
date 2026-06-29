@@ -84,7 +84,7 @@
         return '<div style="display:flex;margin-top:4px;"><span style="font-size:9px;font-weight:800;color:var(--danger);padding:3px 8px;background:rgba(255,59,48,0.15);border-radius:3px;border:1px solid rgba(255,59,48,0.3);">FORA DO ESTADO</span></div>';
       }
       let h = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">';
-      if (areaData.cpi) h += '<span style="font-size:9px;font-weight:800;color:var(--accent);padding:3px 6px;background:var(--accent)15;border-radius:3px;border:1px solid var(--accent);">COMANDO: ' + areaData.cpi + '</span>';
+      if (areaData.cpi) h += '<span style="font-size:9px;font-weight:800;color:var(--brand-red);padding:3px 6px;background:rgba(169,32,32,0.12);border-radius:3px;border:1px solid var(--brand-red);">COMANDO: ' + areaData.cpi + '</span>';
       if (areaData.batalhao) h += '<span style="font-size:9px;font-weight:700;color:var(--text-primary);padding:3px 6px;background:rgba(255,255,255,0.08);border-radius:3px;border:1px solid rgba(255,255,255,0.2);">BTL: ' + areaData.batalhao + '</span>';
       if (areaData.cia) h += '<span style="font-size:9px;font-weight:700;color:var(--text-primary);padding:3px 6px;background:rgba(255,255,255,0.08);border-radius:3px;border:1px solid rgba(255,255,255,0.2);">CIA: ' + areaData.cia + '</span>';
       if (areaData.delegacia) h += '<span style="font-size:9px;font-weight:700;color:var(--text-secondary);padding:3px 6px;background:rgba(255,255,255,0.04);border-radius:3px;border:1px solid rgba(255,255,255,0.1);">DP: ' + areaData.delegacia + '</span>';
@@ -116,8 +116,9 @@
     } catch (e) { htmlSecundarios = "Erro ao ler endereços."; }
 
     // Validade formatada
-    let dataPura = alvo.validade.match(/(\d{2}[\/\.]\d{2}[\/\.]\d{4})/);
-    dataPura = dataPura ? dataPura[1].replace(/\./g, '/') : alvo.validade;
+    let strValidade = alvo.validade || "";
+    let dataPura = strValidade.match(/(\d{2}[\/\.]\d{2}[\/\.]\d{4})/);
+    dataPura = dataPura ? dataPura[1].replace(/\./g, '/') : strValidade;
 
     // Perfil
     let htmlPerfil = '';
@@ -127,19 +128,152 @@
     addP("Natural", alvo.naturalidade); addP("Filiação", alvo.filiacao); addP("Marcas", extras.marcas);
 
     // Info Processual
+    
     const infoRaw = alvo.infoProcessuais || "";
     const extP = function(txt, lbl) { const r = new RegExp(lbl + '\\s*([^|\\n]+)', 'i'); const m = txt.match(r); return m ? m[1].trim() : "N/A"; };
-    const nProcesso = extP(infoRaw, 'Nº do processo:');
+    const nProcesso = extP(infoRaw, '(?:Nº do processo|Processo):');
     const orgao = extP(infoRaw, 'Órgão Judicial:');
     let especie = extP(infoRaw, 'Espécie(?: de| da) (?:prisão|Internação):');
     if (especie === "N/A") especie = extP(infoRaw, 'Espécie de prisão:');
-    let lei = extP(infoRaw, 'Lei:'); let artigo = extP(infoRaw, 'Artigo:'); let paragrafo = extP(infoRaw, 'Parágrafo:');
-    if (lei !== "N/A" && lei.toLowerCase().includes("art")) {
-      let mP = lei.match(/§\s*(.+)$/); if (mP && paragrafo === "N/A") paragrafo = mP[1].trim();
-      let mA = lei.match(/art\.?\s*([^,§|]+)/i); if (mA && artigo === "N/A") artigo = mA[1].trim();
-      lei = lei.split(/(?:,|\s)\s*art\.?/i)[0].trim();
+
+    // Parse multiple laws
+    let blocosLeis = [];
+    let splitLeis = infoRaw.split(/(?=Lei:)/gi);
+    if (splitLeis.length > 1) {
+      splitLeis.forEach(b => {
+        if (b.trim().toLowerCase().startsWith('lei:')) blocosLeis.push(b);
+      });
+    } else {
+      blocosLeis.push(infoRaw); // Fallback
     }
-    if (lei === "N/A") lei = "-"; if (artigo === "N/A") artigo = "-"; if (paragrafo === "N/A") paragrafo = "-";
+
+    let htmlTipificacoes = '';
+    let badgesHtml = '';
+    
+    blocosLeis.forEach((bloco, idx) => {
+      let lei = extP(bloco, 'Lei:');
+      let artigo = extP(bloco, 'Artigo:');
+      let paragrafo = extP(bloco, 'Parágrafo:');
+      let inciso = extP(bloco, 'Inciso:');
+
+      if (lei !== "N/A" && lei.toLowerCase().includes("art")) {
+        let mP = lei.match(/§\s*(.+)$/); if (mP && paragrafo === "N/A") paragrafo = mP[1].trim();
+        let mA = lei.match(/art\.?\s*([^,§|]+)(?:,\s*([^,§|]+))?(?:,\s*([^,§|]+))?(?:,\s*([^,§|]+))?/i); 
+        if (mA) {
+           if (artigo === "N/A" && mA[1]) artigo = mA[1].trim();
+           if (paragrafo === "N/A" && mA[2] && mA[2].trim() !== '') paragrafo = mA[2].trim();
+           if (inciso === "N/A" && mA[3] && mA[3].trim() !== '') {
+              if (mA[4] && mA[4].trim() !== '') { inciso = mA[3].trim() + ", " + mA[4].trim(); } 
+              else { inciso = mA[3].trim(); }
+           }
+        }
+        lei = lei.split(/(?:,|\s)\s*art\.?/i)[0].trim();
+      }
+      if (paragrafo !== "N/A" && paragrafo !== "-" && (inciso === "N/A" || inciso === "-")) {
+        var mIncisoEmbutido = paragrafo.match(/^(?:§\s*)?(\d+[ºª°]?(?:-[A-Z])?|caput|c)[\s,]+([a-z]|[IVXLCDM]{1,5}(?:\s*,\s*[IVXLCDM]{1,5})*)$/i);
+        if (mIncisoEmbutido) {
+          paragrafo = mIncisoEmbutido[1].trim();
+          inciso = mIncisoEmbutido[2].trim();
+        }
+      }
+      if (lei === "N/A") lei = "-"; if (artigo === "N/A") artigo = "-"; if (paragrafo === "N/A") paragrafo = "-"; if (inciso === "N/A") inciso = "-";
+      
+      let crInfo = classificarCrime(bloco);
+      if (idx === 0) crInfo = crimeInfo; 
+      
+      badgesHtml += '<div class="crime-badge" style="background:' + crInfo.cor + ';color:white;margin:0;">' + crInfo.nome + '</div>';
+
+      let stylizedTipificacao = (function(leiNum, artNum, parNum, incNum, crInfo) {
+          var _tabLeis = window._tabelaLeis || [];
+          function limparNum(v) { return String(v || '').replace(/[.\s]/g, '').replace(/[°ºª]/g, '').trim(); }
+          
+          var leiL = limparNum(leiNum);
+          var artL = limparNum(artNum);
+          var parL = limparNum(parNum).replace(/§/g, '').trim();
+          var incL = limparNum(incNum);
+          
+          let tDiploma = null;
+          let tArtigo = null;
+          let tParagrafo = null;
+
+          // Busca Artigo
+          for (var i=0; i<_tabLeis.length; i++) {
+            var t = _tabLeis[i];
+            if (limparNum(t.numeroLei) === leiL && limparNum(t.artigo) === artL) {
+              if (t.leiNome) tDiploma = t.leiNome;
+              tArtigo = t.tipificacaoCompleta || t.categoria || null;
+              break;
+            }
+          }
+
+          // Busca Paragrafo
+          if (parL && parL !== '-') {
+            var parUpper = parL.toUpperCase();
+            for (var i=0; i<_tabLeis.length; i++) {
+              var t = _tabLeis[i];
+              if (limparNum(t.numeroLei) === leiL && limparNum(t.artigo) === artL && (limparNum(t.paragrafo) === parL || (t.paragrafo||'').toUpperCase() === parUpper)) {
+                if (t.leiNome && !tDiploma) tDiploma = t.leiNome;
+                tParagrafo = t.tipificacaoCompleta || t.categoria || null;
+                break;
+              }
+            }
+          }
+          
+          let arrInc = (incNum && incNum !== '-') ? incNum.split(',') : [];
+          let incisosHTML = '';
+          
+          if (arrInc.length > 0) {
+             let incLista = '';
+             arrInc.forEach(inc => {
+                let iClean = limparNum(inc);
+                if (!iClean) return;
+                let iDesc = null;
+                for (var i=0; i<_tabLeis.length; i++) {
+                   var t = _tabLeis[i];
+                   if (limparNum(t.numeroLei) === leiL && limparNum(t.artigo) === artL && limparNum(t.inciso) === iClean) {
+                       iDesc = t.tipificacaoCompleta || t.categoria || null;
+                       break;
+                   }
+                }
+                if (iDesc) {
+                   incLista += '<div style="display:flex; align-items:center; justify-content:center; gap: 8px; font-size: 11px; color: var(--text-secondary); margin-bottom:4px;">' + 
+                     '<div style="background: rgba(var(--danger-rgb, 255,59,48), 0.1); border: 1px solid var(--danger, #ff3b30); border-radius: 6px; padding: 2px 6px; color: var(--danger, #ff3b30); font-weight:800;">' + inc.trim() + '</div>' + 
+                     '<span>' + (iDesc) + '</span></div>';
+                } else {
+                   incLista += '<div style="display:flex; align-items:center; justify-content:center; gap: 8px; font-size: 11px; color: var(--text-secondary); margin-bottom:4px;">' + 
+                     '<div style="background: rgba(var(--danger-rgb, 255,59,48), 0.1); border: 1px solid var(--danger, #ff3b30); border-radius: 6px; padding: 2px 6px; color: var(--danger, #ff3b30); font-weight:800;">' + inc.trim() + '</div>' + 
+                     '<span>⚠ Não cadastrado na aba Leis (Lei ' + (leiNum) + ', Art. ' + (artNum) + ', Inc. ' + (inc.trim()) + ')</span></div>';
+                }
+             });
+             
+             incisosHTML = '<div style="background: rgba(255,59,48, 0.08); border: 1px solid rgba(255,59,48, 0.2); border-radius: 12px; padding: 12px; text-align:center; margin-top:8px;">' +
+                           '<div style="font-size: 11px; font-weight: 800; color: #ff3b30; text-transform: uppercase; margin-bottom: 8px;">' +
+                           '⚖ INCISOS APLICADOS (' + arrInc.length + ')</div>' + incLista + '</div>';
+          }
+          
+          let tDiplomaText = tDiploma ? (tDiploma).toUpperCase() : (leiNum && leiNum !== '-' ? 'LEI ' + (leiNum) : 'LEI NÃO ESPECIFICADA');
+          let boxMainHtml = '';
+          
+          if (artNum && artNum !== '-') {
+             boxMainHtml = '<div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; margin-top: 10px; text-align:center;">' +
+               '<div style="font-weight: 800; font-size: 11px; color: var(--text-primary); text-transform: uppercase;">📖 ART. ' + (artNum) + ' — ' + tDiplomaText + '</div>' +
+               '<div style="font-weight: 700; font-size: 13px; color: var(--text-primary); margin: 6px 0;">' + (tArtigo ? (tArtigo) : crInfo.nome) + '</div>' +
+               (tParagrafo ? '<div style="font-size: 11px; color: ' + crInfo.cor + '; font-weight: 700;">' + (parNum) + ': ' + (tParagrafo) + '</div>' : '') +
+               '</div>';
+          }
+          
+          return boxMainHtml + incisosHTML;
+      })(lei, artigo, paragrafo, inciso, crInfo);
+
+      htmlTipificacoes += '<div class="proc-tipificacao-box" style="border-left-color:' + crInfo.cor + '; margin-top:8px; padding-bottom:12px;">' +
+        '<div style="text-align:center; margin-bottom: 12px;">' +
+        '<strong><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px;color:' + crInfo.cor + ';">gavel</span> TIPIFICAÇÃO PENAL' + (blocosLeis.length > 1 ? ' ' + (idx+1) : '') + '</strong>' +
+        '<br><span style="font-size:11px;color:var(--text-muted);">Lei: ' + lei + ' | Art: ' + artigo + ' | Par: ' + paragrafo + ' | Inc: ' + inciso + '</span>' +
+        '</div>' +
+        stylizedTipificacao +
+        '</div>';
+    });
+
     let pena = extP(infoRaw, 'Pena restante:');
     if (!isValido(pena)) pena = extP(infoRaw, 'Prazo Mínimo da Internação:');
     if (!isValido(pena)) pena = "-";
@@ -150,15 +284,14 @@
       htmlSintese = '<div style="margin-top:12px;padding:12px;background:var(--bg-deep);box-shadow:var(--neu-pressed-sm);border-radius:8px;font-size:11px;color:var(--text-secondary);line-height:1.5;"><strong style="color:var(--danger);display:flex;align-items:center;gap:4px;margin-bottom:4px;"><span class="material-symbols-outlined" style="font-size:14px;">description</span> SÍNTESE</strong>' + escapeHTML(extras.sintese) + '</div>';
     }
 
-
     // Bloco de Área (CPI/BPM/CIA/DP) para o endereço principal
     let htmlArea = '';
     if (alvo.cpi || alvo.bpmArea || alvo.ciaArea || alvo.dpArea) {
       if (alvo.cpi === "FORA DO ESTADO") {
         htmlArea = '<div style="display:flex;margin-top:8px;"><span style="font-size:10px;font-weight:800;color:var(--danger);padding:4px 10px;background:rgba(255,59,48,0.15);border-radius:4px;border:1px solid rgba(255,59,48,0.3);">FORA DO ESTADO</span></div>';
       } else {
-        htmlArea = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;padding:8px 10px;background:var(--bg-depressed);border-radius:8px;border-left:3px solid var(--accent);">';
-        if (alvo.cpi) htmlArea += '<span style="font-size:10px;font-weight:800;color:var(--accent);padding:4px 8px;background:var(--accent)15;border-radius:4px;border:1px solid var(--accent);">COMANDO: ' + alvo.cpi + '</span>';
+        htmlArea = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;padding:8px 10px;background:var(--bg-depressed);border-radius:8px;border-left:3px solid var(--brand-red);">';
+        if (alvo.cpi) htmlArea += '<span style="font-size:10px;font-weight:800;color:var(--brand-red);padding:4px 8px;background:rgba(169,32,32,0.12);border-radius:4px;border:1px solid var(--brand-red);">COMANDO: ' + alvo.cpi + '</span>';
         if (alvo.bpmArea) htmlArea += '<span style="font-size:10px;font-weight:700;color:var(--text-primary);padding:4px 8px;background:rgba(255,255,255,0.08);border-radius:4px;border:1px solid rgba(255,255,255,0.2);">BTL: ' + alvo.bpmArea + '</span>';
         if (alvo.ciaArea) htmlArea += '<span style="font-size:10px;font-weight:700;color:var(--text-primary);padding:4px 8px;background:rgba(255,255,255,0.08);border-radius:4px;border:1px solid rgba(255,255,255,0.2);">CIA: ' + alvo.ciaArea + '</span>';
         if (alvo.dpArea) htmlArea += '<span style="font-size:10px;font-weight:700;color:var(--text-secondary);padding:4px 8px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.1);">DP: ' + alvo.dpArea + '</span>';
@@ -167,50 +300,52 @@
       }
     }
 
-    let tituloDisplay = extras.titulo || "MANDADO DE PRISÃO";
-
-    // Conferência (Admin only)
-    let htmlConferir = '';
-    if (usuarioLogado && usuarioLogado.perfil === "Admin") {
-      htmlConferir = '<button class="neu-btn" style="width:100%;margin-top:8px;padding:10px;font-size:11px;" onclick="conferirMandadoClick(\'' + alvo.mandado.replace(/'/g, "\\'") + '\', this)"><span class="material-symbols-outlined" style="font-size:16px;">verified</span> MARCAR COMO CONFERIDO</button>';
-    }
+    let tituloDisplay = alvo.tipoMandado || extras.titulo || "MANDADO DE PRISÃO";
+    let dataSistemaDisplay = alvo.data || "N/A";
+    let dataBnmpDisplay = alvo.dataBNMP || extras.emissao || "N/A";
+    
+    // Tentado e Doméstica
+    let condicaoCrimeEspecial = '';
+    let isDomestica = infoRaw.toUpperCase().includes('VIOLÊNCIA DOMÉSTICA: SIM') || (extras.violenciaDomestica === true);
+    let isTentado = infoRaw.toUpperCase().includes('TENTADO: SIM');
+    if (isDomestica) condicaoCrimeEspecial += '<span style="background:var(--warning);color:#1a1a1a;padding:4px 8px;border-radius:4px;font-weight:900;font-size:10px;">V. DOMÉSTICA</span>';
+    if (isTentado) condicaoCrimeEspecial += '<span style="background:#dc2626;color:white;padding:4px 8px;border-radius:4px;font-weight:900;font-size:10px;">TENTADO</span>';
+    if (condicaoCrimeEspecial) condicaoCrimeEspecial = '<div style="display:flex;gap:8px;justify-content:center;margin-top:8px;">' + condicaoCrimeEspecial + '</div>';
 
     let chkProcurado = (!alvo.status || alvo.status.toUpperCase() !== 'CAPTURADO') ? 'checked' : '';
     let chkCapturado = (alvo.status && alvo.status.toUpperCase() === 'CAPTURADO') ? 'checked' : '';
 
-    return '<div class="card-container">' +
+    let statusBadge = chkCapturado 
+        ? '<div style="font-size:16px;font-weight:900;letter-spacing:2px;color:#1a9c54;text-align:center;margin-bottom:12px;margin-top:8px;"><span class="material-symbols-outlined" style="vertical-align:middle;font-size:20px;">check_circle</span> CAPTURADO</div>'
+        : '<div style="font-size:16px;font-weight:900;letter-spacing:2px;color:var(--brand-red);text-align:center;margin-bottom:12px;margin-top:8px;"><span class="material-symbols-outlined" style="vertical-align:middle;font-size:20px;">warning</span> PROCURADO</div>';
+
+    return '<div class="card-container card-container--highlight" style="--card-highlight-color:' + crimeInfo.cor + ';">' +
       '<div class="card-header-full">' +
-
-        // Linha 0: Data do documento BNMP (topo discreto)
-        (extras.emissao ? '<div style="font-size:9px;color:var(--text-muted);text-align:center;font-family:var(--font-mono);letter-spacing:0.5px;opacity:0.7;margin-bottom:8px;">Inserido no BNMP em: ' + (function(){ var m = (extras.emissao || '').match(/(\d{2}[\/\.]\d{2}[\/\.]\d{4})/); return m ? m[1].replace(/\./g,'/') : extras.emissao; })() + '</div>' : '') +
-
-        // Linha 1: Tipo do mandado + Crime (mesma faixa)
-        '<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;">' +
-          '<div style="font-size:11px;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;color:var(--text-primary);padding:5px 14px;background:rgba(255,255,255,0.06);border-radius:99px;border:1px solid rgba(255,255,255,0.1);">' + tituloDisplay + '</div>' +
-          '<div class="crime-badge" style="background:' + crimeInfo.cor + ';color:white;margin:0;">' +
-            '<svg width="18" height="18" viewBox="0 0 16 16" fill="none" style="flex-shrink:0;"><g fill="white">' + crimeInfo.svgPath + '</g></svg> ' + crimeInfo.nome +
-          '</div>' +
+        // Linha 1: Status (PROCURADO/CAPTURADO)
+        statusBadge +
+        // Linha 2: Badges de crime juntos
+        '<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+          badgesHtml +
         '</div>' +
-
-        // Linha 2: Número do mandado (centralizado, destaque mono, maior)
-        '<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin:10px 0 8px;overflow:hidden;">' +
-          '<span class="material-symbols-outlined" style="font-size:15px;color:var(--accent);opacity:0.7;flex-shrink:0;">gavel</span>' +
-          '<span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--accent);letter-spacing:0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + alvo.mandado + '</span>' + btnCopiar(alvo.mandado) +
-        '</div>' +
-
-        // Linha 3: Validade com destaque visual
-        '<div class="data-badge ' + validadeClass + '" style="margin-bottom:8px;text-align:center;">Documento válido até: <span class="data-valor" style="font-weight:900;">' + dataPura + '</span>' +
+        // Linha 3: Tipo do mandado
+        '<div style="font-size:11px;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;color:white;text-shadow:0 1px 3px rgba(0,0,0,0.8);padding:5px 14px;background:rgba(0,0,0,0.3);border-radius:99px;border:1px solid rgba(255,255,255,0.1);display:inline-block;">' + tituloDisplay + '</div>' +
+        // Linha 4: Número do mandado
+        '<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin:10px 0 8px;overflow:hidden;background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:6px;display:inline-flex;">' +
+          '<span class="material-symbols-outlined" style="font-size:15px;color:white;opacity:0.9;flex-shrink:0;">gavel</span>' +
+          '<span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:white;letter-spacing:0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.8);">' + alvo.mandado + '</span>' + btnCopiar(alvo.mandado) +
+        '</div><br>' +
+        // Linha 5: Validade
+        '<div class="data-badge ' + validadeClass + '" style="margin-bottom:8px;text-align:center;background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:6px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);display:inline-block;">MANDADO VÁLIDO ATÉ: <span class="data-valor" style="font-weight:900;">' + dataPura + '</span>' +
           (validadeTexto ? '<span class="validade-restante" style="margin-left:8px;">' + validadeTexto + '</span>' : '') +
         '</div>' +
-
-        // Linha 4: Datas secundárias (lançamento + conferência, discretas)
-        '<div style="display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:6px;">' +
-          '<div style="font-size:9px;color:var(--text-muted);padding:2px 8px;background:rgba(255,255,255,0.03);border-radius:4px;">Lançamento: <strong>' + (alvo.dataLancamento || '—') + '</strong></div>' +
-          '<div style="font-size:9px;color:var(--text-muted);padding:2px 8px;background:rgba(255,255,255,0.03);border-radius:4px;">Conferido: <strong>' + (alvo.dataConferencia || '—') + '</strong></div>' +
+        // Linha Especial
+        condicaoCrimeEspecial +
+        // Linha 6: Datas
+        '<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px;">' +
+          '<div style="font-size:10px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);padding:4px 10px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:6px;box-shadow:var(--neu-raised-sm);">Data Sistema: <strong style="color:var(--brand-red);">' + dataSistemaDisplay + '</strong></div>' +
+          '<div style="font-size:10px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);padding:4px 10px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:6px;box-shadow:var(--neu-raised-sm);">Data BNMP: <strong style="color:var(--brand-blue);">' + dataBnmpDisplay + '</strong></div>' +
         '</div>' +
-
       '</div>' +
-
       '<div class="grid-wrapper">' +
         '<div class="coluna-tatica-1">' +
           '<div class="bloco-perfil">' +
@@ -219,7 +354,7 @@
               '<span class="rg-alvo">RG: ' + (alvo.rg || 'N/A') + btnCopiar(alvo.rg) + '</span>' +
             '</div>' +
             '<div class="perfil-row">' +
-              '<div class="nome-alvo-destaque">' + alvo.nome + btnCopiar(alvo.nome) + '</div>' +
+              '<div class="nome-alvo-destaque" style="color: white;"><span style="color: white;">NOME: ' + alvo.nome + '</span>' + btnCopiar(alvo.nome) + '</div>' +
               '<div class="perfil-inner-row">' +
                 (function() {
                   let link = alvo.fotoUrl;
@@ -231,7 +366,6 @@
               '</div>' +
             '</div>' +
           '</div>' +
-
           '<div class="bloco-enderecos">' +
             '<div class="enderecos-wrapper-box">' +
               '<div class="enderecos-box-title"><span class="material-symbols-outlined" style="color:var(--danger);">location_on</span> ENDEREÇOS MAPEADOS ' + tooltip('enderecos') + '</div>' +
@@ -248,7 +382,6 @@
             '</div>' +
           '</div>' +
         '</div>' +
-
         '<div class="coluna-tatica-2">' +
           '<div class="bloco-processo">' +
             '<div class="info-processual-box">' +
@@ -256,7 +389,7 @@
               '<div class="proc-item-centro"><strong>Nº do processo:</strong><br><span class="proc-numero-destaque">' + nProcesso + btnCopiar(nProcesso) + '</span></div>' +
               '<div class="proc-item-comum"><strong>Órgão:</strong> ' + orgao + '</div>' +
               '<div class="proc-item-comum"><strong>Espécie:</strong> ' + especie + '</div>' +
-              '<div class="proc-tipificacao-box" style="border-left-color:' + crimeInfo.cor + ';"><strong><svg width="14" height="14" viewBox="0 0 16 16" style="vertical-align:middle;margin-right:4px;"><g fill="' + crimeInfo.cor + '">' + crimeInfo.svgPath + '</g></svg> TIPIFICAÇÃO PENAL</strong><br>Lei: ' + lei + ' | Art: ' + artigo + ' | Par: ' + paragrafo + '</div>' +
+              htmlTipificacoes +
               '<div class="proc-pena-regime-box"><strong><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">balance</span> SENTENÇA / EXECUÇÃO</strong><div class="proc-pena-linha"><span class="proc-pena-label">Tempo:</span><span class="proc-pena-valor">' + pena + '</span></div><div class="proc-pena-linha"><span class="proc-pena-label">Regime:</span><span class="proc-pena-valor">' + regime + '</span></div></div>' +
               htmlSintese +
             '</div>' +
@@ -264,23 +397,37 @@
 
           '<div class="bloco-form">' +
             '<div class="form-atualizacao">' +
-              '<div class="label-instrucao"><span class="material-symbols-outlined" style="font-size:18px;">edit_note</span> ÁREA INTERATIVA ' + tooltip('area_interativa') + '</div>' +
-              '<div style="font-size:11px;color:var(--text-muted);margin:6px 0 12px;text-align:center;">Mude o status se o indivíduo foi capturado:</div>' +
-              '<div class="status-toggle">' +
-                '<input type="radio" id="st_proc_' + alvo.mandado + '" name="status_' + alvo.mandado + '" value="Procurado" ' + chkProcurado + '>' +
-                '<label for="st_proc_' + alvo.mandado + '">PROCURADO</label>' +
-                '<input type="radio" id="st_cap_' + alvo.mandado + '" name="status_' + alvo.mandado + '" value="Capturado" ' + chkCapturado + '>' +
-                '<label for="st_cap_' + alvo.mandado + '">CAPTURADO</label>' +
+              '<div class="label-instrucao"><span class="material-symbols-outlined" style="font-size:18px;">edit_note</span> ATUALIZAÇÃO DO ALVO ' + tooltip('area_interativa') + '</div>' +
+              '<div style="font-size:11px;color:var(--text-muted);margin:6px 0 12px;text-align:center;">Marque se o alvo foi capturado na operação:</div>' +
+              '<div style="display:flex; justify-content:center; margin-bottom: 16px;">' +
+                '<input type="checkbox" id="st_cap_' + alvo.mandado + '" name="status_' + alvo.mandado + '" value="Capturado" ' + chkCapturado + ' style="display:none;" onchange="this.nextElementSibling.style.background = this.checked ? \'var(--success)\' : \'var(--bg-lighter)\'; this.nextElementSibling.style.color = this.checked ? \'white\' : \'var(--text-secondary)\';">' +
+                '<label for="st_cap_' + alvo.mandado + '" style="display:inline-block; padding:10px 20px; background:' + (chkCapturado ? 'var(--success)' : 'var(--bg-lighter)') + '; color:' + (chkCapturado ? 'white' : 'var(--text-secondary)') + '; border-radius:8px; font-weight:800; cursor:pointer; font-size:12px; border:1px solid rgba(255,255,255,0.1); transition: 0.3s;"><span class="material-symbols-outlined" style="vertical-align:middle; font-size:16px; margin-right:4px;">back_hand</span> ALVO CAPTURADO</label>' +
               '</div>' +
-              '<textarea id="obs_' + alvo.mandado + '" placeholder="Informações de inteligência...">' + escapeHTML(alvo.observacoes) + '</textarea>' +
-              htmlConferir +
+              '<div style="margin-top: 16px;">' +
+                '<div style="font-size:11px;font-weight:700;color:var(--text-primary);margin-bottom:6px;">Coloque informações aqui (Observações):</div>' +
+                '<textarea id="obs_' + alvo.mandado + '" placeholder="Ex: Visto na rua X as 10h; Reside com a mãe; Veículo placa ABC-1234..."></textarea>' +
+                '<button type="button" class="btn-salvar" style="width:100%; margin-top:8px; padding:10px; font-size:11px; background:var(--brand-red);" onclick="enviarAtualizacao(\'' + alvo.mandado.replace(/'/g, "\\'") + '\', this)">SALVAR INFORMAÇÕES</button>' +
+                '<div id="hist-container-' + alvo.mandado.replace(/'/g, "") + '" style="margin-top: 8px; display: none; background: rgba(0,0,0,0.2); border-radius: 8px; padding: 8px; border: 1px solid var(--border);"></div>' +
+                '<button type="button" class="neu-btn" style="width:100%;margin-top:8px;padding:10px;font-size:11px;" onclick="verHistoricoObservacoes(\'' + alvo.mandado.replace(/'/g, "\\'") + '\', this)"><span class="material-symbols-outlined" style="font-size:16px;">history</span> VER HISTÓRICO DE OBSERVAÇÕES</button>' +
+              '</div>' +
+              '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
       '</div>' +
 
-      '<div class="sticky-footer">' +
-        '<button class="btn-salvar" onclick="enviarAtualizacao(\'' + alvo.mandado.replace(/'/g, "\\'") + '\', this)">SALVAR LOG DA ABORDAGEM</button>' +
+      '<div class="sticky-footer" style="display:flex; flex-direction:column; gap:6px;">' +
+        ((typeof usuarioAdmin !== 'undefined' && (usuarioAdmin === true || (typeof usuarioColaborador !== 'undefined' && usuarioColaborador === true))) ? 
+          '<button class="btn-salvar" style="width:100%;background:linear-gradient(135deg, var(--brand-blue), #2563eb);margin-bottom:4px;font-size:11px;letter-spacing:0.5px;padding:10px;" onclick="abrirModalEdicaoMandado(\'' + alvo.mandado.replace(/'/g, "\\'") + '\')"><span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;margin-right:4px;">edit_note</span> EDITAR MANDADO (ADMIN/COLAB)</button>' 
+        : '') +
+        '<div style="font-size:11px;font-weight:700;color:white;text-align:center;display:flex;align-items:center;justify-content:center;gap:4px;">' +
+          'Conferência BNMP ' + tooltip('bnmp') +
+        '</div>' +
+        (alvo.bnmpConferencia ? '<div style="font-size:10px;color:var(--text-secondary);font-weight:bold;text-align:center;margin-bottom:4px;background:rgba(255,255,255,0.05);padding:4px;border-radius:4px;"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;color:var(--success);">person_check</span> ' + escapeHTML(alvo.bnmpConferencia) + '</div>' : '') +
+        '<div style="display:flex;gap:8px;">' +
+          '<button class="btn-salvar" style="flex:1;background:var(--success);padding:12px 8px;font-size:12px;letter-spacing:0;" onclick="salvarStatusBNMP(\'' + alvo.mandado.replace(/'/g, "\\'") + '\', \'ATIVO BNMP\', this)">ATIVO BNMP</button>' +
+          '<button class="btn-salvar" style="flex:1;background:var(--danger);padding:12px 8px;font-size:12px;letter-spacing:0;" onclick="salvarStatusBNMP(\'' + alvo.mandado.replace(/'/g, "\\'") + '\', \'BAIXADO BNMP\', this)">BAIXADO BNMP</button>' +
+        '</div>' +
       '</div>' +
     '</div>';
   }
@@ -289,9 +436,10 @@
      MÓDULO 6: CLASSIFICAÇÃO DE CRIMES (SVG ICONS)
      ================================================================ */
   function classificarCrime(infoProc) {
-    const texto = (infoProc || '').toUpperCase();
+    let texto = (infoProc || '').toUpperCase();
+    texto = texto.replace(/VIOL[ÊE]NCIA DOM[É|E]STICA:\s*(?:N\/?A|NÃO|NAO|-)/g, '');
+    const isValido = function(val) { if (!val) return false; return !["", "-", "N/A", "NÃO INFORMADO"].includes(val.trim().toUpperCase()); };
 
-    // Gerar SVG de texto para dentro do pino (viewBox 16x16)
     function gerarSvgTexto(label) {
       var tam = 9;
       if (label.length <= 2) tam = 12;
@@ -302,23 +450,118 @@
       return '<text x="8" y="11.5" text-anchor="middle" font-size="' + tam + '" font-weight="900" font-family="Impact,Arial Black,sans-serif" fill="white" letter-spacing="0.3">' + label + '</text>';
     }
 
+    // Helper: Extrair de infoProc
+    const extP = function(txt, lbl) { const r = new RegExp(lbl + '\\s*([^|\\n]+)', 'i'); const m = txt.match(r); return m ? m[1].trim() : "N/A"; };
+    var leiExtr = extP(infoProc, 'Lei:'); var artExtr = extP(infoProc, 'Artigo:'); 
+    var parExtr = extP(infoProc, 'Parágrafo:'); var incExtr = extP(infoProc, 'Inciso:');
+    var espExtr = extP(infoProc, 'Espécie(?: de| da) (?:prisão|Internação):');
+    if (espExtr === "N/A") espExtr = extP(infoProc, 'Espécie de prisão:');
+
+    // Limpar Artigo se estiver sujo com §
+    if (leiExtr !== "N/A" && leiExtr.toLowerCase().includes("art")) {
+      let mA = leiExtr.match(/art\.?\s*([^,§|]+)/i); if (mA && !isValido(artExtr)) artExtr = mA[1].trim();
+      leiExtr = leiExtr.split(/(?:,|\s)\s*art\.?/i)[0].trim();
+    }
+    // Pós-processamento: detectar incisos embutidos no parágrafo (dados legados como "§ 2º, I")
+    if (isValido(parExtr) && (!isValido(incExtr) || incExtr === 'N/A')) {
+      var _mInc = parExtr.match(/^(§\s*\d+[ºª°]?(?:-[A-Z])?)[\s,]+([IVXLCDM]{1,5}(?:\s*,\s*[IVXLCDM]{1,5})*)$/);
+      if (_mInc) {
+        parExtr = _mInc[1].trim();
+        incExtr = _mInc[2].trim();
+      }
+    }
+
+    // Helper: Romar numerais
+    function expandirIncisos(textoInciso) {
+      if (!isValido(textoInciso)) return [];
+      var txt = textoInciso.toUpperCase().replace(/\./g, '').replace(/º/g, '');
+      var tokens = txt.split(/[\s,;e]+/);
+      var romanos = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII","XIII","XIV","XV"];
+      var idxMap = {};
+      for(var i=0; i<romanos.length; i++) idxMap[romanos[i]] = i;
+      var expandidos = [];
+      var iToken = 0;
+      while(iToken < tokens.length) {
+        if(tokens[iToken] === "A" || tokens[iToken] === "AO") {
+          if(iToken > 0 && iToken + 1 < tokens.length) {
+            var start = tokens[iToken-1]; var end = tokens[iToken+1];
+            if(idxMap[start] !== undefined && idxMap[end] !== undefined) {
+               var sIdx = idxMap[start]; var eIdx = idxMap[end];
+               if(sIdx < eIdx) { for(var j = sIdx + 1; j <= eIdx; j++) expandidos.push(romanos[j]); }
+            }
+          }
+          iToken++;
+        } else {
+          if(idxMap[tokens[iToken]] !== undefined) expandidos.push(tokens[iToken]);
+          iToken++;
+        }
+      }
+      return expandidos;
+    }
+
+    var incisosExtraidos = expandirIncisos(incExtr);
+
     // 1. Tentar match pela tabela de leis do banco
     if (window._tabelaLeis && window._tabelaLeis.length > 0) {
+      // Helper: limpar número (remove pontos, espaços, traços não-semânticos)
+      var limparNum = function(v) { return (v || '').replace(/\./g, '').replace(/\s/g, '').trim(); };
+      
       for (var i = 0; i < window._tabelaLeis.length; i++) {
         var lei = window._tabelaLeis[i];
-        if (!lei.palavrasChave) continue;
-        var keywords = lei.palavrasChave.toUpperCase().split('|');
-        for (var k = 0; k < keywords.length; k++) {
-          var kw = keywords[k].trim();
-          if (kw && texto.includes(kw)) {
-            var pt = lei.pinoTexto || lei.categoria.substring(0, 5).toUpperCase();
-            return {
-              nome: lei.categoria,
-              cor: lei.cor || '#6b7280',
-              pinoTexto: pt,
-              svgPath: gerarSvgTexto(pt),
-              naoClassificado: false
-            };
+        var categUp = (lei.categoria || '').toUpperCase();
+        var ptUp = (lei.pinoTexto || '').toUpperCase();
+        var pt = (lei.pinoTexto || categUp.substring(0, 5)).toUpperCase();
+        
+        // 1A. Regra especial: Prisão Civil / Pensão alimentícia
+        if (categUp === "PENSÃO" || ptUp === "PENSÃO" || categUp === "CIVIL") {
+           if (espExtr.toUpperCase().includes("CIVIL") || espExtr.toUpperCase().includes("CÍVEL") || espExtr.toUpperCase().includes("ALIMENTO")) {
+              return { nome: lei.categoria, cor: lei.cor || '#2563eb', pinoTexto: pt, svgPath: gerarSvgTexto(pt), tipificacaoCompleta: lei.tipificacaoCompleta, naoClassificado: false };
+           }
+        }
+
+        // 1B. Match estruturado por Lei + Artigo (+ Par + Inciso)
+        var leiNum = limparNum(lei.numeroLei);
+        var leiExtrNum = limparNum(leiExtr);
+        var artLimpo = limparNum(lei.artigo);
+        var artExtrLimpo = limparNum(artExtr);
+        
+        if (leiNum && artLimpo && leiExtrNum && artExtrLimpo) {
+           // Match de Lei: comparação numérica limpa (2848 === 2848)
+           var mLei = leiExtrNum === leiNum || leiExtrNum.includes(leiNum) || leiNum.includes(leiExtrNum);
+           // Match de Artigo: comparação exata ou com sufixo (-A, etc.)
+           var mArt = artExtrLimpo === artLimpo || artExtr.replace(/\s/g,'') === lei.artigo.replace(/\s/g,'');
+           
+           if (mLei && mArt) {
+              // Verifica parágrafo (se a tabela exige parágrafo específico)
+              var mPar = true;
+              if (isValido(lei.paragrafo)) {
+                 if (lei.paragrafo.toUpperCase() === "CAPUT") {
+                    mPar = !isValido(parExtr) || parExtr.toUpperCase().includes("CAPUT");
+                 } else {
+                    var parTabLimpo = limparNum(lei.paragrafo);
+                    mPar = isValido(parExtr) && (parExtr.includes(lei.paragrafo) || parExtr.includes("§" + parTabLimpo) || parExtr.includes("§ " + parTabLimpo) || limparNum(parExtr.replace(/[§ºª°]/g,'')).includes(parTabLimpo));
+                 }
+              }
+              // Verifica inciso (se a tabela exige inciso específico)
+              var mInc = true;
+              if (isValido(lei.inciso)) {
+                 mInc = incisosExtraidos.includes(lei.inciso.toUpperCase()) || (isValido(incExtr) && incExtr.toUpperCase().includes(lei.inciso.toUpperCase()));
+              }
+              
+              if (mPar && mInc) {
+                 return { nome: lei.categoria, cor: lei.cor || '#6b7280', pinoTexto: pt, svgPath: gerarSvgTexto(pt), tipificacaoCompleta: lei.tipificacaoCompleta, naoClassificado: false };
+              }
+           }
+        }
+
+        // 1C. Match legado por Palavras-Chave
+        if (lei.palavrasChave) {
+          var keywords = lei.palavrasChave.toUpperCase().split('|');
+          for (var k = 0; k < keywords.length; k++) {
+            var kw = keywords[k].trim();
+            if (kw && texto.includes(kw)) {
+              return { nome: lei.categoria, cor: lei.cor || '#6b7280', pinoTexto: pt, svgPath: gerarSvgTexto(pt), tipificacaoCompleta: lei.tipificacaoCompleta, naoClassificado: false };
+            }
           }
         }
       }
@@ -347,17 +590,17 @@
     for (var f = 0; f < fallback.length; f++) {
       for (var j = 0; j < fallback[f].kw.length; j++) {
         if (texto.includes(fallback[f].kw[j])) {
-          return { nome: fallback[f].nome, cor: fallback[f].cor, pinoTexto: fallback[f].pt, svgPath: gerarSvgTexto(fallback[f].pt), naoClassificado: false };
+          return { nome: fallback[f].nome, cor: fallback[f].cor, pinoTexto: fallback[f].pt, svgPath: gerarSvgTexto(fallback[f].pt), tipificacaoCompleta: null, naoClassificado: false };
         }
       }
     }
 
     // 3. Se não bateu com nada → NÃO CLASSIFICADO (alerta amarelo)
     if (texto.trim().length > 0) {
-      return { nome: 'Não Classificado', cor: '#f59e0b', pinoTexto: '???', svgPath: gerarSvgTexto('???'), naoClassificado: true };
+      return { nome: 'Não Classificado', cor: '#f59e0b', pinoTexto: '???', svgPath: gerarSvgTexto('???'), tipificacaoCompleta: null, naoClassificado: true };
     }
 
     // 4. Sem informação processual
-    return { nome: 'Outros', cor: '#6b7280', pinoTexto: 'CRIME', svgPath: gerarSvgTexto('CRIME'), naoClassificado: false };
+    return { nome: 'Outros', cor: '#6b7280', pinoTexto: 'CRIME', svgPath: gerarSvgTexto('CRIME'), tipificacaoCompleta: null, naoClassificado: false };
   }
 </script>
