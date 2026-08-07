@@ -3,7 +3,7 @@
      MÓDULO 1: VARIÁVEIS GLOBAIS E ESTADO
      ================================================================ */
   let mapaPrincipal;
-  let dadosMandados = [];
+  var dadosMandados = [];
   let listaMarcadores = [];
   let infoWindowAtiva = null;
   let usuarioLogado = null;
@@ -15,7 +15,7 @@
   let watchPositionId = null;
   let configsSistema = {};
   let secundariosVisiveis = {}; // { mandado: { markers: [], polylines: [] } }
-  let lastPendingCount = 0; // Para notificar novos cadastros
+  let lastPendingCount = -1; // Para notificar novos cadastros (-1 indica estado inicial)
   let _gpsResolvido = false; // Indica se o GPS já respondeu (sucesso ou falha)
   let _dadosCarregados = false; // Indica se os mandados já foram carregados do servidor
   let _semGpsJaExibiu = false; // Evita chamadas duplicadas de _tentarExibirSemGPS
@@ -29,12 +29,12 @@
   
   setInterval(() => {
     if (usuarioLogado && usuarioLogado.autorizado) {
-      // Se houve movimento na tela nos últimos 5 segundos
-      if ((Date.now() - timestampUltimaAtividade) < 5000) {
+      // Se houve movimento na tela nos últimos 15 segundos
+      if ((Date.now() - timestampUltimaAtividade) < 15000) {
         google.script.run.registrarHeartbeat();
       }
     }
-  }, 5000);
+  }, 15000);
 
   /* ================================================================
      MÓDULO 2: AUTENTICAÇÃO E INICIALIZAÇÃO
@@ -47,13 +47,11 @@
     google.script.run.withSuccessHandler(function(configs) {
       configsSistema = configs;
       aplicarConfigsDinamicas(configs);
-      if (lblStatus) lblStatus.innerText = "CREDENCIAIS VERIFICADAS. ENTRANDO NO SISTEMA...";
+      if (lblStatus) lblStatus.innerText = "VERIFICANDO PERMISSÕES DE ACESSO...";
       google.script.run.withSuccessHandler(avaliarAcessoSistema).verificarAcessoUsuario();
     }).obterConfiguracoesSimples();
   }
-
-  // Expõe iniciarMapa globalmente para o callback da API do Google Maps
-  window.iniciarMapa = iniciarMapa;
+  window._iniciarMapaReal = iniciarMapa;
 
   function avaliarAcessoSistema(resposta) {
     const boxCarregando = document.getElementById("seg-estado-carregando");
@@ -61,22 +59,69 @@
     const lblStatus = document.getElementById("txt-status-carregamento");
 
     if (resposta.autorizado) {
+      iniciarMonitoramentoSessaoAtiva();
       if (lblStatus) lblStatus.innerText = "CARREGANDO OS MANDADOS E O MAPA...";
       usuarioLogado = resposta;
       perfilUsuario = resposta.perfil || '';
 
+      // Inicializar Firebase (após autenticação confirmada)
+      if (typeof window.initFirebase === 'function') {
+        try { window.initFirebase(); } catch(e) { console.warn('[Firebase] Init falhou:', e.message); }
+      }
+
+      // Nota: telaSeguranca será escondida apenas após o carregamento dos mandados no JS_Map.html
+
       // Atualizar sidebar
-      document.getElementById('sidebarNomeEl').textContent = resposta.nome;
-      document.getElementById('sidebarPerfilEl').textContent = resposta.perfil;
+      var nomeEl = document.getElementById('sidebarNomeEl');
+      var perfilEl = document.getElementById('sidebarPerfilEl');
+      var emailEl = document.getElementById('sidebarEmailEl');
+
+      if (nomeEl) nomeEl.textContent = resposta.nome || 'Operador';
+      if (emailEl) {
+        emailEl.textContent = resposta.email || '';
+        emailEl.title = resposta.email || '';
+      }
+
+      if (perfilEl) {
+        var perfText = (resposta.perfil || 'Operador').trim();
+        perfilEl.textContent = perfText;
+        var perfNorm = perfText.toLowerCase();
+
+        if (perfNorm.includes('admin')) {
+          perfilEl.style.color = '#fca5a5';
+          perfilEl.style.background = 'rgba(239, 68, 68, 0.2)';
+          perfilEl.style.border = '1px solid rgba(239, 68, 68, 0.6)';
+          perfilEl.style.boxShadow = '0 0 8px rgba(239, 68, 68, 0.3)';
+        } else if (perfNorm.includes('colaborador')) {
+          perfilEl.style.color = '#93c5fd';
+          perfilEl.style.background = 'rgba(59, 130, 246, 0.2)';
+          perfilEl.style.border = '1px solid rgba(59, 130, 246, 0.6)';
+          perfilEl.style.boxShadow = '0 0 8px rgba(59, 130, 246, 0.3)';
+        } else if (perfNorm.includes('patrulheiro')) {
+          perfilEl.style.color = '#6ee7b7';
+          perfilEl.style.background = 'rgba(16, 185, 129, 0.2)';
+          perfilEl.style.border = '1px solid rgba(16, 185, 129, 0.6)';
+          perfilEl.style.boxShadow = '0 0 8px rgba(16, 185, 129, 0.3)';
+        } else {
+          perfilEl.style.color = '#fde047';
+          perfilEl.style.background = 'rgba(245, 158, 11, 0.2)';
+          perfilEl.style.border = '1px solid rgba(245, 158, 11, 0.6)';
+          perfilEl.style.boxShadow = '0 0 8px rgba(245, 158, 11, 0.3)';
+        }
+      }
+
       if (resposta.fotoUrl) {
         document.getElementById('sidebarAvatarContainer').innerHTML =
           '<img src="' + resposta.fotoUrl + '" style="width:100%;height:100%;object-fit:cover;border-radius:50%;" />';
-        const hdrImg = document.getElementById('userPhotoHeader');
-        if (hdrImg) { hdrImg.src = resposta.fotoUrl; hdrImg.style.display = 'block'; }
       }
 
       // Controle de Botões de Importar PDF (Admin ou Colaborador)
       const perfilNormalizado = (resposta.perfil || "").trim().toLowerCase();
+      window.perfilNormalizado = perfilNormalizado;
+      if (perfilNormalizado === "admin") {
+        let optSemEnd = document.getElementById("optSemEnderecoLista");
+        if(optSemEnd) optSemEnd.style.display = "block";
+      }
       if (perfilNormalizado !== "patrulheiro") {
         const btnNovo = document.getElementById("btnAdminNovo");
         if (btnNovo) btnNovo.style.display = "flex";
@@ -89,58 +134,24 @@
         });
       }
 
-      // Controle de visibilidade do Ranking
-      const gamifAtiva = configsSistema['gamif_ativo'] === 'SIM' || configsSistema['gamif_ativo'] === true || configsSistema['gamif_ativo'] === 'true';
-      const rankingPublico = configsSistema['ranking_publico'] === 'SIM' || configsSistema['ranking_publico'] === true || configsSistema['ranking_publico'] === 'true';
-      
-      const btnRanking = document.getElementById("nav-btn-ranking");
-      if (btnRanking) {
-        if (!gamifAtiva) {
-          btnRanking.style.display = 'none';
-        } else {
-          if (perfilNormalizado === "patrulheiro" && !rankingPublico) {
-            btnRanking.style.display = 'none';
-          } else {
-            btnRanking.style.display = 'flex';
-          }
-        }
-      }
-
       if (perfilNormalizado === "admin") {
         const btnMenu = document.getElementById("btnMenuAdmin");
         const btnAjustes = document.getElementById("btnMenuAjustes");
         const btnConferencia = document.getElementById("btnMenuConferencia");
-        const btnAuditoria   = document.getElementById("btnMenuAuditoria");
+        const btnAuditoria = document.getElementById("btnMenuAuditoria");
         if (btnMenu) btnMenu.style.display = "block";
         if (btnAjustes) btnAjustes.style.display = "block";
         if (btnConferencia) btnConferencia.style.display = "block";
-        if (btnAuditoria)   btnAuditoria.style.display   = "block";
+        if (btnAuditoria) btnAuditoria.style.display = "block";
 
         // Badge auditoria: carregar em background após dados prontos (4s)
         setTimeout(function() { if (typeof carregarAuditoria === 'function') carregarAuditoria(); }, 4000);
-
-        // Polling para novos cadastros (a cada 2 min)
-        setInterval(function() {
-          google.script.run.withSuccessHandler(function(usuarios) {
-            if (!usuarios) return;
-            const pendentesAtual = usuarios.filter(function(u) { return u.status === 'PENDENTE'; }).length;
-            if (pendentesAtual > lastPendingCount) {
-              const diferenca = pendentesAtual - lastPendingCount;
-              chamarAlertaTatico("NOVO CADASTRO", diferenca + " novo(s) operador(es) pendente(s) aguardando aprovação.", "OK", function() {
-                mostrarView('view-usuarios');
-                carregarListaUsuarios();
-              });
-            }
-            lastPendingCount = pendentesAtual;
-            const badge = document.getElementById('badgeUsuariosPendentes');
-            if (badge) {
-              if (pendentesAtual > 0) { badge.textContent = pendentesAtual; badge.style.display = 'inline-block'; }
-              else { badge.style.display = 'none'; }
-            }
-          }).obterTodosUsuarios();
-        }, 120000);
+        
+        // Polling para novos cadastros de operadores (executar imediatamente e a cada 15 segundos)
+        checarCadastrosPendentesAdmin();
+        setInterval(checarCadastrosPendentesAdmin, 15000);
       }
-
+      
       if (typeof mapaPrincipal === 'undefined' || !mapaPrincipal) {
         configurarEstruturaMapa();
       } else {
@@ -159,25 +170,41 @@
       }
     }
     else if (resposta.status === "NAO_CADASTRADO") {
+      pararPollingCredenciais();
       if (boxCarregando) boxCarregando.style.display = "none";
       document.getElementById("lbl-email-google").innerText = resposta.email;
       document.getElementById("seg-estado-cadastro").style.display = "block";
     }
     else {
       if (boxCarregando) boxCarregando.style.display = "none";
-      document.getElementById("msg-seg-titulo").innerText = resposta.status === "PENDENTE" ? "⏳ AGUARDANDO APROVAÇÃO" : "❌ ACESSO BLOQUEADO";
-      document.getElementById("msg-seg-texto").innerText = resposta.motivo;
-      document.getElementById("seg-estado-mensagem").style.display = "block";
+      if (resposta.status === "PENDENTE") {
+        mostrarMensagemPendente({
+          email: resposta.email || (document.getElementById("lbl-email-google") ? document.getElementById("lbl-email-google").innerText : "")
+        });
+      } else {
+        pararPollingCredenciais();
+        const iconeMsg = document.getElementById("msg-seg-icone");
+        if (iconeMsg) {
+          iconeMsg.innerText = "lock";
+          iconeMsg.style.color = "var(--danger)";
+          iconeMsg.style.animation = "none";
+        }
+        document.getElementById("msg-seg-titulo").innerText = "❌ ACESSO BLOQUEADO";
+        document.getElementById("msg-seg-texto").innerText = resposta.motivo || "Seu acesso está bloqueado no sistema. Entre em contato com o administrador.";
+        const boxInfo = document.getElementById("box-info-aguardando");
+        if (boxInfo) boxInfo.style.display = "none";
+        document.getElementById("seg-estado-mensagem").style.display = "block";
+      }
     }
   }
 
-  // Expõe avaliarAcessoSistema globalmente
-  window.avaliarAcessoSistema = avaliarAcessoSistema;
-
   function reiniciarVerificacaoSeguranca() {
-
+    pararPollingCredenciais();
     document.getElementById("seg-estado-mensagem").style.display = "none";
     document.getElementById("seg-estado-cadastro").style.display = "none";
+    if (document.getElementById("seg-estado-whatsapp")) {
+      document.getElementById("seg-estado-whatsapp").style.display = "none";
+    }
     document.getElementById("seg-estado-carregando").style.display = "block";
     document.getElementById("tela-seguranca").style.display = "flex";
     google.script.run.withSuccessHandler(avaliarAcessoSistema)
@@ -191,7 +218,7 @@
   /* ================================================================
      MÓDULO 7: OPERAÇÕES DE REDE E CADASTRO
      ================================================================ */
-  function chamarAlertaTatico(titulo, mensagem, tipo, callback) {
+  function chamarAlertaTatico(titulo, mensagem, tipo, callback, isWide) {
     const modal = document.getElementById("modalAlertaTatico");
     document.getElementById("alerta-titulo").innerText = titulo;
     document.getElementById("alerta-mensagem").innerHTML = mensagem;
@@ -199,155 +226,85 @@
     containerBotoes.innerHTML = "";
     const alertBox = modal.querySelector(".alert-modal-box");
 
-    if (tipo === "CONFIRMAR") {
-      if (alertBox) alertBox.style.borderTopColor = "var(--warning)";
+    if (alertBox) {
+      if (isWide) {
+        alertBox.classList.add("wide");
+      } else {
+        alertBox.classList.remove("wide");
+      }
+    }
+
+    if (tipo === "CONFIRMAR" || tipo === "EXCLUIR") {
+      if (alertBox) alertBox.style.borderTopColor = tipo === "EXCLUIR" ? "var(--danger)" : "var(--warning)";
       const btnSim = document.createElement("button"); btnSim.className = "btn-alerta-sim";
-      btnSim.innerText = "SIM, CONFIRMAR";
+      btnSim.innerText = tipo === "EXCLUIR" ? "EXCLUIR ENDEREÇO" : "SIM, CONFIRMAR";
+      if (tipo === "EXCLUIR") btnSim.style.background = "var(--danger)";
       btnSim.onclick = function() { modal.style.display = "none"; if(callback) callback(true); };
       const btnNao = document.createElement("button"); btnNao.className = "btn-alerta-nao";
-      btnNao.innerText = "NÃO, CANCELAR";
+      btnNao.innerText = "CANCELAR";
       btnNao.onclick = function() { modal.style.display = "none"; if(callback) callback(false); };
       containerBotoes.appendChild(btnSim); containerBotoes.appendChild(btnNao);
     } else {
       if (alertBox) alertBox.style.borderTopColor = "var(--accent)";
       const btnOk = document.createElement("button"); btnOk.className = "btn-alerta-ok";
-      btnOk.innerText = "CIENTE";
+      btnOk.innerText = tipo || "CIENTE";
       btnOk.onclick = function() { modal.style.display = "none"; if(callback) callback(); };
       containerBotoes.appendChild(btnOk);
     }
-    modal.style.display = "flex";
+    if (modal) {
+      modal.style.zIndex = "9999999";
+      modal.style.display = "flex";
+    }
   }
 
   function enviarAtualizacao(mandado, btnElement) {
-    const originalText = btnElement.innerText;
-    const originalBg = btnElement.style.background || '';
-    btnElement.innerHTML = '<span class="material-symbols-outlined" style="animation:spin 1s linear infinite;vertical-align:middle;font-size:14px;margin-right:4px;">sync</span> Sincronizando...';
-    btnElement.disabled = true;
+    btnElement.innerText = "Sincronizando..."; btnElement.disabled = true;
     const radios = document.getElementsByName("status_" + mandado);
     let novoStatus = "Procurado";
     for(let i=0;i<radios.length;i++) { if(radios[i].checked) { novoStatus = radios[i].value; break; } }
-    const novaObs = document.getElementById("obs_" + mandado).value.trim();
+    const textarea = document.getElementById("obs_" + mandado);
+    const novaObs = textarea ? textarea.value : "";
 
     google.script.run
       .withSuccessHandler(function(res) {
         chamarAlertaTatico("ATUALIZAÇÃO", res.mensagem, "OK");
-        
-        btnElement.innerHTML = '✅ Concluído!';
-        btnElement.style.background = 'var(--success)';
-        const elObs = document.getElementById("obs_" + mandado);
-        if (elObs) elObs.value = "";
-        
-        setTimeout(function() {
-          btnElement.innerText = originalText;
-          btnElement.style.background = originalBg;
-          btnElement.disabled = false;
-        }, 3000);
-        
+        if(infoWindowAtiva) infoWindowAtiva.close();
+        btnElement.innerText = "SALVAR INFORMAÇÕES";
+        btnElement.disabled = false;
+        if(textarea) textarea.value = "";
         const alvoLocal = dadosMandados.find(function(d) { return d.mandado === mandado; });
-        if(alvoLocal) {
-          alvoLocal.status = novoStatus;
-          if (novaObs && novaObs.length > 0) {
-             alvoLocal.observacoes = novaObs;
-             const hoje = new Date();
-             const dia = hoje.getDate().toString().padStart(2,'0');
-             const mes = (hoje.getMonth()+1).toString().padStart(2,'0');
-             const ano = hoje.getFullYear().toString().slice(-2);
-             const hora = hoje.getHours().toString().padStart(2,'0');
-             const min = hoje.getMinutes().toString().padStart(2,'0');
-             const dataHoje = dia + '/' + mes + '/' + ano + ' - ' + hora + ':' + min;
-             let usuario = (typeof usuarioLogado !== 'undefined' && usuarioLogado && usuarioLogado.nome) ? usuarioLogado.nome : 'Usuário';
-             let objObs = { data: dataHoje, usuario: usuario, texto: novaObs };
-             let hist = [];
-             try { hist = JSON.parse(alvoLocal.historicoObservacoes || "[]"); } catch(e){}
-             hist.push(objObs);
-             alvoLocal.historicoObservacoes = JSON.stringify(hist);
-             alvoLocal.observacoes = "";
-          }
-        }
+        if(alvoLocal) { alvoLocal.status = novoStatus; }
         filtrarNoMapa();
       })
-      .withFailureHandler(function(erro) {
-        chamarAlertaTatico("ERRO NA ATUALIZAÇÃO", "Falha ao sincronizar: " + erro, "OK");
-        btnElement.innerText = originalText;
-        btnElement.style.background = originalBg;
+      .withFailureHandler(function(err) {
+        chamarAlertaTatico("ERRO", err.message, "OK");
+        btnElement.innerText = "SALVAR INFORMAÇÕES";
         btnElement.disabled = false;
       })
       .atualizarRegistro(mandado, novoStatus, novaObs);
   }
 
-  function salvarStatusBNMP(mandado, statusBnmp, btnElement) {
-    let originalText = btnElement.innerText;
-    btnElement.innerText = "⏳ Sincronizando..."; btnElement.disabled = true;
-
+  function conferirMandadoClick(mandado, btn) {
+    btn.innerText = "⏳ Conferindo..."; btn.disabled = true;
     google.script.run.withSuccessHandler(function(res) {
-      chamarAlertaTatico("BNMP", res.mensagem, "OK");
-      btnElement.innerText = "✅ " + statusBnmp;
-      
-      const alvoLocal = dadosMandados.find(function(d) { return d.mandado === mandado; });
-      if(alvoLocal) {
-        let dataHoje = new Date().toLocaleString('pt-BR');
-        let usuario = (typeof usuarioLogado !== 'undefined' && usuarioLogado && usuarioLogado.nome) ? usuarioLogado.nome : 'Usuário';
-        alvoLocal.bnmpConferencia = statusBnmp + " em " + dataHoje + " por " + usuario;
+      chamarAlertaTatico("CONFERÊNCIA", res.mensagem, "OK");
+      btn.innerText = "✅ CONFERIDO"; btn.disabled = true;
+      const alvo = dadosMandados.find(function(d) { return d.mandado === mandado; });
+      if (alvo) {
+        const hoje = new Date();
+        const dia = hoje.getDate().toString().padStart(2,'0');
+        const mes = (hoje.getMonth()+1).toString().padStart(2,'0');
+        const ano = hoje.getFullYear();
+        const hora = hoje.getHours().toString().padStart(2,'0');
+        const min = hoje.getMinutes().toString().padStart(2,'0');
+        const seg = hoje.getSeconds().toString().padStart(2,'0');
+        alvo.dataConferencia = dia + '/' + mes + '/' + ano + ' ' + hora + ':' + min + ':' + seg;
       }
-    }).withFailureHandler(function(erro) {
-      chamarAlertaTatico("ERRO BNMP", "Falha ao sincronizar: " + erro, "OK");
-      btnElement.innerText = originalText; btnElement.disabled = false;
-    }).salvarConferenciaBNMP(mandado, statusBnmp);
+    }).conferirMandado(mandado);
   }
 
-  function verHistoricoObservacoes(mandado, btnElement) {
-    console.log("verHistoricoObservacoes executada. mandado recebido:", mandado);
-    try {
-      console.log("Procurando mandado na lista dadosMandados...", dadosMandados);
-      const alvoLocal = dadosMandados.find(function(d) { return d.mandado === mandado; });
-      console.log("Resultado da busca pelo mandado:", alvoLocal);
-      
-      if (!alvoLocal) {
-        chamarAlertaTatico("ERRO DE BUSCA", "Mandado " + mandado + " não encontrado na memória local.", "FECHAR");
-        return;
-      }
-      
-      if (!alvoLocal.historicoObservacoes) {
-        chamarAlertaTatico("HISTÓRICO VAZIO", "Nenhuma observação registrada para este mandado.", "FECHAR");
-        return;
-      }
-
-      let hist = [];
-      try { 
-        hist = JSON.parse(alvoLocal.historicoObservacoes || "[]"); 
-      } catch(e){
-         chamarAlertaTatico("ERRO DE PARSE", "Erro ao tentar ler o histórico: " + e.message, "FECHAR");
-         return;
-      }
-
-      if (!Array.isArray(hist) || hist.length === 0) {
-        chamarAlertaTatico("HISTÓRICO VAZIO", "Nenhuma observação registrada.", "FECHAR");
-        return;
-      }
-
-      let html = '<div style="text-align:left; max-height: 250px; overflow-y: auto; padding-right: 4px; margin-bottom: 8px;" class="custom-scrollbar">';
-      hist.reverse().forEach((h) => {
-        let textoEscapado = "";
-        try { textoEscapado = window.escapeHTML ? window.escapeHTML(h.texto) : String(h.texto); } catch(e) { textoEscapado = String(h.texto); }
-        let obsFormatada = '<strong>' + (h.data || 'Sem data') + ' - ' + (h.usuario || 'Desconhecido') + '</strong><br>' + textoEscapado;
-        html += '<div style="margin-bottom: 6px; padding: 6px; background: rgba(255,255,255,0.05); border-left: 3px solid var(--brand-red); border-radius: 4px;">';
-        html += '<div style="font-size:11px; color:var(--text-primary); white-space: pre-wrap; line-height: 1.4;">' + obsFormatada + '</div>';
-        html += '</div>';
-      });
-      html += '</div>';
-
-      if (btnElement && btnElement.previousElementSibling && btnElement.previousElementSibling.id && btnElement.previousElementSibling.id.startsWith("hist-container-")) {
-          btnElement.previousElementSibling.innerHTML = html;
-          btnElement.previousElementSibling.style.display = "block";
-          btnElement.style.display = "none";
-          return;
-      }
-
-      chamarAlertaTatico("HISTÓRICO DE OBSERVAÇÕES", html, "FECHAR");
-    } catch(err) {
-      console.error("Erro CRÍTICO capturado no catch:", err);
-      chamarAlertaTatico("ERRO CRÍTICO", "O botão falhou com o seguinte erro:<br>" + err.message, "FECHAR");
-    }
+  function normalizarArea(txt) {
+    if (!txt) return "";
   }
 
   function conferirMandadoClick(mandado, btn) {
@@ -373,240 +330,372 @@
     if (!txt) return "";
     return String(txt)
       .toLowerCase()
+      .replace(/^cpm-/i, "")
+      .replace(/cpm-cpa/gi, "cpa")
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "") // remove acentos
-      .replace(/\./g, "")             // remove pontos
-      .replace(/\s+/g, "")            // remove todos os espaços
-      .replace(/[\-\_\/]/g, "")       // remove traços, sublinhados, barras
-      .replace(/^0+/, "")             // remove zeros à esquerda (ex: "02º" -> "2º")
-      .trim();
+      .replace(/[^a-z0-9]/gi, "")      // deixa APENAS letras e números (remove º, ª, -, espaço, etc)
+      .replace(/^0+/, "");             // remove zeros à esquerda (ex: "02" -> "2")
   }
+
+  // Cache de resultados de containsLocation por coordenada + filtros ativos
+  var _cachePoligono = {};
+  var _ultimosFiltrosArea = '';
 
   function filtrarNoMapa() {
     const termoNome = document.getElementById('filtroNome').value.toLowerCase();
     const filtroCPI = document.getElementById('filtroCPI').value;
-    const filtroCPM = (() => { const el = document.getElementById('filtroCPMMobile'); return el ? el.value : 'TODOS'; })();
     const filtroBPM = document.getElementById('filtroBatalhao').value;
     const filtroCIA = document.getElementById('filtroCIA').value;
     const elDP = document.getElementById('filtroDP');
     const filtroDP = elDP ? elDP.value : 'TODOS';
     
-    // Filtros avançados (modal/drawer) - Suporte aos IDs mobile
-    const elCrime = document.getElementById('filtroCrime') || document.getElementById('filtroCrimeMobile');
+    // Filtros avançados (drawer)
+    const elCrime = document.getElementById('filtroCrime');
     const filtroCrime = elCrime ? elCrime.value : 'TODOS';
-    const elArtigo = document.getElementById('filtroArtigo') || document.getElementById('filtroArtigoMobile');
-    const filtroArtigo = elArtigo ? elArtigo.value : 'TODOS';
-    const elParagrafo = document.getElementById('filtroParagrafo') || document.getElementById('filtroParagrafoMobile');
-    const filtroParagrafo = elParagrafo ? elParagrafo.value : 'TODOS';
-    const elInciso = document.getElementById('filtroInciso') || document.getElementById('filtroIncisoMobile');
-    const filtroInciso = elInciso ? elInciso.value : 'TODOS';
-    
-    const elSexo = document.getElementById('filtroSexo') || document.getElementById('filtroSexoMobile');
+    const elSexo = document.getElementById('filtroSexo');
     const filtroSexo = elSexo ? elSexo.value : 'TODOS';
-    const elTipoMandado = document.getElementById('filtroTipoMandado') || document.getElementById('filtroTipoMandadoMobile');
+    const elTipoMandado = document.getElementById('filtroTipoMandado');
     const filtroTipo = elTipoMandado ? elTipoMandado.value : 'TODOS';
-
-    // Filtro de validade por prazo (chips ≤N dias)
-    const elValidDias = document.getElementById('filtroValidadeDias');
-    const validDiasStr = elValidDias ? elValidDias.value : '';
-    const validDias = validDiasStr ? parseInt(validDiasStr) : null;
-    const hoje = new Date();
-    hoje.setHours(0,0,0,0);
-    const prazoLimite = validDias ? new Date(hoje.getTime() + validDias * 86400000) : null;
     
-    const filtrados = dadosMandados.filter(function(alvo) {
-      // Busca ampliada: nome, mandado, tipificação/crime
-      const nomeAlvo = (alvo.nome || '').toLowerCase();
-      const mandadoAlvo = (alvo.mandado || '').toLowerCase();
-      const infoAlvo = (alvo.infoProcessuais || '').toLowerCase();
-      const matchNome = !termoNome || nomeAlvo.includes(termoNome) || mandadoAlvo.includes(termoNome) || infoAlvo.includes(termoNome);
-      
-      // Filtros de Área (Principal ou Secundários)
-      let matchPrincipal = false;
-      const normFiltroCPI = normalizarArea(filtroCPI);
-      const normFiltroCPM = normalizarArea(filtroCPM);
-      const normFiltroBPM = normalizarArea(filtroBPM);
-      const normFiltroCIA = normalizarArea(filtroCIA);
-      const normFiltroDP = normalizarArea(filtroDP);
+    // Limpar cache de polígono se os filtros de área mudaram
+    var chaveArea = filtroCPI + '|' + filtroBPM + '|' + filtroCIA + '|' + filtroDP;
+    if (chaveArea !== _ultimosFiltrosArea) {
+      _cachePoligono = {};
+      _ultimosFiltrosArea = chaveArea;
+    }
 
-      // CPI inclui tanto CPI quanto CPM (um campo no banco)
-      const cpiAlvoNorm = normalizarArea(alvo.cpiArea);
-      let okCPI = filtroCPI === 'TODOS' || cpiAlvoNorm === normFiltroCPI || alvo.semEndereco;
-      let okCPM = filtroCPM === 'TODOS' || cpiAlvoNorm === normFiltroCPM || alvo.semEndereco;
-      let okBPM = filtroBPM === 'TODOS' || normalizarArea(alvo.bpmArea) === normFiltroBPM || normalizarArea(alvo.batalhao) === normFiltroBPM || alvo.semEndereco;
-      let okCIA = filtroCIA === 'TODOS' || normalizarArea(alvo.ciaArea) === normFiltroCIA || alvo.semEndereco;
-      let okDP = filtroDP === 'TODOS' || normalizarArea(alvo.dpArea) === normFiltroDP || alvo.semEndereco;
-      if (okCPI && okCPM && okBPM && okCIA && okDP) matchPrincipal = true;
+    const filtrados = [];
+    dadosMandados.forEach(function(alvo) {
+      if (termoNome) {
+        const nomeAlvo = (alvo.nome || '').toLowerCase();
+        const mandadoAlvo = (alvo.mandado || '').toLowerCase();
+        const infoAlvo = (alvo.infoProcessuais || '').toLowerCase();
+        const rgAlvo = (alvo.rg || '').toLowerCase();
+        const cpfAlvo = (alvo.cpf || '').replace(/\D/g, '');
+        const termoSemMascara = termoNome.replace(/\D/g, '');
+        const apelidoAlvo = (alvo.apelido || alvo.cunha || (alvo.extras && alvo.extras.alcunha) || '').toLowerCase();
 
-      let matchSecundario = false;
-      if (filtroCPI !== 'TODOS' || filtroCPM !== 'TODOS' || filtroBPM !== 'TODOS' || filtroCIA !== 'TODOS' || filtroDP !== 'TODOS') {
-        try {
-          const listaSec = JSON.parse(alvo.geodataSecundarios || '[]');
-          for (let i = 0; i < listaSec.length; i++) {
-            let sec = listaSec[i];
-            let secOkCPI = filtroCPI === 'TODOS' || normalizarArea(sec.cpi) === normFiltroCPI;
-            let secOkCPM = filtroCPM === 'TODOS' || normalizarArea(sec.cpi) === normFiltroCPM;
-            let secOkBPM = filtroBPM === 'TODOS' || normalizarArea(sec.batalhao) === normFiltroBPM;
-            let secOkCIA = filtroCIA === 'TODOS' || normalizarArea(sec.cia) === normFiltroCIA;
-            let secOkDP = filtroDP === 'TODOS' || normalizarArea(sec.delegacia || sec.dpArea) === normFiltroDP;
-            if (secOkCPI && secOkCPM && secOkBPM && secOkCIA && secOkDP) {
-              matchSecundario = true;
-              break;
+        let crimeMatch = false;
+        if (typeof classificarCrime === 'function') {
+          const crInfo = classificarCrime(alvo.infoProcessuais || '');
+          if (crInfo) {
+            if (crInfo.nome && crInfo.nome.toLowerCase().includes(termoNome)) crimeMatch = true;
+            if (crInfo.artigo && String(crInfo.artigo).toLowerCase().includes(termoNome)) crimeMatch = true;
+            if (crInfo.todosCrimes) {
+              crInfo.todosCrimes.forEach(function(c) {
+                if (c.nome && c.nome.toLowerCase().includes(termoNome)) crimeMatch = true;
+                if (c.artigo && String(c.artigo).toLowerCase().includes(termoNome)) crimeMatch = true;
+              });
             }
           }
-        } catch(e) {}
-      }
+        }
 
-      const matchArea = (matchPrincipal || matchSecundario);
+        const matchNome = nomeAlvo.includes(termoNome) ||
+                          mandadoAlvo.includes(termoNome) ||
+                          infoAlvo.includes(termoNome) ||
+                          rgAlvo.includes(termoNome) ||
+                          apelidoAlvo.includes(termoNome) ||
+                          crimeMatch ||
+                          (termoSemMascara && termoSemMascara.length >= 3 && cpfAlvo.includes(termoSemMascara));
+
+        if (!matchNome) return;
+      }
       
-      // Filtro Crime e Subfiltros
+      // Filtro Crime
       var matchCrime = true;
+      var crimeForcado = null;
       if (filtroCrime !== 'TODOS') {
-        var crimeAlvo = typeof classificarCrime === 'function' ? classificarCrime(alvo.infoProcessuais || '') : {nome:''};
-        matchCrime = (crimeAlvo.nome === filtroCrime);
-      }
-      
-      var matchArtigo = true;
-      if (filtroArtigo !== 'TODOS') {
-        var aRegex = new RegExp('Artigo:\\s*([^|\\n]+)', 'i');
-        var aMatch = (alvo.infoProcessuais || '').match(aRegex);
-        matchArtigo = aMatch && aMatch[1].trim().toUpperCase() === filtroArtigo.toUpperCase();
-      }
+        var crimeAlvo = classificarCrime(alvo.infoProcessuais || '');
+        var fCrimeUp = filtroCrime.trim().toUpperCase();
+        var isBuscandoNaoClassificado = fCrimeUp.includes('NÃO CLASSIFICADO') || fCrimeUp.includes('NAO CLASSIFICADO');
 
-      var matchParagrafo = true;
-      if (filtroParagrafo !== 'TODOS') {
-        var pRegex = new RegExp('Parágrafo:\\s*([^|\\n]+)', 'i');
-        var pMatch = (alvo.infoProcessuais || '').match(pRegex);
-        matchParagrafo = pMatch && pMatch[1].trim().toUpperCase() === filtroParagrafo.toUpperCase();
-      }
+        function ehNaoClassificadoObj(obj) {
+          if (!obj) return false;
+          if (obj.naoClassificado === true) return true;
+          var n = String(obj.nome || '').toUpperCase();
+          return n.includes('NÃO CLASSIFICADO') || n.includes('NAO CLASSIFICADO') || n === 'OUTROS' || n === 'NÃO IDENTIFICADO' || n === 'NAO IDENTIFICADO';
+        }
 
-      var matchInciso = true;
-      if (filtroInciso !== 'TODOS') {
-        var iRegex = new RegExp('Inciso:\\s*([^|\\n]+)', 'i');
-        var iMatch = (alvo.infoProcessuais || '').match(iRegex);
-        matchInciso = iMatch && iMatch[1].trim().toUpperCase() === filtroInciso.toUpperCase();
+        function ehMesmoCrime(nome1, nome2) {
+          if (!nome1 || !nome2) return false;
+          var u1 = nome1.trim().toUpperCase();
+          var u2 = nome2.trim().toUpperCase();
+          return u1 === u2 || u1.indexOf(u2) !== -1 || u2.indexOf(u1) !== -1;
+        }
+
+        if (isBuscandoNaoClassificado) {
+          if (ehNaoClassificadoObj(crimeAlvo)) {
+            matchCrime = true;
+            crimeForcado = crimeAlvo;
+          } else if (crimeAlvo.todosCrimes && crimeAlvo.todosCrimes.length > 0) {
+            let foundNC = crimeAlvo.todosCrimes.find(function(c) { return ehNaoClassificadoObj(c); });
+            if (foundNC) {
+              matchCrime = true;
+              crimeForcado = foundNC;
+            } else {
+              matchCrime = false;
+            }
+          } else {
+            matchCrime = false;
+          }
+        } else {
+          if (ehMesmoCrime(crimeAlvo.nome, fCrimeUp)) {
+            matchCrime = true;
+          } else if (crimeAlvo.todosCrimes && crimeAlvo.todosCrimes.length > 0) {
+            let found = crimeAlvo.todosCrimes.find(function(c) { return ehMesmoCrime(c.nome, fCrimeUp); });
+            if (found) {
+              matchCrime = true;
+              crimeForcado = found;
+            } else {
+              matchCrime = false;
+            }
+          } else {
+            matchCrime = false;
+          }
+        }
       }
+      if (!matchCrime) return;
 
       // Filtro Sexo
       var matchSexo = true;
       if (filtroSexo !== 'TODOS') {
-        var valSexo = (alvo.sexo || '').toUpperCase().trim();
-        if (valSexo === 'M') valSexo = 'MASCULINO';
-        if (valSexo === 'F') valSexo = 'FEMININO';
-        matchSexo = (valSexo === filtroSexo);
+        var sAlvo = (alvo.sexo || '').trim().toUpperCase();
+        if (filtroSexo === 'MASCULINO') {
+          matchSexo = (sAlvo === 'M' || sAlvo === 'MASCULINO');
+        } else if (filtroSexo === 'FEMININO') {
+          matchSexo = (sAlvo === 'F' || sAlvo === 'FEMININO');
+        } else {
+          matchSexo = (sAlvo === filtroSexo);
+        }
       }
+      if (!matchSexo) return;
 
       // Filtro Tipo Mandado
       var matchTipo = true;
       if (filtroTipo !== 'TODOS') {
         var tituloMandado = '';
         try {
-          var extras = alvo.dadosExtrasJSON ? JSON.parse(alvo.dadosExtrasJSON) : {};
-          tituloMandado = (extras.titulo || alvo.mandado || '').toUpperCase();
+          var extras = alvo.dadosExtrasJSON || '{}';
+          var parsed = JSON.parse(extras);
+          tituloMandado = (parsed.titulo || '').toUpperCase();
         } catch(e) {}
-        matchTipo = tituloMandado.includes(filtroTipo.toUpperCase());
+        matchTipo = (tituloMandado === filtroTipo.toUpperCase());
+      }
+      if (!matchTipo) return;
+
+      // Se passou nos demais filtros, processamos as ÁREAS
+      const normFiltroCPI = normalizarArea(filtroCPI);
+      const normFiltroBPM = normalizarArea(filtroBPM);
+      const normFiltroCIA = normalizarArea(filtroCIA);
+      const normFiltroDP = normalizarArea(filtroDP);
+
+      let okCPI = (filtroCPI === 'TODOS' || normalizarArea(alvo.cpiArea) === normFiltroCPI || alvo.semEndereco);
+      let okBPM = (filtroBPM === 'TODOS' || normalizarArea(alvo.bpmArea) === normFiltroBPM || normalizarArea(alvo.batalhao) === normFiltroBPM || alvo.semEndereco);
+      let okCIA = (filtroCIA === 'TODOS' || normalizarArea(alvo.ciaArea) === normFiltroCIA || alvo.semEndereco);
+      let okDP = (filtroDP === 'TODOS' || normalizarArea(alvo.dpArea) === normFiltroDP || alvo.semEndereco);
+      
+      let temGooglePoligonos = (typeof google !== 'undefined' && google.maps && google.maps.geometry && google.maps.geometry.poly && window.poligonosInstancias && window.poligonosInstancias.length > 0);
+      let filtroAtivo = (filtroCPI !== 'TODOS' || filtroBPM !== 'TODOS' || filtroCIA !== 'TODOS' || filtroDP !== 'TODOS');
+
+      // Checagem geométrica para o endereço PRINCIPAL (apenas se o check textual preliminar NÃO passou)
+      let textMatchPrincipal = (okCPI && okBPM && okCIA && okDP);
+      if (!textMatchPrincipal && filtroAtivo && temGooglePoligonos && alvo.lat && alvo.lng && !alvo.semEndereco) {
+        var chavePonto = alvo.lat + ',' + alvo.lng;
+        let principalDentroDoPoligono = false;
+        
+        // Usar cache se já verificamos este ponto
+        if (_cachePoligono.hasOwnProperty(chavePonto)) {
+          principalDentroDoPoligono = _cachePoligono[chavePonto];
+        } else {
+          try {
+            const ptPrin = new google.maps.LatLng(Number(alvo.lat), Number(alvo.lng));
+            for (let pIdx = 0; pIdx < window.poligonosInstancias.length; pIdx++) {
+              const p = window.poligonosInstancias[pIdx];
+              let matchP_CPI = (filtroCPI === 'TODOS' || normalizarArea(p.cpi) === normFiltroCPI);
+              let matchP_BPM = (filtroBPM === 'TODOS' || normalizarArea(p.batalhao) === normFiltroBPM);
+              let matchP_CIA = (filtroCIA === 'TODOS' || normalizarArea(p.cia) === normFiltroCIA);
+              let matchP_DP = (filtroDP === 'TODOS' || normalizarArea(p.delegacia) === normFiltroDP);
+              
+              if (matchP_CPI && matchP_BPM && matchP_CIA && matchP_DP) {
+                // Rejeição ultra-rápida por Bounding Box antes de containsLocation
+                if (!p._boundsCalculado && p.polygon) {
+                  try {
+                    var b = new google.maps.LatLngBounds();
+                    p.polygon.getPath().forEach(function(ll) { b.extend(ll); });
+                    p._boundsCalculado = b;
+                  } catch(eB) {}
+                }
+                if (p._boundsCalculado && !p._boundsCalculado.contains(ptPrin)) {
+                  continue;
+                }
+                if (google.maps.geometry.poly.containsLocation(ptPrin, p.polygon)) {
+                  principalDentroDoPoligono = true;
+                  break;
+                }
+              }
+            }
+          } catch(ep) {}
+          _cachePoligono[chavePonto] = principalDentroDoPoligono;
+        }
+
+        if (principalDentroDoPoligono) {
+          okCPI = true; okBPM = true; okCIA = true; okDP = true;
+        } else {
+          okCPI = false; okBPM = false; okCIA = false; okDP = false;
+        }
       }
 
-      // Filtro de Validade por Prazo
-      var matchValidade = true;
-      if (prazoLimite) {
-        var validadeAlvoStr = (alvo.validade || '').trim();
-        var validadeAlvo = null;
-        var partsV = validadeAlvoStr.split(/[-\/]/);
-        if (partsV.length === 3) {
-          var dv = parseInt(partsV[0]), mv = parseInt(partsV[1]), yv = parseInt(partsV[2]);
-          if (!isNaN(dv) && !isNaN(mv) && !isNaN(yv)) {
-            validadeAlvo = new Date(yv, mv - 1, dv);
-            validadeAlvo.setHours(0,0,0,0);
-          }
-        }
-        if (!validadeAlvo || validadeAlvo > prazoLimite) matchValidade = false;
+      let adicionou = false;
+      let pushedPrincipal = false;
+
+      if (okCPI && okBPM && okCIA && okDP) {
+        delete alvo._isSecundarioClone;
+        alvo._crimeFiltradoForcado = crimeForcado;
+        filtrados.push(alvo);
+        adicionou = true;
+        pushedPrincipal = true;
       }
-      
-      return matchNome && matchArea && matchCrime && matchArtigo && matchParagrafo && matchInciso && matchSexo && matchTipo && matchValidade;
+
+      if (filtroCPI !== 'TODOS' || filtroBPM !== 'TODOS' || filtroCIA !== 'TODOS' || filtroDP !== 'TODOS') {
+        try {
+          let rawSecAuth = alvo.geodataSecundarios || alvo.secundarios || [];
+          let listaSec = Array.isArray(rawSecAuth) ? rawSecAuth : (typeof rawSecAuth === 'string' ? (function() { try { return JSON.parse(rawSecAuth); } catch(e) { return []; } })() : []);
+          for (let i = 0; i < listaSec.length; i++) {
+            let sec = listaSec[i];
+            
+            let aCPI = normalizarArea(sec.cpi || '');
+            let aBPM = normalizarArea(sec.batalhao || '');
+            let aCIA = normalizarArea(sec.cia || '');
+            let aDP = normalizarArea(sec.delegacia || sec.dpArea || '');
+
+             let secOkCPI = true;
+             let secOkBPM = true;
+             let secOkCIA = true;
+             let secOkDP = true;
+
+             let estaDentroDoFiltroFisicamente = false;
+
+             if (filtroAtivo && temGooglePoligonos && sec.lat && sec.lng) {
+                var chaveSecPonto = sec.lat + ',' + sec.lng;
+                if (_cachePoligono.hasOwnProperty(chaveSecPonto)) {
+                  estaDentroDoFiltroFisicamente = _cachePoligono[chaveSecPonto];
+                } else {
+                  try {
+                    const pt = new google.maps.LatLng(Number(sec.lat), Number(sec.lng));
+                    for (let j = 0; j < window.poligonosInstancias.length; j++) {
+                      const p = window.poligonosInstancias[j];
+                      let matchCPI = (filtroCPI === 'TODOS' || normalizarArea(p.cpi) === normFiltroCPI);
+                      let matchBPM = (filtroBPM === 'TODOS' || normalizarArea(p.batalhao) === normFiltroBPM);
+                      let matchCIA = (filtroCIA === 'TODOS' || normalizarArea(p.cia) === normFiltroCIA);
+                      let matchDP = (filtroDP === 'TODOS' || normalizarArea(p.delegacia) === normFiltroDP);
+                      
+                      if (matchCPI && matchBPM && matchCIA && matchDP) {
+                        if (google.maps.geometry.poly.containsLocation(pt, p.polygon)) {
+                          estaDentroDoFiltroFisicamente = true;
+                          break;
+                        }
+                      }
+                    }
+                  } catch(ePoly) {}
+                  _cachePoligono[chaveSecPonto] = estaDentroDoFiltroFisicamente;
+                }
+             }
+
+             if (filtroAtivo) {
+                if (temGooglePoligonos) {
+                   if (!estaDentroDoFiltroFisicamente) {
+                      secOkCPI = false;
+                      secOkBPM = false;
+                      secOkCIA = false;
+                      secOkDP = false;
+                   }
+                } else {
+                   // Fallback textual
+                   if (filtroCPI !== 'TODOS') {
+                      if (aCPI === "" || (aCPI !== normFiltroCPI && aCPI.indexOf(normFiltroCPI) === -1 && normFiltroCPI.indexOf(aCPI) === -1)) {
+                         secOkCPI = false;
+                      }
+                   }
+                   if (filtroBPM !== 'TODOS') {
+                      if (aBPM === "" || (aBPM !== normFiltroBPM && aBPM.indexOf(normFiltroBPM) === -1 && normFiltroBPM.indexOf(aBPM) === -1)) {
+                         secOkBPM = false;
+                      }
+                   }
+                   if (filtroCIA !== 'TODOS') {
+                      if (aCIA === "" || (aCIA !== normFiltroCIA && aCIA.indexOf(normFiltroCIA) === -1 && normFiltroCIA.indexOf(aCIA) === -1)) {
+                         secOkCIA = false;
+                      }
+                   }
+                   if (filtroDP !== 'TODOS') {
+                      if (aDP === "" || (aDP !== normFiltroDP && aDP.indexOf(normFiltroDP) === -1 && normFiltroDP.indexOf(aDP) === -1)) {
+                         secOkDP = false;
+                      }
+                   }
+                }
+             }
+
+            if (secOkCPI && secOkBPM && secOkCIA && secOkDP) {
+               if (sec.lat && sec.lng) {
+                 if (!pushedPrincipal && alvo.lat && alvo.lng) {
+                    delete alvo._isSecundarioClone;
+                    alvo._crimeFiltradoForcado = crimeForcado;
+                    filtrados.push(alvo);
+                    pushedPrincipal = true;
+                    adicionou = true;
+                 }
+                 delete alvo._isSecundarioClone;
+                 var clone = Object.assign({}, alvo);
+                 clone._crimeFiltradoForcado = crimeForcado;
+                 clone._isSecundarioClone = true;
+                 clone._secundarioEnd = sec.endereco;
+                 clone.lat = Number(sec.lat);
+                 clone.lng = Number(sec.lng);
+                 clone.cpiSecundario = sec.cpi;
+                 clone.bpmSecundario = sec.batalhao;
+                 clone.ciaSecundario = sec.cia;
+                 clone.dpSecundario = sec.delegacia || sec.dpArea;
+                 filtrados.push(clone);
+                 adicionou = true;
+               }
+            }
+          }
+        } catch(e) {}
+      }
+
+      if (!adicionou) {
+         delete alvo._isSecundarioClone;
+         delete alvo._crimeFiltradoForcado;
+      }
     });
     
+    window.dadosMandadosFiltrados = filtrados;
+    
     renderizarPinos(filtrados);
-    if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(filtrados);
+    if (typeof aplicarFiltrosLista === 'function') aplicarFiltrosLista(); else if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(filtrados);
     if (typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono(filtroCPI, filtroBPM, filtroCIA, filtroDP);
   }
 
-  function abrirGpsNativo(lat, lng) {
+  window.abrirGpsNativo = function(lat, lng) {
+    if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return;
     window.open('https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng + '&travelmode=driving', '_blank');
-  }
+  };
 
-  // ---- STREET VIEW COM TOAST E OCULTAÇÃO DE CARD ----
   function abrirStreetView(lat, lng) {
     if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) return;
+    
+    // Fechar o card/InfoWindow antes de abrir o Street View
+    if (typeof infoWindowAtiva !== 'undefined' && infoWindowAtiva) infoWindowAtiva.close();
 
-    // 1. Ocultar card com classe .card-disabled
-    var cardEl = document.querySelector('.card-container');
-    if (cardEl) cardEl.classList.add('card-disabled');
-
-    // 2. Mostrar toast com instrução
-    var toastExist = document.getElementById('toastStreetView');
-    if (toastExist) toastExist.remove();
-    var toast = document.createElement('div');
-    toast.id = 'toastStreetView';
-    toast.className = 'toast-streetview';
-    toast.innerHTML =
-      '<span class="material-symbols-outlined toast-icon">streetview</span>' +
-      '<span>Street View ativo — pressione <strong>ESC</strong> ou clique em Voltar para fechar</span>' +
-      '<button class="toast-close-btn" onclick="fecharStreetView()">✖ Voltar</button>';
-    document.body.appendChild(toast);
-
-    // 3. Listener ESC para fechar
-    document.addEventListener('keydown', _svEscHandler);
-
-    // 4. Garantir que o mapa está visível
-    var mapDiv = document.getElementById('mapa');
+    // Garantir que o mapa está visível
+    var mapDiv = document.getElementById('mapaPrincipal');
     if (mapDiv) mapDiv.style.display = 'block';
 
-    // 5. Abrir panorama
     var panorama = mapaPrincipal.getStreetView();
     panorama.setPosition({ lat: lat, lng: lng });
     panorama.setPov({ heading: 0, pitch: 0 });
     panorama.setVisible(true);
-
-    // 6. Listener nativo do Maps para detectar fechamento pelo botão ← do Street View
-    if (window._svVisibleListener) {
-      google.maps.event.removeListener(window._svVisibleListener);
-    }
-    window._svVisibleListener = panorama.addListener('visible_changed', function() {
-      if (!panorama.getVisible()) fecharStreetView();
-    });
   }
-
-  function fecharStreetView() {
-    // Remover toast
-    var toast = document.getElementById('toastStreetView');
-    if (toast) toast.remove();
-
-    // Restaurar card
-    var cardEl = document.querySelector('.card-container');
-    if (cardEl) cardEl.classList.remove('card-disabled');
-
-    // Remover listener ESC
-    document.removeEventListener('keydown', _svEscHandler);
-
-    // Remover listener do Maps
-    if (window._svVisibleListener) {
-      google.maps.event.removeListener(window._svVisibleListener);
-      window._svVisibleListener = null;
-    }
-
-    // Fechar panorama se ainda estiver visível
-    if (typeof mapaPrincipal !== 'undefined' && mapaPrincipal) {
-      var panorama = mapaPrincipal.getStreetView();
-      if (panorama && panorama.getVisible()) panorama.setVisible(false);
-    }
-  }
-
-  function _svEscHandler(e) {
-    if (e.key === 'Escape') fecharStreetView();
-  }
-
-
 
   function abrirModalSuperBloco() { document.getElementById('modalSuperBloco').style.display = 'flex'; }
 
@@ -641,7 +730,14 @@
   function geocodeEndereco(geocoder, endereco) {
     return new Promise(function(resolve) {
       geocoder.geocode({ 'address': endereco }, function(results, status) {
-        if (status === 'OK') {
+        if (status === 'OK' && results.length > 0) {
+          var locType = results[0].geometry.location_type;
+          if (locType === 'APPROXIMATE' || locType === 'GEOMETRIC_CENTER') {
+            console.log("[GEO-CLIENTE] Rejeitado por ser impreciso (" + locType + "): " + endereco);
+            resolve(null);
+            return;
+          }
+          
           var uf = "";
           var comps = results[0].address_components;
           for (var i = 0; i < comps.length; i++) {
@@ -653,7 +749,8 @@
           resolve({ 
             lat: results[0].geometry.location.lat(), 
             lng: results[0].geometry.location.lng(),
-            uf: uf
+            uf: uf,
+            enderecoFormatado: results[0].formatted_address
           });
         }
         else resolve(null);
@@ -662,47 +759,399 @@
   }
 
   /* ================================================================
-     MÓDULO 9: CADASTRO DE OPERADOR + WHATSAPP OPCIONAL
+     MÓDULO 9: SOLICITAÇÃO DE ACESSO + WHATSAPP OBRIGATÓRIO + POLLING
      ================================================================ */
-  function executarCadastroTatico() {
-    const nomeGuerra = document.getElementById("txt-nome-guerra").value.trim();
-    const batalhao = document.getElementById("txt-batalhao-cad").value.trim();
-    const email = document.getElementById("lbl-email-google").innerText;
-    if (!nomeGuerra || !batalhao) return chamarAlertaTatico("DADOS INCOMPLETOS", "Preencha o Nome de Guerra e a Unidade.", "OK");
+  window._dadosSolicitacaoPendente = null;
+  var _timerPollingCredenciais = null;
+
+  function executarSolicitacaoAcesso() {
+    const elNome = document.getElementById("txt-nome-guerra");
+    const elBatalhao = document.getElementById("txt-batalhao-cad");
+    const nomeGuerra = elNome ? elNome.value.trim() : "";
+    const batalhao = elBatalhao ? elBatalhao.value.trim() : "";
+    const email = document.getElementById("lbl-email-google") ? document.getElementById("lbl-email-google").innerText.trim() : "";
+
+    if (!nomeGuerra || !batalhao) {
+      return chamarAlertaTatico(
+        "PREENCHIMENTO OBRIGATÓRIO",
+        "Por favor, preencha o <b>Nome de Guerra</b> e a <b>Unidade</b> para solicitar acesso ao sistema.",
+        "OK"
+      );
+    }
+
+    window._dadosSolicitacaoPendente = {
+      nomeGuerra: nomeGuerra,
+      batalhao: batalhao,
+      email: email
+    };
 
     document.getElementById("seg-estado-cadastro").style.display = "none";
     document.getElementById("seg-estado-carregando").style.display = "block";
 
     google.script.run.withSuccessHandler(function(resultado) {
+      document.getElementById("seg-estado-carregando").style.display = "none";
       if (resultado.sucesso) {
-        // WhatsApp opcional
-        const whatsAtivo = configsSistema.whatsapp_ativo === 'true';
-        const numero = configsSistema.whatsapp_numero || '5519992693763';
-
-        if (whatsAtivo) {
-          chamarAlertaTatico("CADASTRO ENVIADO", "Deseja notificar o administrador via WhatsApp para agilizar a liberação?", "CONFIRMAR", function(confirma) {
-            if (confirma) {
-              const textoMsg = "Solicito liberação de acesso ao PAPA-ROMEUS.\n\n• Operador: " + nomeGuerra + "\n• Unidade: " + batalhao + "\n• Login: " + email;
-              window.open("https://api.whatsapp.com/send?phone=" + numero + "&text=" + encodeURIComponent(textoMsg), '_blank');
-            }
-            mostrarMensagemPendente();
-          });
-        } else {
-          mostrarMensagemPendente();
-        }
+        exibirTelaWhatsAppOBRIGATORIO();
       } else {
-        chamarAlertaTatico("FALHA", resultado.mensagem, "OK");
-        document.getElementById("seg-estado-carregando").style.display = "none";
+        chamarAlertaTatico("FALHA NA SOLICITAÇÃO", resultado.mensagem, "OK");
         document.getElementById("seg-estado-cadastro").style.display = "block";
       }
+    }).withFailureHandler(function(erro) {
+      document.getElementById("seg-estado-carregando").style.display = "none";
+      chamarAlertaTatico("ERRO DE CONEXÃO", "Não foi possível enviar a solicitação: " + erro.message, "OK");
+      document.getElementById("seg-estado-cadastro").style.display = "block";
     }).registrarNovoUsuario(nomeGuerra, batalhao);
   }
 
-  function mostrarMensagemPendente() {
+  function executarCadastroTatico() {
+    executarSolicitacaoAcesso();
+  }
+
+  function exibirTelaWhatsAppOBRIGATORIO() {
+    const dados = window._dadosSolicitacaoPendente || {};
+    const elNome = document.getElementById("lbl-whats-nome");
+    const elUnidade = document.getElementById("lbl-whats-unidade");
+    const elEmail = document.getElementById("lbl-whats-email");
+
+    if (elNome) elNome.innerText = dados.nomeGuerra || '—';
+    if (elUnidade) elUnidade.innerText = dados.batalhao || '—';
+    if (elEmail) elEmail.innerText = dados.email || '—';
+
+    document.getElementById("seg-estado-cadastro").style.display = "none";
     document.getElementById("seg-estado-carregando").style.display = "none";
-    document.getElementById("msg-seg-titulo").innerText = "⏳ SOLICITAÇÃO ENVIADA";
-    document.getElementById("msg-seg-texto").innerText = "Seu e-mail foi cadastrado como PENDENTE. Aguarde a validação do administrador.";
+    document.getElementById("seg-estado-mensagem").style.display = "none";
+    
+    const telaWhats = document.getElementById("seg-estado-whatsapp");
+    if (telaWhats) telaWhats.style.display = "block";
+  }
+
+  function enviarMensagemWhatsAppEAvancar() {
+    const dados = window._dadosSolicitacaoPendente || {};
+    const nome = dados.nomeGuerra || (document.getElementById("txt-nome-guerra") ? document.getElementById("txt-nome-guerra").value.trim() : "");
+    const unidade = dados.batalhao || (document.getElementById("txt-batalhao-cad") ? document.getElementById("txt-batalhao-cad").value.trim() : "");
+    const email = dados.email || (document.getElementById("lbl-email-google") ? document.getElementById("lbl-email-google").innerText.trim() : "");
+
+    const numero = (typeof configsSistema !== 'undefined' && configsSistema && configsSistema.whatsapp_numero) 
+                   ? configsSistema.whatsapp_numero 
+                   : '5519992693763';
+
+    const textoMsg = "Solicito liberação de acesso ao PAPA-ROMEUS.\n\n• Operador: " + nome + "\n• Unidade: " + unidade + "\n• E-mail: " + email;
+    window.open("https://api.whatsapp.com/send?phone=" + numero + "&text=" + encodeURIComponent(textoMsg), '_blank');
+
+    const telaWhats = document.getElementById("seg-estado-whatsapp");
+    if (telaWhats) telaWhats.style.display = "none";
+
+    mostrarMensagemPendente(dados);
+  }
+
+  function mostrarMensagemPendente(dados) {
+    if (!dados) dados = window._dadosSolicitacaoPendente || {};
+    
+    document.getElementById("seg-estado-carregando").style.display = "none";
+    document.getElementById("seg-estado-cadastro").style.display = "none";
+    if (document.getElementById("seg-estado-whatsapp")) {
+      document.getElementById("seg-estado-whatsapp").style.display = "none";
+    }
+
+    const icone = document.getElementById("msg-seg-icone");
+    const titulo = document.getElementById("msg-seg-titulo");
+    const texto = document.getElementById("msg-seg-texto");
+    const elNome = document.getElementById("lbl-msg-nome");
+    const elUnidade = document.getElementById("lbl-msg-unidade");
+    const elStatus = document.getElementById("lbl-msg-status");
+    const boxInfo = document.getElementById("box-info-aguardando");
+    const boxAvisoPublico = document.getElementById("box-aviso-publico-bnmp");
+
+    if (boxInfo) boxInfo.style.display = "flex";
+    if (boxAvisoPublico) boxAvisoPublico.style.display = "flex";
+
+    if (icone) {
+      icone.innerText = "hourglass_top";
+      icone.style.color = "var(--warning)";
+      icone.style.animation = "spin 3s linear infinite";
+    }
+    if (titulo) {
+      titulo.innerText = "AGUARDANDO AUTORIZAÇÃO";
+      titulo.style.color = "var(--text-primary)";
+    }
+    if (texto) {
+      texto.innerText = "Sua solicitação de acesso foi registrada com sucesso. Assim que o Administrador liberar seu cadastro, a verificação de credencial será realizada automaticamente.";
+    }
+
+    if (elNome) elNome.innerText = dados.nomeGuerra || (document.getElementById("txt-nome-guerra") ? document.getElementById("txt-nome-guerra").value.trim() : '—');
+    if (elUnidade) elUnidade.innerText = dados.batalhao || (document.getElementById("txt-batalhao-cad") ? document.getElementById("txt-batalhao-cad").value.trim() : '—');
+    if (elStatus) {
+      elStatus.innerText = "⏳ Validação Pendente";
+      elStatus.style.color = "var(--warning)";
+    }
+
     document.getElementById("seg-estado-mensagem").style.display = "block";
+
+    iniciarPollingCredenciais();
+  }
+
+  function iniciarPollingCredenciais() {
+    pararPollingCredenciais();
+    _timerPollingCredenciais = setInterval(function() {
+      google.script.run.withSuccessHandler(function(resposta) {
+        if (resposta && resposta.autorizado) {
+          pararPollingCredenciais();
+          avaliarAcessoSistema(resposta);
+        }
+      }).verificarAcessoUsuario();
+    }, 10000);
+  }
+
+  function pararPollingCredenciais() {
+    if (_timerPollingCredenciais) {
+      clearInterval(_timerPollingCredenciais);
+      _timerPollingCredenciais = null;
+    }
+  }
+
+  /* ── MONITORAMENTO DE SESSÃO ATIVA E REVOGAÇÃO IMEDIATA ───────── */
+  var _timerMonitoramentoSessao = null;
+
+  function iniciarMonitoramentoSessaoAtiva() {
+    pararMonitoramentoSessaoAtiva();
+    // Validação ativa a cada 30 segundos enquanto o usuário utiliza o sistema
+    _timerMonitoramentoSessao = setInterval(function() {
+      google.script.run.withSuccessHandler(function(checar) {
+        if (!checar || !checar.autorizado || checar.status === "BLOQUEADO" || checar.status === "INATIVO" || checar.status === "NAO_CADASTRADO") {
+          revogarAcessoSessaoImediato(checar);
+        }
+      }).withFailureHandler(function(e) {
+        console.warn('[Segurança] Erro pontual na verificação de sessão ativa:', e.message);
+      }).verificarAcessoUsuario();
+    }, 30000);
+  }
+
+  function pararMonitoramentoSessaoAtiva() {
+    if (_timerMonitoramentoSessao) {
+      clearInterval(_timerMonitoramentoSessao);
+      _timerMonitoramentoSessao = null;
+    }
+  }
+
+  function revogarAcessoSessaoImediato(resposta) {
+    pararMonitoramentoSessaoAtiva();
+    pararPollingCredenciais();
+
+    usuarioLogado = null;
+    perfilUsuario = '';
+
+    const telaSeg = document.getElementById("tela-seguranca");
+    if (telaSeg) {
+      telaSeg.style.display = "flex";
+      telaSeg.style.opacity = "1";
+    }
+
+    const segCarregando = document.getElementById("seg-estado-carregando");
+    const segCadastro = document.getElementById("seg-estado-cadastro");
+    const segWhatsapp = document.getElementById("seg-estado-whatsapp");
+    const segMensagem = document.getElementById("seg-estado-mensagem");
+
+    if (segCarregando) segCarregando.style.display = "none";
+    if (segCadastro) segCadastro.style.display = "none";
+    if (segWhatsapp) segWhatsapp.style.display = "none";
+    if (segMensagem) segMensagem.style.display = "block";
+
+    const iconeMsg = document.getElementById("msg-seg-icone");
+    const msgTitulo = document.getElementById("msg-seg-titulo");
+    const msgTexto = document.getElementById("msg-seg-texto");
+    const boxInfo = document.getElementById("box-info-aguardando");
+    const boxAvisoPublico = document.getElementById("box-aviso-publico-bnmp");
+
+    if (boxInfo) boxInfo.style.display = "none";
+    if (boxAvisoPublico) boxAvisoPublico.style.display = "none";
+
+    if (iconeMsg) {
+      iconeMsg.innerText = "lock_reset";
+      iconeMsg.style.color = "var(--danger)";
+      iconeMsg.style.animation = "none";
+    }
+    if (msgTitulo) {
+      msgTitulo.innerText = "❌ ACESSO REVOGADO";
+      msgTitulo.style.color = "var(--danger)";
+    }
+    if (msgTexto) {
+      msgTexto.innerText = (resposta && resposta.motivo) 
+        ? resposta.motivo 
+        : "Seu acesso ao sistema foi revogado ou bloqueado pelo administrador.";
+    }
+
+    chamarAlertaTatico(
+      "ACESSO REVOGADO",
+      "Seu acesso ao sistema foi revogado pelo administrador. A sessão foi encerrada.",
+      "OK"
+    );
+  }
+
+  /* ── SISTEMA DE TOASTS FLUTUANTES (Neumorfismo / Glassmorphism Tático) ── */
+  function exibirToastNotificacao(titulo, mensagem, tipo, acaoCallback, tempoAutoDismissMs) {
+    const container = document.getElementById("container-toast-notificacoes");
+    if (!container) return;
+
+    tempoAutoDismissMs = tempoAutoDismissMs || 7000;
+
+    const toast = document.createElement("div");
+    toast.className = "neu-card";
+    toast.style.cssText = `
+      pointer-events: auto;
+      background: var(--bg-surface, rgba(30, 41, 59, 0.95));
+      backdrop-filter: var(--glass-blur, blur(16px));
+      -webkit-backdrop-filter: var(--glass-blur, blur(16px));
+      border: var(--glass-border, 1px solid rgba(255, 255, 255, 0.12));
+      border-radius: var(--radius-md, 16px);
+      padding: 14px 18px;
+      box-shadow: var(--neu-raised, 0 12px 36px rgba(0, 0, 0, 0.5));
+      color: var(--text-primary, #f8fafc);
+      font-family: var(--font-sans);
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      transform: translateY(20px) scale(0.96);
+      opacity: 0;
+      transition: all 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      cursor: pointer;
+      overflow: hidden;
+      position: relative;
+    `;
+
+    const iconBox = document.createElement("div");
+    iconBox.style.cssText = `
+      width: 36px;
+      height: 36px;
+      border-radius: var(--radius-sm, 10px);
+      background: var(--bg-depressed, rgba(15, 23, 42, 0.6));
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: var(--neu-pressed-sm, inset 0 2px 4px rgba(0, 0, 0, 0.3));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    `;
+
+    const icone = document.createElement("span");
+    icone.className = "material-symbols-outlined";
+    icone.style.cssText = "font-size:20px;color:var(--warning, #f59e0b);";
+    icone.innerText = tipo === 'SUCESSO' ? 'check_circle' : (tipo === 'ERRO' ? 'error' : 'person_add');
+    iconBox.appendChild(icone);
+
+    const conteudo = document.createElement("div");
+    conteudo.style.cssText = "flex:1;display:flex;flex-direction:column;gap:3px;";
+
+    const h4 = document.createElement("div");
+    h4.style.cssText = "font-size:12px;font-weight:900;letter-spacing:0.8px;color:var(--text-primary, #f8fafc);text-transform:uppercase;font-family:var(--font-heading, sans-serif);";
+    h4.innerText = titulo;
+
+    const p = document.createElement("div");
+    p.style.cssText = "font-size:12px;color:var(--text-secondary, #cbd5e1);line-height:1.4;font-weight:500;";
+    p.innerText = mensagem;
+
+    const dica = document.createElement("div");
+    dica.style.cssText = "font-size:10px;color:var(--warning, #f59e0b);font-weight:700;margin-top:4px;display:flex;align-items:center;gap:4px;";
+    dica.innerHTML = '<span>Ver Usuários</span><span class="material-symbols-outlined" style="font-size:12px;">arrow_forward</span>';
+
+    conteudo.appendChild(h4);
+    conteudo.appendChild(p);
+    if (acaoCallback) conteudo.appendChild(dica);
+
+    const btnFechar = document.createElement("button");
+    btnFechar.className = "neu-btn";
+    btnFechar.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);">close</span>';
+    btnFechar.style.cssText = `
+      background: transparent;
+      border: none;
+      color: var(--text-muted, #64748b);
+      cursor: pointer;
+      padding: 4px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.2s ease;
+      margin-left: auto;
+    `;
+    btnFechar.onclick = function(e) {
+      e.stopPropagation();
+      removerToast();
+    };
+
+    toast.appendChild(iconBox);
+    toast.appendChild(conteudo);
+    toast.appendChild(btnFechar);
+
+    function removerToast() {
+      toast.style.transform = "translateY(20px) scale(0.96)";
+      toast.style.opacity = "0";
+      setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 350);
+    }
+
+    if (acaoCallback) {
+      toast.onclick = function() {
+        removerToast();
+        acaoCallback();
+      };
+    }
+
+    container.appendChild(toast);
+
+    requestAnimationFrame(function() {
+      toast.style.transform = "translateY(0) scale(1)";
+      toast.style.opacity = "1";
+    });
+
+    setTimeout(function() {
+      removerToast();
+    }, tempoAutoDismissMs);
+  }
+
+  function atualizarBadgesPendentes(count) {
+    const badges = [
+      document.getElementById('badgeUsuariosPendentes'),
+      document.getElementById('badgeAbaPendentes'),
+      document.getElementById('badgeFiltroPendentes')
+    ];
+
+    badges.forEach(function(badge) {
+      if (badge) {
+        if (count > 0) {
+          badge.textContent = count;
+          badge.style.display = (badge.id === 'badgeUsuariosPendentes') ? 'flex' : 'inline-block';
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+    });
+  }
+
+  function checarCadastrosPendentesAdmin() {
+    google.script.run.withSuccessHandler(function(usuarios) {
+      if (!usuarios) return;
+      const pendentesAtual = usuarios.filter(function(u) { return u.status === 'PENDENTE'; }).length;
+      
+      if (lastPendingCount !== -1 && pendentesAtual > lastPendingCount) {
+        const diferenca = pendentesAtual - lastPendingCount;
+        exibirToastNotificacao(
+          "SOLICITAÇÃO DE ACESSO",
+          diferenca + " novo(s) operador(es) pendente(s) aguardando aprovação.",
+          "NOVO_USUARIO",
+          function() {
+            if (typeof alternarVisaoTatica === 'function') {
+              alternarVisaoTatica('usuarios');
+            } else if (typeof alternarVisaoGlobal === 'function') {
+              alternarVisaoGlobal('usuarios');
+            }
+            carregarListaUsuarios();
+          },
+          8000
+        );
+      }
+
+      lastPendingCount = pendentesAtual;
+      atualizarBadgesPendentes(pendentesAtual);
+    }).obterTodosUsuarios();
   }
 
   /* ================================================================
@@ -814,16 +1263,7 @@
     
     let usuarios = window.listaUsuariosAdmin || [];
     const pendentesTotais = usuarios.filter(u => u.status === 'PENDENTE');
-    
-    var badge = document.getElementById('badgeUsuariosPendentes');
-    if (badge) {
-      if (pendentesTotais.length > 0) { 
-        badge.textContent = pendentesTotais.length; 
-        badge.style.display = 'inline-block'; 
-      } else { 
-        badge.style.display = 'none'; 
-      }
-    }
+    atualizarBadgesPendentes(pendentesTotais.length);
     
     const textoBusca = (document.getElementById('filtroTextoAdmin') ? document.getElementById('filtroTextoAdmin').value.trim().toLowerCase() : '');
     
@@ -1233,21 +1673,28 @@
   }
 
   function excluirUsuarioDefinitivoGK(email, btn) {
-    if (!confirm("Tem certeza que deseja EXCLUIR instantaneamente o acesso de " + email + "? A exclusão será definitiva.")) return;
-    
-    const txtOriginal = btn.innerHTML;
-    btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;animation:spin 1s linear infinite;">refresh</span>';
-    btn.disabled = true;
+    chamarAlertaTatico(
+      "CONFIRMAR EXCLUSÃO DE ACESSO",
+      "Tem certeza que deseja <b>EXCLUIR</b> instantaneamente o acesso de <b style='color:var(--accent);'>" + email + "</b>?<br><br>A exclusão será definitiva e revogará o acesso do usuário no sistema.",
+      "CONFIRMAR",
+      function(confirma) {
+        if (!confirma) return;
+        
+        const txtOriginal = btn.innerHTML;
+        btn.innerHTML = '<span class="material-symbols-outlined" style="font-size:14px;animation:spin 1s linear infinite;">refresh</span>';
+        btn.disabled = true;
 
-    google.script.run.withSuccessHandler(function(resp) {
-      if(resp.sucesso) {
-        chamarAlertaTatico("SUCESSO", resp.mensagem, "OK");
-        carregarListaUsuarios();
-      } else {
-        btn.innerHTML = txtOriginal;
-        btn.disabled = false;
-        chamarAlertaTatico("FALHA", resp.mensagem, "OK");
+        google.script.run.withSuccessHandler(function(resp) {
+          if(resp.sucesso) {
+            chamarAlertaTatico("SUCESSO", resp.mensagem, "OK");
+            carregarListaUsuarios();
+          } else {
+            btn.innerHTML = txtOriginal;
+            btn.disabled = false;
+            chamarAlertaTatico("FALHA", resp.mensagem, "OK");
+          }
+        }).excluirUsuarioDefinitivo(email);
       }
-    }).excluirUsuarioDefinitivo(email);
+    );
   }
 </script>
