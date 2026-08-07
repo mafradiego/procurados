@@ -30,8 +30,9 @@ function executarSetupInicial() {
     criarAbaSeNaoExiste(planilha, "Poligonos", getHeadersPoligonos());
     criarAbaSeNaoExiste(planilha, "Conferencia", getHeadersConferencia());
     criarAbaSeNaoExiste(planilha, "Historico", getHeadersHistorico());
-    criarAbaSeNaoExiste(planilha, "Leis", getHeadersLeis());
+    criarAbaSeNaoExiste(planilha, "Base_Leis", getHeadersLeis());
     criarAbaSeNaoExiste(planilha, "Notificacoes", getHeadersNotificacoes());
+    criarAbaSeNaoExiste(planilha, "Inconsistencias", getHeadersGeral());
 
     // Popular leis padrão se aba estiver vazia
     popularLeisPadrao(planilha);
@@ -59,7 +60,7 @@ function executarSetupInicial() {
     registrarAdminInicial(planilha);
 
     Logger.log("SETUP COMPLETO! Infraestrutura do Sentinela v2.5 criada com sucesso.");
-    ui.alert("SETUP COMPLETO!\n\nToda a infraestrutura foi criada:\n- Abas: Mandados, Usuarios, Config, Gamificacao, Poligonos, Conferencia, Historico, Leis, Notificacoes\n- Pastas: Sentinela_Fotos_Mandados, Sentinela_Fotos_Usuarios\n- Leis/Artigos padrão populados\n- Seu e-mail foi registrado como Admin.\n\nAgora publique o Web App.");
+    ui.alert("SETUP COMPLETO!\n\nToda a infraestrutura foi criada:\n- Abas: Mandados, Usuarios, Config, Gamificacao, Poligonos, Conferencia, Historico, Leis, Notificacoes, Inconsistencias\n- Pastas: Sentinela_Fotos_Mandados, Sentinela_Fotos_Usuarios\n- Leis/Artigos padrão populados\n- Seu e-mail foi registrado como Admin.\n\nAgora publique o Web App.");
 
   } catch (erro) {
     Logger.log("❌ ERRO NO SETUP: " + erro.message);
@@ -419,7 +420,7 @@ function verificarIntegridade() {
   const resultados = [];
 
   // Verificar abas
-  const abasNecessarias = ["Mandados", "Usuarios", "Config", "Gamificacao", "Poligonos", "Conferencia", "Historico", "Leis", "Notificacoes"];
+  const abasNecessarias = ["Mandados", "Usuarios", "Config", "Gamificacao", "Poligonos", "Conferencia", "Historico", "Base_Leis", "Notificacoes"];
   abasNecessarias.forEach(nome => {
     const aba = planilha.getSheetByName(nome);
     resultados.push(aba ? "✅ Aba '" + nome + "' OK" : "❌ Aba '" + nome + "' AUSENTE");
@@ -449,22 +450,21 @@ function verificarIntegridade() {
 // ================================================================
 
 function getHeadersLeis() {
-  return [
-    "Categoria",        // A — Nome da categoria (ex: Homicídio)
-    "Palavras Chave",   // B — Palavras separadas por | (ex: HOMIC|121)
-    "Cor",              // C — Cor hex (ex: #8b0000)
-    "Icone SVG",        // D — SVG path (legado)
-    "Ordem",            // E — Ordem de exibição
-    "Ativo",            // F — SIM/NAO
-    "PinoTexto",        // G — Texto curto para o pino do mapa (ex: ROUBO, JACK, 171)
-    "Lei Nome",         // H — Nome extenso da lei (ex: Código Penal)
-    "Numero Lei",       // I — Número (ex: 11.343)
-    "Artigo",           // J — Artigo (ex: 33)
-    "Paragrafo",        // K — Parágrafo (ex: 1)
-    "Inciso",           // L — Inciso (ex: I)
-    "Tipificacao Completa" // M — Descrição completa do crime
-  ];
-}
+    return [
+      "ID",                  // A – UUID único gerado via script
+      "Categoria",           // B – Nome da categoria (ex: HOMICÍDIO)
+      "Palavras Chave",      // C – Palavras separadas por | (ex: HOMIC|121)
+      "Cor",                 // D – Cor hex (ex: #8b0000)
+      "Ativo",               // E – SIM/NAO
+      "PinoTexto",           // F – Texto curto para o pino do mapa (ex: ROUBO, JACK, 171)
+      "Lei Nome",            // G – Nome extenso da lei (ex: Código Penal)
+      "Numero Lei",          // H – Número (ex: 11.343)
+      "Artigo",              // I – Artigo (ex: 33)
+      "Paragrafo",           // J – Parágrafo (ex: 1)
+      "Inciso",              // K – Inciso (ex: I)
+      "Tipificacao Completa" // L – Descrição completa do crime
+    ];
+  }
 
 function getHeadersNotificacoes() {
   return [
@@ -591,4 +591,13 @@ function atualizarAbaLeisParaV3() {
   popularLeisPadrao(planilha);
   
   SpreadsheetApp.getUi().alert("✅ ABA LEIS ATUALIZADA!\n\nA nova aba 'Leis' foi criada com as 13 colunas necessárias para a v3.9.76.\nSua aba antiga foi renomeada para 'Leis_BKP_...'.\n\nAgora você pode copiar seus dados da planilha CSV e colar na nova aba.");
+}
+
+function testarEscritaFirebase() {
+  try {
+    var res = atualizarMandadoFirebase("teste_mandado_123", { status: "Capturado" });
+    Logger.log("Resultado: " + JSON.stringify(res));
+  } catch(e) {
+    Logger.log("Erro: " + e.message);
+  }
 }
