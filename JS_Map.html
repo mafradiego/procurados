@@ -1,112 +1,102 @@
 <script>
-/* ================================================================
-     MÓDULO 3: GOOGLE MAPS + PINOS SVG
-     ================================================================ */
+  /* ================================================================
+       MÓDULO 3: GOOGLE MAPS + PINOS SVG
+       ================================================================ */
 
 
-  window.abrirCardMobile = function(alvo) {
-    console.log('[DEBUG-MODAL] abrirCardMobile DINÂMICO disparado para:', alvo ? alvo.mandado : 'null');
-    
-    // Remover modal anterior se existir
-    var existente = document.getElementById('dynamicCardOverlay');
-    if (existente) existente.remove();
+  window.abrirCardMobile = function (alvo) {
+    var body = document.getElementById('mobileCardModalBody');
+    var modal = document.getElementById('mobileCardModal');
+    if (body && modal) {
+      body.innerHTML = montarCardInteligencia(alvo);
+      modal.style.display = 'flex';
 
-    // Garantir que o body é o containing block
-    document.body.style.position = 'relative';
+      // Reset scroll
+      body.scrollTop = 0;
+      var contentWrapper = modal.querySelector('.mobile-card-modal-content');
+      if (contentWrapper) contentWrapper.scrollTop = 0;
 
-    // === CRIAR OVERLAY (fundo escuro) ===
-    var overlay = document.createElement('div');
-    overlay.id = 'dynamicCardOverlay';
-    overlay.style.cssText = [
-      'position:absolute',
-      'top:0', 'left:0',
-      'width:100%',
-      'min-height:100%',
-      'height:' + Math.max(document.documentElement.scrollHeight, window.innerHeight) + 'px',
-      'z-index:99999',
-      'display:flex',
-      'align-items:flex-start',
-      'justify-content:center',
-      'padding-top:5vh',
-      'background:rgba(0,0,0,0.75)',
-      'backdrop-filter:blur(6px)',
-      '-webkit-backdrop-filter:blur(6px)',
-      'overflow-y:auto'
-    ].join(';') + ';';
-
-    // Fechar ao clicar no fundo
-    overlay.addEventListener('click', function(e) {
-      if (e.target === overlay) window.fecharMobileCardModal();
-    });
-
-    // === CRIAR CONTAINER DO CARD ===
-    var card = document.createElement('div');
-    card.className = 'mobile-card-modal-content';
-    card.style.cssText = [
-      'position:relative',
-      'width:92vw',
-      'max-width:850px',
-      'max-height:85vh',
-      'background:var(--bg-glass-heavy, #1e293b)',
-      'border:1px solid rgba(255,255,255,0.12)',
-      'border-radius:40px',
-      'box-shadow:0 20px 50px rgba(0,0,0,0.7)',
-      'overflow:hidden',
-      'color:var(--text-primary, #f8fafc)',
-      'font-family:var(--font-sans, "Plus Jakarta Sans", sans-serif)',
-      'display:flex',
-      'flex-direction:column',
-      'margin-bottom:5vh'
-    ].join(';') + ';';
-
-    var closeBtn = document.createElement('button');
-    closeBtn.className = 'mobile-card-close-btn';
-    closeBtn.title = 'Fechar';
-    closeBtn.innerHTML = '<span class="material-symbols-outlined">close</span>';
-    closeBtn.onclick = window.fecharMobileCardModal;
-    card.appendChild(closeBtn);
-
-    var spacer = document.createElement('div');
-    spacer.style.cssText = 'height: 50px; flex-shrink: 0; width: 100%;';
-    card.appendChild(spacer);
-
-    var cardContent = document.createElement('div');
-    cardContent.id = 'mobileCardModalBody';
-    cardContent.className = 'custom-scrollbar';
-    cardContent.style.cssText = 'overflow-y:auto; overflow-x:hidden; flex:1; padding:0;';
-
-    // === MONTAR CONTEÚDO ===
-    cardContent.innerHTML = montarCardInteligencia(alvo);
-
-    card.appendChild(cardContent);
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
-
-    // Scroll para o topo para garantir que o card é visível
-    window.scrollTo(0, 0);
-
-    console.log('[DEBUG-MODAL] Modal DINÂMICO criado. overlay:', overlay.offsetWidth, 'x', overlay.offsetHeight, '| card:', card.offsetWidth, 'x', card.offsetHeight, '| window:', window.innerWidth, 'x', window.innerHeight, '| body:', document.body.offsetWidth, 'x', document.body.offsetHeight);
-
-    if (typeof esconderControlesMapa === 'function') esconderControlesMapa();
+      // Chamar esconderControlesMapa para manter a consistência da UI
+      if (typeof esconderControlesMapa === 'function') esconderControlesMapa();
+    }
   };
 
-  window.fecharMobileCardModal = function() {
-    console.log('[DEBUG-MODAL] fecharMobileCardModal disparado!');
-    var overlay = document.getElementById('dynamicCardOverlay');
-    if (overlay) overlay.remove();
-    // Também esconder o modal estático (fallback)
-    var modalEstatico = document.getElementById('mobileCardModal');
-    if (modalEstatico) modalEstatico.style.display = 'none';
-    if (typeof mostrarControlesMapa === 'function') mostrarControlesMapa();
+  window.abrirCardMultiploProcurados = function (grupoItens, indexInicial) {
+    if (!grupoItens || !Array.isArray(grupoItens) || grupoItens.length === 0) return;
+    var idx = indexInicial || 0;
+    if (idx < 0) idx = grupoItens.length - 1;
+    if (idx >= grupoItens.length) idx = 0;
+
+    var alvo = grupoItens[idx];
+    var body = document.getElementById('mobileCardModalBody');
+    var modal = document.getElementById('mobileCardModal');
+    if (body && modal) {
+      var cardHtml = (typeof montarCardInteligencia === 'function') ? montarCardInteligencia(alvo) : '';
+
+      // Se houver mais de 1 mandado na mesma localização, analisa se são pessoas distintas ou o mesmo indivíduo
+      if (grupoItens.length > 1) {
+        window._grupoProcuradosAtual = grupoItens;
+
+        var pessoasUnicasSet = new Set();
+        grupoItens.forEach(function(item) {
+          var idKey = (item.cpf || item.nome || '').trim().toUpperCase();
+          if (idKey) pessoasUnicasSet.add(idKey);
+        });
+        var numPessoas = pessoasUnicasSet.size;
+        var numMandados = grupoItens.length;
+
+        var tituloCabecalho = (numPessoas === 1)
+          ? ('📍 MESMO INDIVÍDUO COM ' + numMandados + ' MANDADOS DE PRISÃO')
+          : ('📍 LOCAL COM ' + numPessoas + ' PROCURADOS (' + numMandados + ' MANDADOS TOTAIS)');
+
+        var subTitulo = (numPessoas === 1)
+          ? ('Mandado ' + (idx + 1) + ' de ' + numMandados + ': <span style="color:#60a5fa;">' + (alvo.mandado || alvo.nome) + '</span>')
+          : ('Exibindo ' + (idx + 1) + ' de ' + numMandados + ': <span style="color:#60a5fa;">' + alvo.nome + '</span>');
+
+        var barraCarrosselHtml = '<div style="background:linear-gradient(135deg, #1e293b, #0f172a); border:1px solid rgba(239,68,68,0.4); border-radius:10px; padding:10px 14px; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; box-shadow:0 4px 12px rgba(0,0,0,0.3);">' +
+          '<div style="display:flex; align-items:center; gap:8px;">' +
+            '<span class="material-symbols-outlined" style="color:#ef4444; font-size:20px;">location_on</span>' +
+            '<div>' +
+              '<div style="font-size:10px; font-weight:900; color:#ef4444; text-transform:uppercase; letter-spacing:0.5px;">' + tituloCabecalho + '</div>' +
+              '<div style="font-size:11px; font-weight:800; color:var(--text-main); margin-top:2px;">' + subTitulo + '</div>' +
+            '</div>' +
+          '</div>' +
+          '<div style="display:flex; align-items:center; gap:6px;">' +
+            '<button onclick="event.stopPropagation(); window.abrirCardMultiploProcurados(window._grupoProcuradosAtual, ' + (idx - 1) + ')" style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:white; border-radius:6px; width:30px; height:30px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center;">◀</button>' +
+            '<button onclick="event.stopPropagation(); window.abrirCardMultiploProcurados(window._grupoProcuradosAtual, ' + (idx + 1) + ')" style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.2); color:white; border-radius:6px; width:30px; height:30px; font-weight:900; cursor:pointer; display:flex; align-items:center; justify-content:center;">▶</button>' +
+          '</div>' +
+        '</div>';
+
+        cardHtml = barraCarrosselHtml + cardHtml;
+      }
+
+      body.innerHTML = cardHtml;
+      modal.style.display = 'flex';
+
+      body.scrollTop = 0;
+      var contentWrapper = modal.querySelector('.mobile-card-modal-content');
+      if (contentWrapper) contentWrapper.scrollTop = 0;
+
+      if (typeof esconderControlesMapa === 'function') esconderControlesMapa();
+    }
+  };
+
+  window.fecharMobileCardModal = function () {
+    var modal = document.getElementById('mobileCardModal');
+    if (modal) {
+      modal.style.display = 'none';
+      // Restaurar controles do mapa
+      if (typeof mostrarControlesMapa === 'function') mostrarControlesMapa();
+    }
   };
 
   function configurarEstruturaMapa() {
     let lat = parseFloat(configsSistema.mapa_lat_padrao);
     if (isNaN(lat) || Math.abs(lat) > 90) lat = -22.9056;
-    
+
     let lng = parseFloat(configsSistema.mapa_lng_padrao);
     if (isNaN(lng) || Math.abs(lng) > 180) lng = -47.0608;
-    
+
     const zoom = parseInt(configsSistema.mapa_zoom_padrao) || 10;
 
     mapaPrincipal = new google.maps.Map(document.getElementById("mapa"), {
@@ -157,7 +147,7 @@
     var btnSecundarios = document.createElement('button'); btnSecundarios.title = 'Exibir Endereços Secundários';
     btnSecundarios.innerHTML = '<span class="material-symbols-outlined" style="font-size:20px;">share_location</span>';
     btnSecundarios.style.cssText = btnStyle + 'background:transparent;color:var(--text-secondary);box-shadow:none;';
-    btnSecundarios.onclick = function() {
+    btnSecundarios.onclick = function () {
       window._exibirSecundariosGlobal = !window._exibirSecundariosGlobal;
       if (window._exibirSecundariosGlobal) {
         btnSecundarios.style.color = 'var(--warning)';
@@ -169,7 +159,7 @@
       if (typeof window.filtrarNoMapa === 'function') window.filtrarNoMapa();
     };
 
-    btnLayers.onclick = function() {
+    btnLayers.onclick = function () {
       if (layersPanel.style.display === 'none') {
         layersPanel.style.display = 'flex';
         btnLayers.style.background = 'rgba(169,32,32,0.3)'; btnLayers.style.color = 'white';
@@ -179,17 +169,17 @@
       }
     };
 
-    btnMapa.onclick = function() {
+    btnMapa.onclick = function () {
       mapaPrincipal.setMapTypeId('roadmap');
       btnMapa.style.background = 'rgba(169,32,32,0.85)'; btnMapa.style.color = 'white'; btnMapa.style.boxShadow = '0 4px 12px rgba(169,32,32,0.4)';
       btnSat.style.background = 'transparent'; btnSat.style.color = 'var(--text-secondary)'; btnSat.style.boxShadow = 'none';
     };
-    btnSat.onclick = function() {
+    btnSat.onclick = function () {
       mapaPrincipal.setMapTypeId('hybrid');
       btnSat.style.background = 'rgba(169,32,32,0.85)'; btnSat.style.color = 'white'; btnSat.style.boxShadow = '0 4px 12px rgba(169,32,32,0.4)';
       btnMapa.style.background = 'transparent'; btnMapa.style.color = 'var(--text-secondary)'; btnMapa.style.boxShadow = 'none';
     };
-    btnTransito.onclick = function() {
+    btnTransito.onclick = function () {
       transitoAtivo = !transitoAtivo;
       if (transitoAtivo) {
         trafficLayer.setMap(mapaPrincipal);
@@ -214,7 +204,7 @@
     var btnGPS = document.createElement('div');
     btnGPS.style.cssText = 'display:flex;margin:0 10px 20px 0;';
     btnGPS.innerHTML = '<button id="btnCentralizarGPS" title="Centralizar no GPS" style="display:flex;align-items:center;justify-content:center;width:44px;height:44px;border:none;border-radius:50%;cursor:pointer;background:var(--bg-glass);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);color:var(--brand-red);box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.1);transition:all 0.3s;"><span class="material-symbols-outlined" style="font-size:22px;">my_location</span></button>';
-    btnGPS.querySelector('button').onclick = function() {
+    btnGPS.querySelector('button').onclick = function () {
       if (posicaoPatrulheiro) {
         mapaPrincipal.panTo(posicaoPatrulheiro);
         mapaPrincipal.setZoom(15);
@@ -224,8 +214,8 @@
     };
     mapaPrincipal.controls[google.maps.ControlPosition.RIGHT_BOTTOM].push(btnGPS);
 
-    window.addEventListener('resize', function() {
-      if (mapaPrincipal) setTimeout(function() { google.maps.event.trigger(mapaPrincipal, 'resize'); }, 350);
+    window.addEventListener('resize', function () {
+      if (mapaPrincipal) setTimeout(function () { google.maps.event.trigger(mapaPrincipal, 'resize'); }, 350);
     });
 
     infoWindowAtiva = new google.maps.InfoWindow();
@@ -240,7 +230,7 @@
         google.maps.ControlPosition.TOP_CENTER,
         google.maps.ControlPosition.RIGHT_BOTTOM
       ];
-      posicoes.forEach(function(pos) {
+      posicoes.forEach(function (pos) {
         var arr = mapaPrincipal.controls[pos];
         if (arr) {
           for (var i = 0; i < arr.getLength(); i++) {
@@ -263,13 +253,13 @@
       var iwD = document.querySelector('.gm-style-iw-d');
       if (iwD) {
         var eventos = [
-          'wheel', 'mousewheel', 'DOMMouseScroll', 
-          'touchstart', 'touchmove', 'touchend', 
+          'wheel', 'mousewheel', 'DOMMouseScroll',
+          'touchstart', 'touchmove', 'touchend',
           'mousedown', 'mousemove', 'mouseup',
           'pointerdown', 'pointermove', 'pointerup'
         ];
-        eventos.forEach(function(ev) {
-          iwD.addEventListener(ev, function(e) {
+        eventos.forEach(function (ev) {
+          iwD.addEventListener(ev, function (e) {
             e.stopPropagation();
           }, { passive: true });
         });
@@ -284,7 +274,7 @@
         google.maps.ControlPosition.TOP_CENTER,
         google.maps.ControlPosition.RIGHT_BOTTOM
       ];
-      posicoes.forEach(function(pos) {
+      posicoes.forEach(function (pos) {
         var arr = mapaPrincipal.controls[pos];
         if (arr) {
           for (var i = 0; i < arr.getLength(); i++) {
@@ -303,7 +293,7 @@
 
     infoWindowAtiva.addListener('domready', esconderControlesMapa);
     infoWindowAtiva.addListener('closeclick', mostrarControlesMapa);
-    mapaPrincipal.addListener("click", function() {
+    mapaPrincipal.addListener("click", function () {
       if (infoWindowAtiva) infoWindowAtiva.close();
       if (window.infoWindowPoligono) window.infoWindowPoligono.close();
       mostrarControlesMapa();
@@ -325,6 +315,7 @@
     if (document.getElementById('filtroCIAMobile')) document.getElementById('filtroCIAMobile').value = 'TODOS';
     limparFiltrosAvancados();
     montarFiltrosBatalhao();
+    if (typeof popularCrimesDosBancos === 'function') popularCrimesDosBancos();
     filtrarNoMapa();
     window._cpiAutoSelecionado = false;
   }
@@ -335,6 +326,7 @@
       if (document.getElementById('filtroCrimeMobile')) document.getElementById('filtroCrimeMobile').value = 'TODOS';
       if (document.getElementById('filtroSexoMobile')) document.getElementById('filtroSexoMobile').value = 'TODOS';
       if (document.getElementById('filtroTipoMandadoMobile')) document.getElementById('filtroTipoMandadoMobile').value = 'TODOS';
+      if (typeof popularCrimesDosBancos === 'function') popularCrimesDosBancos();
       filtrarNoMapaMobile();
     } else {
       if (document.getElementById('filtroCrime')) document.getElementById('filtroCrime').value = 'TODOS';
@@ -344,6 +336,7 @@
       if (document.getElementById('filtroCrimeMobile')) document.getElementById('filtroCrimeMobile').value = 'TODOS';
       if (document.getElementById('filtroSexoMobile')) document.getElementById('filtroSexoMobile').value = 'TODOS';
       if (document.getElementById('filtroTipoMandadoMobile')) document.getElementById('filtroTipoMandadoMobile').value = 'TODOS';
+      if (typeof popularCrimesDosBancos === 'function') popularCrimesDosBancos();
       filtrarNoMapa();
       atualizarIndicadorFiltro();
       // Fechar o painel
@@ -389,37 +382,43 @@
     console.log('[DEBUG] processarDados chamado. Total de dados recebidos:', dados ? dados.length : 'null/undefined');
     try {
       if (!dados) {
-        console.warn('[DEBUG] processarDados: dados é nulo ou indefinido! Ignorando renderização.');
+        console.warn('[DEBUG] processarDados: dados é nulo ou indefinido! Limpando mapa e lista.');
+        dadosMandados = [];
+        if (typeof renderizarPinos === 'function') renderizarPinos([]);
+        if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados([]);
         fecharTelaDeCarregamento();
         return;
       }
       dadosMandados = dados;
+      window.dadosMandados = dados;
       _dadosCarregados = true;
       console.log('[DEBUG] Montando filtros de CPI...');
       montarFiltrosCPI();
       console.log('[DEBUG] Montando filtros de Batalhão...');
       montarFiltrosBatalhao();
-      
-      // Pinos no mapa: apenas mandados COM coordenadas
-      var comCoordenadas = dadosMandados.filter(function(d) { return !d.semEndereco; });
+
+      // Pinos no mapa: respeitar filtros ativos (GPS ou manuais)
+      var comCoordenadas = dadosMandados.filter(function (d) { return !d.semEndereco; });
       console.log('[DEBUG] Mandados com coordenadas:', comCoordenadas.length, 'de', dadosMandados.length);
-      
-      // Fase 3: Renderizar pinos usando MarkerClusterer
+
       console.log('[DEBUG] Renderizando pinos...');
-      renderizarPinos(comCoordenadas);
-      
-      // Fase 2: Lazy Loading da Tabela HTML (Gargalo de DOM)
-      setTimeout(function() {
-        console.log('[DEBUG] Disparando renderizarTabelaMandados...');
-        if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
-      }, 200);
+      // Fase 3 e 2: Renderizar mapa e tabela respeitando filtros ativos
+      if (typeof filtrarNoMapa === 'function') {
+        filtrarNoMapa();
+      } else {
+        renderizarPinos(comCoordenadas);
+        setTimeout(function () {
+          console.log('[DEBUG] Disparando renderizarTabelaMandados...');
+          if (typeof aplicarFiltrosLista === 'function') aplicarFiltrosLista(); else if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
+        }, 200);
+      }
 
       // Carregar polígonos verificando a versão no servidor (Fase 1 - Cache Inteligente)
       console.log('[DEBUG] Chamando obterVersaoBancos do servidor...');
-      google.script.run.withSuccessHandler(function(versoes) {
+      google.script.run.withSuccessHandler(function (versoes) {
         console.log('[DEBUG] obterVersaoBancos retornou:', versoes);
         carregarPoligonos(versoes ? versoes.poligonosVersao : "0");
-      }).withFailureHandler(function(erro) {
+      }).withFailureHandler(function (erro) {
         console.warn('[DEBUG] obterVersaoBancos falhou:', erro);
         carregarPoligonos("0");
       }).obterVersaoBancos();
@@ -428,43 +427,38 @@
       carregarPoligonos("0"); // Garante fechamento da tela
     }
 
+    // Atualiza silenciosamente a badge de auditoria (inconsistências)
+    try {
+      if (typeof _processarAuditoria === 'function') _processarAuditoria();
+    } catch (err) { console.warn("[Auditoria] Erro ao atualizar cache:", err); }
+
     // Se GPS já foi negado/inexistente, forçar exibição completa agora que temos dados
     _tentarExibirSemGPS();
 
     // Carregar tabela de classificação de leis (1x)
     if (!window._tabelaLeis) {
       console.log('[DEBUG] Solicitando obterTabelaClassificacao...');
-      google.script.run.withSuccessHandler(function(tabela) {
+      google.script.run.withSuccessHandler(function (tabela) {
         console.log('[DEBUG] obterTabelaClassificacao retornou:', tabela ? tabela.length : 'null');
         window._tabelaLeis = tabela || [];
-        var comCoord = dadosMandados.filter(function(d) { return !d.semEndereco; });
-        renderizarPinos(comCoord);
-        if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
-        if (typeof popularCrimesDosBancos === 'function') popularCrimesDosBancos();
-      }).withFailureHandler(function(erro) {
+        if (typeof window.limparCacheClassificacao === 'function') window.limparCacheClassificacao();
+        if (typeof renderizarCarrossel === 'function') renderizarCarrossel();
+        if (typeof filtrarNoMapa === 'function') {
+          filtrarNoMapa();
+        } else {
+          var comCoord = dadosMandados.filter(function (d) { return !d.semEndereco; });
+          renderizarPinos(comCoord);
+          if (typeof aplicarFiltrosLista === 'function') aplicarFiltrosLista(); else if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
+        }
+      }).withFailureHandler(function (erro) {
         console.warn('[DEBUG] obterTabelaClassificacao falhou:', erro);
         window._tabelaLeis = [];
-        if (typeof popularCrimesDosBancos === 'function') popularCrimesDosBancos();
       }).obterTabelaClassificacao();
-    } else {
-      if (typeof popularCrimesDosBancos === 'function') popularCrimesDosBancos();
-    }
-
-    // Atualiza o badge da auditoria automaticamente
-    if (typeof _getInconsistencias === 'function') {
-      let totalAudit = 0;
-      dadosMandados.forEach(function(d) {
-        if (_getInconsistencias(d).length > 0) totalAudit++;
-      });
-      var badge = document.getElementById('badgeAuditoriaNav');
-      if (badge) {
-        badge.textContent = totalAudit;
-        badge.style.display = totalAudit > 0 ? 'flex' : 'none';
-      }
     }
 
     console.log('[Sentinela v2.4] processarDados concluído');
   }
+  window.processarDados = processarDados;
 
   // ================================================================
   // MÓDULO 1.1: CACHE INTELIGENTE DE MANDADOS (INDEXEDDB)
@@ -475,22 +469,22 @@
     let request;
     try {
       request = indexedDB.open(dbName, 2);
-    } catch(e) {
+    } catch (e) {
       callbackFalha(); return;
     }
-    request.onupgradeneeded = function(e) {
+    request.onupgradeneeded = function (e) {
       let db = e.target.result;
       if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
       if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
     };
-    request.onsuccess = function(e) {
+    request.onsuccess = function (e) {
       let db = e.target.result;
       if (!db.objectStoreNames.contains("Mandados")) { callbackFalha(); return; }
       try {
         let transaction = db.transaction(["Mandados"], "readonly");
         let store = transaction.objectStore("Mandados");
         let getRequest = store.get("dados_mandados");
-        getRequest.onsuccess = function() {
+        getRequest.onsuccess = function () {
           if (getRequest.result) {
             callbackSucesso(getRequest.result);
           } else {
@@ -508,19 +502,19 @@
     let request;
     try {
       request = indexedDB.open(dbName, 2);
-    } catch(e) { return; }
-    request.onupgradeneeded = function(e) {
+    } catch (e) { return; }
+    request.onupgradeneeded = function (e) {
       let db = e.target.result;
       if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
       if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
     };
-    request.onsuccess = function(e) {
+    request.onsuccess = function (e) {
       let db = e.target.result;
       try {
         let transaction = db.transaction(["Mandados"], "readwrite");
         let store = transaction.objectStore("Mandados");
         store.put({ id: "dados_mandados", versao: String(timestampServidor), dados: dados });
-      } catch (err) {}
+      } catch (err) { }
     };
   }
 
@@ -528,10 +522,13 @@
     const telaSeguranca = document.getElementById("tela-seguranca");
     if (telaSeguranca) {
       telaSeguranca.style.opacity = '0';
-      setTimeout(function() { telaSeguranca.style.display = 'none'; }, 500);
+      setTimeout(function () { telaSeguranca.style.display = 'none'; }, 500);
     }
     var iconeSinc = document.querySelector('button[title="Sincronizar"] span');
     if (iconeSinc) iconeSinc.style.animation = 'none';
+    if (typeof carregarStatsGeocodificacao === 'function') {
+      carregarStatsGeocodificacao();
+    }
   }
 
   function carregarMandados() {
@@ -540,15 +537,15 @@
     if (iconeSinc) iconeSinc.style.animation = 'spin 1s linear infinite';
 
     // Failsafe timeout: Se der pane de rede, destrava a tela depois de 15 segundos
-    var failsafe = setTimeout(function() {
+    var failsafe = setTimeout(function () {
       console.warn('[DEBUG] Failsafe de carregarMandados disparado após 15 segundos!');
       fecharTelaDeCarregamento();
     }, 15000);
 
     lerCacheMandados(
-      function(cacheInfo) {
+      function (cacheInfo) {
         console.log('[DEBUG] Cache de mandados encontrado. Versão local:', cacheInfo ? cacheInfo.versao : 'indefinida');
-        google.script.run.withSuccessHandler(function(resp) {
+        google.script.run.withSuccessHandler(function (resp) {
           clearTimeout(failsafe);
           console.log('[DEBUG] verificarAtualizacaoMandados retornou. resp:', resp);
           if (resp && resp.atualizado) {
@@ -562,16 +559,16 @@
             processarDados(cacheInfo ? cacheInfo.dados : []);
           }
           iniciarAutoSync();
-        }).withFailureHandler(function(erro){
+        }).withFailureHandler(function (erro) {
           clearTimeout(failsafe);
           console.error('[DEBUG] verificarAtualizacaoMandados falhou:', erro);
           fecharTelaDeCarregamento();
           iniciarAutoSync();
         }).verificarAtualizacaoMandados(cacheInfo ? cacheInfo.versao : "0");
       },
-      function() {
+      function () {
         console.log('[DEBUG] Cache de mandados NÃO encontrado ou falhou ao ler. Buscando tudo do servidor...');
-        google.script.run.withSuccessHandler(function(resp) {
+        google.script.run.withSuccessHandler(function (resp) {
           clearTimeout(failsafe);
           console.log('[DEBUG] obterTodosOsMandados retornou. resp:', resp);
           if (resp && resp.dados) {
@@ -583,7 +580,7 @@
             fecharTelaDeCarregamento();
           }
           iniciarAutoSync();
-        }).withFailureHandler(function(erro){
+        }).withFailureHandler(function (erro) {
           clearTimeout(failsafe);
           console.error('[DEBUG] obterTodosOsMandados falhou:', erro);
           fecharTelaDeCarregamento();
@@ -609,7 +606,7 @@
     if (_autoSyncAtivo) return; // Evitar sobreposição
     _autoSyncAtivo = true;
 
-    google.script.run.withSuccessHandler(function(resp) {
+    google.script.run.withSuccessHandler(function (resp) {
       _autoSyncAtivo = false;
       if (resp && resp.atualizado && resp.dados) {
         // Servidor tem dados mais recentes — atualizar silenciosamente
@@ -618,7 +615,7 @@
         processarDados(resp.dados);
         console.log("[AutoSync] Dados atualizados silenciosamente.");
       }
-    }).withFailureHandler(function() {
+    }).withFailureHandler(function () {
       _autoSyncAtivo = false;
     }).verificarAtualizacaoMandados(_ultimoTimestampLocal);
   }
@@ -628,14 +625,14 @@
   function sincronizarBD() {
     if (_sincronizando) return; // Bloquear duplo-clique
     _sincronizando = true;
-    setTimeout(function() { _sincronizando = false; }, 5000); // Liberar após 5s
+    setTimeout(function () { _sincronizando = false; }, 5000); // Liberar após 5s
 
     const telaSeguranca = document.getElementById("tela-seguranca");
     const lblStatus = document.getElementById("txt-status-carregamento");
     if (telaSeguranca && lblStatus) {
       lblStatus.innerText = "SINCRONIZANDO BANCO DE DADOS...";
       telaSeguranca.style.display = "flex";
-      setTimeout(function() { telaSeguranca.style.opacity = '1'; }, 10);
+      setTimeout(function () { telaSeguranca.style.opacity = '1'; }, 10);
     }
 
     poligonosCarregados = false; // Forçar o mapa a atualizar as cores táticas
@@ -646,13 +643,13 @@
         let request;
         try {
           request = indexedDB.open(dbName, 2);
-        } catch(e) { return; }
-        request.onupgradeneeded = function(e) {
+        } catch (e) { return; }
+        request.onupgradeneeded = function (e) {
           let db = e.target.result;
           if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
           if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
         };
-        request.onsuccess = function(e) {
+        request.onsuccess = function (e) {
           try {
             let db = e.target.result;
             let storesToClear = [];
@@ -663,37 +660,61 @@
               if (storesToClear.includes("Mandados")) transaction.objectStore("Mandados").delete("dados_mandados");
               if (storesToClear.includes("Poligonos")) transaction.objectStore("Poligonos").delete("dados_mapa");
             }
-          } catch(err) {}
+          } catch (err) { }
         };
-      } catch(err) {}
+      } catch (err) { }
     }
 
-    // BYPASS CACHE: Ir direto para o servidor com timestamp 0 (forçar download total)
+    // FIREBASE FIRST: Tentar Firebase, fallback para Sheets
     var failsafe = setTimeout(fecharTelaDeCarregamento, 15000);
     var iconeSinc = document.querySelector('button[title="Sincronizar"] span');
     if (iconeSinc) iconeSinc.style.animation = 'spin 1s linear infinite';
 
-    google.script.run.withSuccessHandler(function(resp) {
-      clearTimeout(failsafe);
-      if (resp && resp.atualizado && resp.dados) {
-        salvarCacheMandados(resp.timestamp, resp.dados);
-        processarDados(resp.dados);
-      } else {
-        // Se o servidor diz que não mudou, mesmo assim busca tudo
-        google.script.run.withSuccessHandler(function(resp2) {
-          if (resp2 && resp2.atualizado && resp2.dados) {
-            salvarCacheMandados(resp2.timestamp, resp2.dados);
-            processarDados(resp2.dados);
-          }
-          fecharTelaDeCarregamento();
-        }).withFailureHandler(function() {
-          fecharTelaDeCarregamento();
-        }).obterTodosOsMandados();
-      }
-    }).withFailureHandler(function() {
-      clearTimeout(failsafe);
-      fecharTelaDeCarregamento();
-    }).verificarAtualizacaoMandados("0"); // Timestamp "0" = forçar atualização
+    // Função de fallback para Google Sheets (método antigo)
+    function fallbackParaSheets_() {
+      console.log('[Sync] Usando fallback Google Sheets...');
+      google.script.run.withSuccessHandler(function (resp) {
+        clearTimeout(failsafe);
+        if (resp && resp.atualizado && resp.dados) {
+          salvarCacheMandados(resp.timestamp, resp.dados);
+          processarDados(resp.dados);
+        } else {
+          google.script.run.withSuccessHandler(function (resp2) {
+            if (resp2 && resp2.atualizado && resp2.dados) {
+              salvarCacheMandados(resp2.timestamp, resp2.dados);
+              processarDados(resp2.dados);
+            }
+            fecharTelaDeCarregamento();
+          }).withFailureHandler(function () {
+            fecharTelaDeCarregamento();
+          }).obterTodosOsMandados();
+        }
+      }).withFailureHandler(function () {
+        clearTimeout(failsafe);
+        fecharTelaDeCarregamento();
+      }).verificarAtualizacaoMandados("0");
+    }
+
+    // Tentar Firebase primeiro (mais rápido)
+    if (typeof window.carregarDoFirebase === 'function' && window.isFirebaseReady && window.isFirebaseReady()) {
+      console.log('[Sync] 🔥 Carregando do Firebase (primário)...');
+      window.carregarDoFirebase(function(dados, fonte) {
+        if (dados && dados.length > 0) {
+          clearTimeout(failsafe);
+          console.log('[Sync] ✅ Firebase entregou ' + dados.length + ' mandados');
+          salvarCacheMandados(new Date().getTime().toString(), dados);
+          processarDados(dados);
+          if (window.showToast) window.showToast('Dados via Firebase (' + dados.length + ')', 'success');
+        } else {
+          console.log('[Sync] Firebase vazio/indisponível, fallback para Sheets');
+          fallbackParaSheets_();
+        }
+      });
+    } else {
+      // Firebase não está pronto, ir direto para Sheets
+      console.log('[Sync] Firebase não disponível, usando Sheets');
+      fallbackParaSheets_();
+    }
   }
 
   function sortCpi(a, b) {
@@ -723,14 +744,14 @@
     } else {
       cpis = [...new Set(dadosMandados.map(i => i.cpiArea).filter(b => b))].sort(sortCpi);
     }
-    
+
     let htmlDesktop = '<option value="TODOS">CPI - CPA</option>';
     let htmlMobile = '<option value="TODOS">TODOS</option>';
     cpis.forEach(c => {
       htmlDesktop += '<option value="' + c + '">' + c + '</option>';
       htmlMobile += '<option value="' + c + '">' + c + '</option>';
     });
-    
+
     if (document.getElementById('filtroCPI')) document.getElementById('filtroCPI').innerHTML = htmlDesktop;
     if (document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').innerHTML = htmlMobile;
   }
@@ -740,21 +761,21 @@
     if (!isMobile && document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').value = cpiSelecionado;
     if (isMobile && document.getElementById('filtroCPI')) document.getElementById('filtroCPI').value = cpiSelecionado;
 
-    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({cpi: d.cpiArea, batalhao: (d.bpmArea || d.batalhao), cia: d.ciaArea}));
-    
+    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({ cpi: d.cpiArea, batalhao: d.batalhao, cia: d.ciaArea }));
+
     let filtrados = fonteDeDados;
     if (cpiSelecionado !== 'TODOS') {
       filtrados = filtrados.filter(i => i.cpi === cpiSelecionado);
     }
     const bpms = [...new Set(filtrados.map(i => i.batalhao).filter(b => b))].sort(sortBpm);
-    
+
     let htmlDesktop = '<option value="TODOS">Batalhão</option>';
     let htmlMobile = '<option value="TODOS">TODOS</option>';
     bpms.forEach(b => {
       htmlDesktop += '<option value="' + b + '">' + b + '</option>';
       htmlMobile += '<option value="' + b + '">' + b + '</option>';
     });
-    
+
     if (document.getElementById('filtroBatalhao')) document.getElementById('filtroBatalhao').innerHTML = htmlDesktop;
     if (document.getElementById('filtroBatalhaoMobile')) document.getElementById('filtroBatalhaoMobile').innerHTML = htmlMobile;
 
@@ -766,29 +787,29 @@
     if (!isMobile && document.getElementById('filtroBatalhaoMobile')) document.getElementById('filtroBatalhaoMobile').value = bpmSelecionado;
     if (isMobile && document.getElementById('filtroBatalhao')) document.getElementById('filtroBatalhao').value = bpmSelecionado;
 
-    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({cpi: d.cpiArea, batalhao: (d.bpmArea || d.batalhao), cia: d.ciaArea}));
+    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({ cpi: d.cpiArea, batalhao: d.batalhao, cia: d.ciaArea }));
 
     let filtrados = fonteDeDados;
     const cpiSelecionado = document.getElementById('filtroCPI').value;
     if (cpiSelecionado !== 'TODOS') filtrados = filtrados.filter(i => i.cpi === cpiSelecionado);
     if (bpmSelecionado !== 'TODOS') filtrados = filtrados.filter(i => i.batalhao === bpmSelecionado);
-    
+
     const cias = [...new Set(filtrados.map(i => i.cia).filter(b => b))].sort();
-    
+
     let htmlDesktop = '<option value="TODOS">CIA</option>';
     let htmlMobile = '<option value="TODOS">TODOS</option>';
     cias.forEach(c => {
       htmlDesktop += '<option value="' + c + '">' + c + '</option>';
       htmlMobile += '<option value="' + c + '">' + c + '</option>';
     });
-    
+
     if (document.getElementById('filtroCIA')) document.getElementById('filtroCIA').innerHTML = htmlDesktop;
     if (document.getElementById('filtroCIAMobile')) document.getElementById('filtroCIAMobile').innerHTML = htmlMobile;
-    
+
     // Sicroniza a CIA entre mobile e desktop caso alterado
-    document.getElementById('filtroCIA').addEventListener('change', function() { document.getElementById('filtroCIAMobile').value = this.value; });
-    document.getElementById('filtroCIAMobile').addEventListener('change', function() { document.getElementById('filtroCIA').value = this.value; });
-    
+    document.getElementById('filtroCIA').addEventListener('change', function () { document.getElementById('filtroCIAMobile').value = this.value; });
+    document.getElementById('filtroCIAMobile').addEventListener('change', function () { document.getElementById('filtroCIA').value = this.value; });
+
     if (typeof montarFiltrosDP === 'function') montarFiltrosDP(isMobile);
   }
 
@@ -799,41 +820,56 @@
 
     const cpiSelecionado = document.getElementById('filtroCPI').value;
     const bpmSelecionado = document.getElementById('filtroBatalhao').value;
-    
-    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({cpi: d.cpiArea, batalhao: (d.bpmArea || d.batalhao), cia: d.ciaArea, delegacia: d.dpArea}));
+
+    let fonteDeDados = poligonosInstancias.length > 0 ? poligonosInstancias : dadosMandados.map(d => ({ cpi: d.cpiArea, batalhao: d.batalhao || d.bpmArea, cia: d.ciaArea, delegacia: d.dpArea }));
 
     let filtrados = fonteDeDados;
     if (cpiSelecionado !== 'TODOS') filtrados = filtrados.filter(i => i.cpi === cpiSelecionado);
     if (bpmSelecionado !== 'TODOS') filtrados = filtrados.filter(i => i.batalhao === bpmSelecionado);
     if (ciaSelecionada !== 'TODOS') filtrados = filtrados.filter(i => i.cia === ciaSelecionada);
-    
+
     const dps = [...new Set(filtrados.map(i => i.delegacia).filter(b => b))].sort();
-    
+
     let htmlDesktop = '<option value="TODOS">Delegacia</option>';
     let htmlMobile = '<option value="TODOS">TODOS</option>';
     dps.forEach(dp => {
       htmlDesktop += '<option value="' + dp + '">' + dp + '</option>';
       htmlMobile += '<option value="' + dp + '">' + dp + '</option>';
     });
-    
+
     if (document.getElementById('filtroDP')) document.getElementById('filtroDP').innerHTML = htmlDesktop;
     if (document.getElementById('filtroDPMobile')) document.getElementById('filtroDPMobile').innerHTML = htmlMobile;
-    
+
     const elDP = document.getElementById('filtroDP');
     const elDPMobile = document.getElementById('filtroDPMobile');
-    if(elDP && elDPMobile) {
-        elDP.addEventListener('change', function() { elDPMobile.value = this.value; });
-        elDPMobile.addEventListener('change', function() { elDP.value = this.value; });
+    if (elDP && elDPMobile) {
+      elDP.addEventListener('change', function () { elDPMobile.value = this.value; });
+      elDPMobile.addEventListener('change', function () { elDP.value = this.value; });
     }
   }
 
   // ---- CRIAÇÃO DO PINO SVG ----
-  function criarPinoSVG(alvo) {
+  function criarPinoSVG(alvo, itensDoGrupo) {
     const crimeInfo = classificarCrime(alvo.infoProcessuais || '');
+    
+    if (alvo._crimeFiltradoForcado) {
+      crimeInfo.nome = alvo._crimeFiltradoForcado.nome;
+      crimeInfo.cor = alvo._crimeFiltradoForcado.cor || '#f59e0b';
+      crimeInfo.pinoTexto = alvo._crimeFiltradoForcado.pinoTexto || '?';
+      var fn = (alvo._crimeFiltradoForcado.nome || '').toUpperCase();
+      crimeInfo.naoClassificado = (alvo._crimeFiltradoForcado.naoClassificado === true) || fn.includes('NÃO CLASSIFICADO') || fn.includes('NAO CLASSIFICADO') || fn === 'OUTROS' || fn === 'NÃO IDENTIFICADO' || fn === 'NAO IDENTIFICADO';
+      if (crimeInfo.naoClassificado) {
+        crimeInfo.cor = '#f59e0b';
+        crimeInfo.pinoTexto = '???';
+      }
+      crimeInfo.svgPath = gerarSvgTexto(crimeInfo.pinoTexto, crimeInfo.totalCrimes);
+    }
+    
     const diasRestantes = calcularDiasRestantes(alvo.validade);
     const isCapturado = alvo.status.toUpperCase() === 'CAPTURADO';
-    const cor = isCapturado ? '#2ecc71' : crimeInfo.cor;
+    let cor = isCapturado ? '#2ecc71' : crimeInfo.cor;
     const label = crimeInfo.pinoTexto || '?';
+    const tagSec = '';
 
     // Tamanho da fonte adaptado ao comprimento
     var fontSize = 11;
@@ -858,205 +894,560 @@
       else if (diasRestantes <= limAmarelo) glowClass = 'pin-glow-mild';
     }
 
-    // Verificar se tem endereços secundários
+    // Verificar se tem endereços secundários válidos
     let temSecundarios = false;
+    var totalEnderecosMandado = 1;
     try {
-      const sec = JSON.parse(alvo.geodataSecundarios || '[]');
-      temSecundarios = sec.length > 0;
-    } catch(e) {}
+      let rawSecMap = alvo.geodataSecundarios || alvo.secundarios || [];
+      const sec = Array.isArray(rawSecMap) ? rawSecMap : (typeof rawSecMap === 'string' ? (function() { try { return JSON.parse(rawSecMap); } catch(e) { return []; } })() : []);
+      const secValidos = sec.filter(s => {
+        if (!s) return false;
+        if (typeof s === 'string') return s.trim().length > 0;
+        return (s.endereco && s.endereco.trim().length > 0) || (s.lat && s.lng);
+      });
+      temSecundarios = secValidos.length > 0;
+      totalEnderecosMandado = 1 + secValidos.length;
+    } catch (e) { }
 
     const container = document.createElement('div');
-    container.className = 'pin-marker ' + glowClass;
+    var cInfoPino = typeof classificarCrime === 'function' ? classificarCrime(alvo.infoProcessuais || '') : {};
+    var ehPiscante = (!isCapturado) && (cInfoPino && cInfoPino.pinoPiscando === true);
+    container.className = 'pin-marker ' + glowClass + (ehPiscante ? ' pin-sombra-piscando' : '');
     container.style.setProperty('--glow-color', cor);
     container.style.position = 'relative';
 
-    let textoCentro = temSecundarios ? '+' : '';
-    let svgFontSize = temSecundarios ? 24 : fontSize;
-    const badgeTopo = '<div style="position:absolute;top:-12px;left:50%;transform:translateX(-50%);background:#fff;border:2px solid ' + cor + ';border-radius:4px;padding:2px 4px;display:flex;align-items:center;justify-content:center;z-index:10;box-shadow:0 1px 4px rgba(0,0,0,0.4);"><span style="font-size:10px;font-weight:900;color:' + cor + ';line-height:1;white-space:nowrap;-webkit-text-stroke:0.5px #000;text-shadow:0px 1px 1px rgba(0,0,0,0.8);">' + label + '</span></div>';
-
     if (isCapturado) {
-      container.innerHTML = '<div style="width:14px;height:14px;background:rgba(26,156,84,0.6);border:2px solid rgba(255,255,255,0.5);border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,0.5);"></div>';
-      return container;
-    }
+      var corPino = '#1a9c54';
+      var rgb = '26,156,84';
+      var svgPequeno = '<svg width="28" height="28" viewBox="0 0 696 703" fill="none" xmlns="http://www.w3.org/2000/svg" style="background:#1a9c54; border-radius:50%; box-shadow: 0 0 12px rgba(26,156,84,0.6), 0 2px 6px rgba(0,0,0,0.3); border: 2px solid white; padding: 2px;">' +
+        '<path d="M10.1953 672.353V30.646C10.1953 23.0627 16.2812 16.9155 23.7891 16.9155H672.211C679.719 16.9155 685.805 23.0627 685.805 30.646V672.353C685.805 679.937 679.719 686.084 672.211 686.084H23.7891C16.2812 686.084 10.1953 679.937 10.1953 672.353Z" fill="#B9ACAC"/>' +
+        '<path d="M99.2344 16.9155H23.7891C16.2812 16.9155 10.1953 23.0627 10.1953 30.646V672.353C10.1953 679.937 16.2812 686.084 23.7891 686.084H672.211C679.719 686.084 685.805 679.937 685.805 672.353V30.646C685.805 23.0627 679.719 16.9155 672.211 16.9155H146.812" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M48.4087 58.1797H647.593V644.821H48.4087V58.1797Z" fill="#685E68"/>' +
+        '<path d="M48.4087 58.1797H89.262V644.821H48.4087V58.1797Z" fill="#E1D3CE"/>' +
+        '<path d="M434.058 414.672C420.565 432.275 399.459 443.639 375.764 443.639H320.237C296.541 443.639 275.435 432.275 261.942 414.671L179.14 458.894V644.818H516.862V458.894L434.058 414.672Z" fill="#F1C066"/>' +
+        '<path d="M342.287 496.696C344.963 500.892 351.038 500.892 353.715 496.696L388.244 442.558C384.123 443.277 379.948 443.64 375.765 443.641H320.239C316.056 443.64 311.881 443.277 307.759 442.558L342.287 496.696Z" fill="#F89580"/>' +
+        '<path d="M312.594 450.141L342.287 496.695C344.963 500.891 351.038 500.891 353.715 496.695L383.408 450.141" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M434.058 414.672C428.205 422.31 420.945 428.733 412.679 433.589L452.826 455.03C455.011 456.197 456.84 457.944 458.116 460.083C459.391 462.222 460.066 464.671 460.066 467.168V644.821H516.862V458.897L434.058 414.672Z" fill="#D5992A"/>' +
+        '<path d="M495.072 447.259L435.309 415.34M375.764 445.014H320.238C317.656 445.013 315.108 444.884 312.595 444.626V644.821H383.408V444.624C380.892 444.882 378.344 445.012 375.764 445.014ZM260.691 415.34L200.928 447.259V457.76H201.835C212.162 457.76 220.965 465.893 221.274 476.318C221.497 483.826 217.436 490.397 211.379 493.73C217.278 496.974 221.282 503.292 221.282 510.554C221.282 517.816 217.277 524.133 211.379 527.379C217.278 530.624 221.282 536.941 221.282 544.203C221.282 551.465 217.277 557.782 211.379 561.027C217.436 564.359 221.497 570.931 221.274 578.449C220.965 588.864 212.162 596.997 201.835 596.997H200.928V644.819H271.74V427.046C267.657 423.551 263.953 419.627 260.691 415.34Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M160.075 58.1797H200.928V644.821H160.075V58.1797Z" fill="#E1D3CE"/>' +
+        '<path d="M178.918 58.1797H200.928V644.821H178.918V58.1797ZM67.2523 58.1797H89.262V644.821H67.2523V58.1797Z" fill="#CDBFBA"/>' +
+        '<path d="M160.075 594.869V644.819H200.928V596.998M200.928 457.76V349.389M200.928 309.884V58.1797H160.075V459.888" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M271.741 58.1797H312.594V644.821H271.741V58.1797Z" fill="#E1D3CE"/>' +
+        '<path d="M290.584 58.1797H312.594V644.821H290.584V58.1797Z" fill="#CDBFBA"/>' +
+        '<path d="M271.741 427.046V644.819H312.594V444.624M312.594 124.672V58.1797H271.741V144.105" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M383.406 58.1797H424.26V644.821H383.406V58.1797Z" fill="#E1D3CE"/>' +
+        '<path d="M402.25 58.1797H424.26V644.821H402.25V58.1797Z" fill="#CDBFBA"/>' +
+        '<path d="M424.26 144.105V58.1797H383.406V124.672M383.406 444.624V644.819H424.26V427.046" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M495.072 58.1797H535.925V644.821H495.072V58.1797Z" fill="#E1D3CE"/>' +
+        '<path d="M513.916 58.1797H535.925V644.821H513.916V58.1797Z" fill="#CDBFBA"/>' +
+        '<path d="M495.072 349.389V457.76M535.925 459.888V58.1797H495.072V309.884M495.072 596.998V644.82H535.925V594.869M48.4087 58.1797H89.262V644.821H48.4087V58.1797Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M495.072 349.389V457.76M535.925 459.888V58.1797H495.072V309.884M495.072 596.998V644.82H535.925V594.869M48.4087 58.1797H89.262V644.821H48.4087V58.1797Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M606.738 58.1797H647.591V644.821H606.738V58.1797Z" fill="#E1D3CE"/>' +
+        '<path d="M625.581 58.1797H647.591V644.821H625.581V58.1797Z" fill="#CDBFBA"/>' +
+        '<path d="M606.738 167.511V644.819H647.591V58.1797H606.738V119.455" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M230.667 294.995H246.467V273.533C246.467 255.23 261.156 240.393 279.277 240.393H416.725C434.845 240.393 449.534 255.23 449.534 273.533V294.995H465.335C471.014 294.995 476.371 296.405 481.094 298.883V254.284C481.094 180.039 421.506 119.853 348.001 119.853C274.496 119.853 214.909 180.041 214.909 254.284V298.883C219.775 296.324 225.181 294.99 230.667 294.995Z" fill="#61410D"/>' +
+        '<path d="M348 119.854C344.451 119.856 340.938 119.996 337.461 120.273C380.674 142.484 410.279 187.826 410.279 240.157V240.394H416.723C434.844 240.394 449.533 255.231 449.533 273.534V294.996H465.333C471.013 294.996 476.37 296.406 481.093 298.886V254.287C481.093 180.041 421.506 119.854 348 119.854Z" fill="#4A3108"/>' +
+        '<path d="M481.092 297.398V254.285C481.092 180.041 421.504 119.854 348 119.854C274.495 119.854 214.908 180.041 214.908 254.285V297.398" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M246.366 293.684H230.666C211.006 293.684 195.07 309.781 195.07 329.637C195.07 349.494 211.008 365.59 230.666 365.59H246.366V293.684Z" fill="#FFB09E"/>' +
+        '<path d="M245.167 293.684H230.666C211.006 293.684 195.07 309.781 195.07 329.637C195.07 349.494 211.008 365.59 230.666 365.59H245.167V293.684Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M465.335 293.684H449.634V365.591H465.335C484.994 365.591 500.93 349.494 500.93 329.638C500.93 309.781 484.992 293.684 465.335 293.684Z" fill="#F89580"/>' +
+        '<path d="M465.335 293.684H449.634V365.591H465.335C484.994 365.591 500.93 349.494 500.93 329.638C500.93 309.781 484.992 293.684 465.335 293.684Z" fill="#F89580"/>' +
+        '<path d="M450.833 293.684H465.335C484.992 293.684 500.93 309.781 500.93 329.638C500.93 349.494 484.994 365.591 465.335 365.591H450.833V293.684Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M245.167 273.533V369.19C245.167 411.067 278.777 445.014 320.236 445.014H375.763C417.222 445.014 450.831 411.067 450.831 369.19V273.533C450.831 254.506 435.56 239.082 416.723 239.082H279.277C260.439 239.082 245.167 254.505 245.167 273.533Z" fill="#FFCEBF"/>' +
+        '<path d="M416.723 239.082H374.103C392.94 239.082 408.211 254.506 408.211 273.533V369.19C408.211 411.067 374.602 445.014 333.142 445.014H375.763C417.222 445.014 450.831 411.067 450.831 369.19V273.533C450.833 254.505 435.561 239.082 416.723 239.082Z" fill="#FFB09E"/>' +
+        '<path d="M245.167 273.533V369.19C245.167 411.067 278.777 445.014 320.236 445.014H375.763C417.222 445.014 450.831 411.067 450.831 369.19V273.533C450.831 254.506 435.56 239.082 416.723 239.082H279.277C260.439 239.082 245.167 254.505 245.167 273.533Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M348 351.474C338.18 351.474 330.219 343.433 330.219 333.514C330.219 324.916 336.201 317.73 344.19 315.968C346.4 315.481 348 313.545 348 311.26V302.213M302.888 302.213V318.447M393.112 302.213V318.447M281.081 278.683H324.694V267.67M414.919 278.683H371.307V267.67M312.936 404.622C312.936 392.886 322.356 383.372 333.974 383.372H362.025C373.643 383.372 383.062 392.886 383.062 404.622" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M221.282 544.204C221.282 551.466 217.277 557.784 211.379 561.029C217.436 564.362 221.497 570.933 221.274 578.441C220.965 588.867 212.162 596.999 201.835 596.999H171.444C153.923 596.999 139.719 582.652 139.719 564.955V489.805C139.719 472.108 153.923 457.761 171.444 457.761H201.835C212.162 457.761 220.965 465.894 221.274 476.319C221.497 483.827 217.436 490.399 211.379 493.731C217.278 496.975 221.282 503.293 221.282 510.556C221.282 517.82 217.277 524.136 211.379 527.382C214.376 529.025 216.879 531.455 218.622 534.417C220.365 537.378 221.284 540.759 221.282 544.204Z" fill="#FFCEBF"/>' +
+        '<path d="M221.282 544.204C221.282 536.942 217.277 530.625 211.379 527.38C217.278 524.136 221.282 517.818 221.282 510.555C221.282 503.291 217.277 496.975 211.379 493.731C217.436 490.399 221.497 483.827 221.274 476.319C220.965 465.894 212.162 457.761 201.835 457.761H171.444C169.718 457.761 168.026 457.905 166.374 458.173C181.486 460.624 193.031 473.851 193.031 489.805V564.954C193.031 580.908 181.486 594.134 166.375 596.586C168.027 596.854 169.719 596.998 171.446 596.998H201.836C212.163 596.998 220.966 588.865 221.275 578.44C221.498 570.932 217.437 564.361 211.38 561.028C217.278 557.784 221.282 551.466 221.282 544.204Z" fill="#FFB09E"/>' +
+        '<path d="M139.719 550.592V564.954C139.719 582.651 153.923 596.998 171.444 596.998H201.835C212.162 596.998 220.965 588.865 221.274 578.44C221.497 570.932 217.436 564.361 211.379 561.028C217.278 557.784 221.282 551.466 221.282 544.204C221.282 536.942 217.277 530.625 211.379 527.38C217.278 524.136 221.282 517.818 221.282 510.555C221.282 503.291 217.277 496.975 211.379 493.731C217.436 490.399 221.497 483.827 221.274 476.319C220.965 465.894 212.162 457.761 201.835 457.761H171.444C153.923 457.761 139.719 472.108 139.719 489.807V502.535" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M474.718 510.555C474.718 503.293 478.723 496.975 484.621 493.729C478.564 490.397 474.503 483.826 474.726 476.318C475.035 465.892 483.838 457.76 494.165 457.76H524.556C542.077 457.76 556.281 472.107 556.281 489.804V564.954C556.281 582.651 542.077 596.998 524.556 596.998H494.165C483.838 596.998 475.035 588.865 474.726 578.44C474.503 570.932 478.564 564.36 484.621 561.028C478.722 557.783 474.718 551.466 474.718 544.203C474.718 536.939 478.723 530.623 484.621 527.377C481.625 525.733 479.123 523.302 477.38 520.341C475.637 517.38 474.717 513.999 474.718 510.555Z" fill="#FFCEBF"/>' +
+        '<path d="M524.554 457.76H497.071C514.592 457.76 528.796 472.107 528.796 489.805V564.954C528.796 582.651 514.592 596.998 497.071 596.998H524.554C542.075 596.998 556.279 582.651 514.592 564.954V489.805C556.281 472.107 542.077 457.76 524.554 457.76Z" fill="#FFB09E"/>' +
+        '<path d="M474.718 510.555C474.718 503.293 478.723 496.975 484.621 493.729C478.564 490.397 474.503 483.826 474.726 476.318C475.035 465.892 483.838 457.76 494.165 457.76H524.556C542.077 457.76 556.281 472.107 556.281 489.804V564.954C556.281 582.651 542.077 596.998 524.556 596.998H494.165C483.838 596.998 475.035 588.865 474.726 578.44C474.503 570.932 478.564 564.36 484.621 561.028C478.722 557.783 474.718 551.466 474.718 544.203C474.718 536.939 478.723 530.623 484.621 527.377C481.625 525.733 479.123 523.302 477.38 520.341C475.637 517.38 474.717 513.999 474.718 510.555Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '<path d="M48.4087 58.1797H647.593V644.821H48.4087V58.1797Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+        '</svg>';
+      container.innerHTML =
+        '<div style="display:flex; flex-direction:column; align-items:center;">' +
+        svgPequeno +
+        '</div>';
+    } else {
+      var simboloCentral = '';
+      if (alvo._isSecundarioClone) {
+        simboloCentral = '<text x="23" y="25" text-anchor="middle" font-size="10" font-weight="900" font-family="Arial,sans-serif" fill="white" stroke="#000000" stroke-width="1.2" paint-order="stroke fill" letter-spacing="0.5">SEC</text>';
+      } else if (temSecundarios) {
+        var numStr = String(totalEnderecosMandado);
+        var fontSz = numStr.length >= 2 ? "11" : "13";
+        var yPos = numStr.length >= 2 ? "25" : "25.5";
+        simboloCentral = '<circle cx="23" cy="21" r="10.5" fill="#ef4444" stroke="#ffffff" stroke-width="2"/>' +
+          '<text x="23" y="' + yPos + '" text-anchor="middle" font-size="' + fontSz + '" font-weight="900" font-family="Arial,sans-serif" fill="#ffffff" paint-order="stroke fill" stroke="#000000" stroke-width="0.5">' + numStr + '</text>';
+      } else {
+        simboloCentral = '<circle cx="23" cy="21" r="4" fill="white" opacity="0.9"/>';
+      }
 
-    container.innerHTML = badgeTopo +
-      '<svg width="46" height="58" viewBox="0 0 46 58" fill="none" xmlns="http://www.w3.org/2000/svg" style="overflow:visible;">' +
+      var svgNormal =
+        '<svg width="32" height="44" viewBox="0 0 46 58" fill="none" xmlns="http://www.w3.org/2000/svg">' +
         '<path d="M23 57C23 57 43 37.5 43 21C43 10 34.046 1 23 1C11.954 1 3 10 3 21C3 37.5 23 57 23 57Z" fill="' + cor + '" stroke="rgba(0,0,0,0.35)" stroke-width="1.5"/>' +
-        '<circle cx="23" cy="21" r="14" fill="rgba(0,0,0,0.25)"/>' +
-        '<circle cx="23" cy="21" r="13" fill="rgba(255,255,255,0.15)"/>' +
-        '<text x="23" y="' + (21 + svgFontSize * 0.35) + '" text-anchor="middle" font-size="' + svgFontSize + '" font-weight="900" font-family="Impact,Arial Black,sans-serif" fill="white" stroke="#000" stroke-width="1.5" paint-order="stroke" letter-spacing="0.5">' + textoCentro + '</text>' +
-      '</svg>';
+        '<circle cx="23" cy="21" r="14" fill="rgba(0,0,0,0.9)"/>' +
+        '<circle cx="23" cy="21" r="13" fill="' + cor + '"/>' +
+        simboloCentral +
+        '</svg>';
+
+      var badgeMaisUmCrime = (crimeInfo.totalCrimes && crimeInfo.totalCrimes > 1) 
+        ? '<span style="background:#ef4444; color:#ffffff; border-radius:99px; padding:1px 5px; font-size:8px; font-weight:900; margin-left:4px; box-shadow:0 1px 3px rgba(0,0,0,0.3); display:inline-block; -webkit-text-stroke:0;">+' + (crimeInfo.totalCrimes - 1) + '</span>' 
+        : '';
+
+      var etiquetaTopoHtml = '';
+      if (itensDoGrupo && Array.isArray(itensDoGrupo) && itensDoGrupo.length > 1) {
+        var pessoasUnicasSet = new Set();
+        itensDoGrupo.forEach(function(item) {
+          var idKey = (item.cpf || item.nome || '').trim().toUpperCase();
+          if (idKey) pessoasUnicasSet.add(idKey);
+        });
+        var numPessoas = pessoasUnicasSet.size;
+        var numMandados = itensDoGrupo.length;
+
+        var txtPessoas = (numPessoas === 1)
+          ? (numMandados + ' MANDADOS')
+          : (numPessoas + ' PROCURADOS (' + numMandados + ')');
+
+        var iconePessoas = (numPessoas === 1) ? '📜' : '👥';
+
+        etiquetaTopoHtml = '<div style="background:linear-gradient(135deg, #0f172a, #1e1b4b); border:1px solid #38bdf8; border-radius:8px; padding:2px 7px; font-size:9px; font-weight:900; margin-bottom:3px; box-shadow:0 3px 8px rgba(0,0,0,0.5); display:inline-flex; align-items:center; justify-content:center; gap:4px; white-space:nowrap; z-index:15;">' +
+          '<span style="color:#facc15; font-size:11px; font-weight:bold; filter:drop-shadow(0 0 2px rgba(250,204,21,0.6));">' + iconePessoas + '</span>' +
+          '<span style="color:#ffffff; font-family:var(--font-heading); font-weight:900; letter-spacing:0.5px;">' + txtPessoas + '</span>' +
+        '</div>';
+      }
+
+      container.innerHTML =
+        '<div style="display:flex; flex-direction:column; align-items:center; transform: translateY(20px);">' +
+        etiquetaTopoHtml +
+        '<div style="position:relative; background:#ffffff; color:' + cor + '; font-size:8px; font-weight:900; padding:2px 8px; border-radius:12px; margin-bottom:-3px; box-shadow:0 2px 8px rgba(0,0,0,0.2); border:1px solid ' + cor + '; font-family:var(--font-sans); white-space:nowrap; -webkit-text-stroke:0.5px #000; display:inline-flex; align-items:center; justify-content:center;">' + 
+        '<span>' + label + '</span>' +
+        badgeMaisUmCrime + 
+        '</div>' +
+        svgNormal +
+        '</div>';
+    }
 
     return container;
   }
 
   let clustererInstancia = null;
 
+  function gerarChaveMarcador(alvo, latVal, lngVal) {
+    var cInfo = typeof classificarCrime === 'function' ? classificarCrime(alvo.infoProcessuais || '') : { pinoTexto: '?', cor: '#6b7280' };
+    if (alvo._crimeFiltradoForcado) {
+      var fn = (alvo._crimeFiltradoForcado.nome || '').toUpperCase();
+      var ehNC = (alvo._crimeFiltradoForcado.naoClassificado === true) || fn.includes('NÃO CLASSIFICADO') || fn.includes('NAO CLASSIFICADO') || fn === 'OUTROS' || fn === 'NÃO IDENTIFICADO' || fn === 'NAO IDENTIFICADO';
+      cInfo = {
+        nome: alvo._crimeFiltradoForcado.nome,
+        cor: ehNC ? '#f59e0b' : (alvo._crimeFiltradoForcado.cor || '#f59e0b'),
+        pinoTexto: ehNC ? '???' : (alvo._crimeFiltradoForcado.pinoTexto || '?'),
+        naoClassificado: ehNC
+      };
+    }
+    var isCap = (alvo.status || '').toUpperCase() === 'CAPTURADO';
+    var pCor = isCap ? '#2ecc71' : (alvo._isSecundarioClone ? '#ffb300' : (cInfo.cor || '#6b7280'));
+    var pTxt = alvo._isSecundarioClone ? 'SEC' : (cInfo.pinoTexto || '?');
+    var pFlash = (!isCap) && (cInfo && cInfo.pinoPiscando) ? 'FLASH' : 'NORMAL';
+    return (alvo.mandado || '') + '|' + latVal + '|' + lngVal + '|' + (alvo._isSecundarioClone ? 'S' : 'P') + '|' + pTxt + '|' + pCor + '|' + pFlash;
+  }
+
   function renderizarPinos(dadosFiltrados) {
-    // Limpar marcadores anteriores
-    listaMarcadores.forEach(function(m) { m.map = null; });
-    listaMarcadores = [];
-    if (clustererInstancia) {
-      clustererInstancia.clearMarkers();
+    // --- DIFF INCREMENTAL: só remove/adiciona marcadores que mudaram ---
+    var novoSet = new Set();
+    var novoMap = {};
+    dadosFiltrados.forEach(function(alvo) {
+      var latVal = Number(alvo.lat);
+      var lngVal = Number(alvo.lng);
+      if (isNaN(latVal) || isNaN(lngVal) || alvo.lat === null || alvo.lng === null || alvo.lat === undefined || alvo.lng === undefined) return;
+      var chave = gerarChaveMarcador(alvo, latVal, lngVal);
+      novoSet.add(chave);
+      novoMap[chave] = alvo;
+    });
+
+    // Índice dos marcadores atuais
+    var marcadoresAntigos = {};
+    listaMarcadores.forEach(function(m) {
+      if (m._chaveUnica) marcadoresAntigos[m._chaveUnica] = m;
+    });
+
+    // Determinar quais remover e quais adicionar
+    var chavesAntigas = Object.keys(marcadoresAntigos);
+    var aRemover = [];
+    var aAdicionar = [];
+
+    chavesAntigas.forEach(function(ch) {
+      if (!novoSet.has(ch)) aRemover.push(ch);
+    });
+    novoSet.forEach(function(ch) {
+      if (!marcadoresAntigos[ch]) aAdicionar.push(ch);
+    });
+
+    // Se a diferença é pequena (<50% mudou), usar diff incremental
+    var usarDiff = (aRemover.length + aAdicionar.length) < (chavesAntigas.length + novoSet.size) * 0.6;
+
+    if (!usarDiff || chavesAntigas.length === 0) {
+      // Recriação completa (fallback para mudanças grandes ou primeira carga)
+      listaMarcadores.forEach(function (m) { m.map = null; });
+      listaMarcadores = [];
+      if (clustererInstancia) clustererInstancia.clearMarkers();
+
+      // Limpar secundários visíveis
+      Object.keys(secundariosVisiveis).forEach(function (k) {
+        if (secundariosVisiveis[k]) {
+          secundariosVisiveis[k].markers.forEach(function (m) { m.map = null; });
+          secundariosVisiveis[k].polylines.forEach(function (p) { p.setMap(null); });
+        }
+      });
+      secundariosVisiveis = {};
+
+      // Agrupar mandados por coordenada idêntica (5 casas decimais ~1m)
+      var gruposPorCoord = {};
+      dadosFiltrados.forEach(function (alvo) {
+        var latVal = Number(alvo.lat);
+        var lngVal = Number(alvo.lng);
+        if (isNaN(latVal) || isNaN(lngVal) || alvo.lat === null || alvo.lng === null || alvo.lat === undefined || alvo.lng === undefined) return;
+        var key = latVal.toFixed(5) + ',' + lngVal.toFixed(5);
+        if (!gruposPorCoord[key]) gruposPorCoord[key] = [];
+        gruposPorCoord[key].push(alvo);
+      });
+
+      Object.keys(gruposPorCoord).forEach(function (key) {
+        var itensDoGrupo = gruposPorCoord[key];
+        var alvo = itensDoGrupo[0];
+        var latVal = Number(alvo.lat);
+        var lngVal = Number(alvo.lng);
+        var chave = key;
+
+        var pessoasUnicasSet = new Set();
+        itensDoGrupo.forEach(function(item) {
+          var idKey = (item.cpf || item.nome || '').trim().toUpperCase();
+          if (idKey) pessoasUnicasSet.add(idKey);
+        });
+        var numPessoas = pessoasUnicasSet.size;
+        var numMandados = itensDoGrupo.length;
+
+        var textoTitle = (numMandados <= 1)
+          ? alvo.nome
+          : ((numPessoas === 1)
+              ? (numMandados + " mandados de prisão (" + alvo.nome + ")")
+              : (numPessoas + " procurados distintos - " + numMandados + " mandados (1º: " + alvo.nome + ")"));
+
+        var pinoEl = criarPinoSVG(alvo, itensDoGrupo);
+
+        var marcador = new google.maps.marker.AdvancedMarkerElement({
+          position: { lat: latVal, lng: lngVal },
+          map: mapaPrincipal,
+          title: textoTitle,
+          content: pinoEl,
+          gmpClickable: true
+        });
+
+        var _clickTimeout = null;
+        var acaoClique = function () {
+          mapaPrincipal.panTo({ lat: latVal, lng: lngVal });
+          if (typeof window.aplicarBounceNoMarcador === 'function') window.aplicarBounceNoMarcador(marcador);
+          try {
+            if (itensDoGrupo.length > 1) {
+              window.abrirCardMultiploProcurados(itensDoGrupo, 0);
+            } else {
+              window.abrirCardMobile(alvo);
+            }
+          } catch (err) { console.error('[ERRO] Falha ao abrir card:', err); }
+        };
+        marcador.addEventListener("gmp-click", function () {
+          if (_clickTimeout) clearTimeout(_clickTimeout);
+          _clickTimeout = setTimeout(acaoClique, 300);
+        });
+        pinoEl.addEventListener("click", function (e) {
+          e.stopPropagation();
+          if (_clickTimeout) clearTimeout(_clickTimeout);
+          _clickTimeout = setTimeout(acaoClique, 300);
+        });
+        pinoEl.addEventListener("dblclick", function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
+          toggleSecundarios(alvo, marcador);
+        });
+        var _longPressTimer = null;
+        var _touchMoved = false;
+        pinoEl.addEventListener("touchstart", function (e) {
+          _touchMoved = false;
+          _longPressTimer = setTimeout(function () {
+            if (!_touchMoved) { if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; } toggleSecundarios(alvo, marcador); }
+          }, 600);
+        }, { passive: true });
+        pinoEl.addEventListener("touchmove", function () { _touchMoved = true; if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; } }, { passive: true });
+        pinoEl.addEventListener("touchend", function () { if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; } }, { passive: true });
+        pinoEl.addEventListener("contextmenu", function (e) { e.preventDefault(); e.stopPropagation(); if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; } toggleSecundarios(alvo, marcador); });
+
+        marcador._mandadoRef = alvo.mandado;
+        marcador._chaveUnica = chave;
+        listaMarcadores.push(marcador);
+      });
+    } else {
+      // --- DIFF INCREMENTAL: remove os que saíram, adiciona os novos ---
+      if (clustererInstancia) clustererInstancia.clearMarkers();
+
+      // Limpar secundários que saíram
+      aRemover.forEach(function(ch) {
+        var m = marcadoresAntigos[ch];
+        if (m) {
+          m.map = null;
+          if (m._mandadoRef && secundariosVisiveis[m._mandadoRef]) {
+            secundariosVisiveis[m._mandadoRef].markers.forEach(function(sm) { sm.map = null; });
+            secundariosVisiveis[m._mandadoRef].polylines.forEach(function(p) { p.setMap(null); });
+            delete secundariosVisiveis[m._mandadoRef];
+          }
+        }
+      });
+
+      // Remover da lista
+      listaMarcadores = listaMarcadores.filter(function(m) {
+        return m._chaveUnica && novoSet.has(m._chaveUnica);
+      });
+
+      // Adicionar novos
+      aAdicionar.forEach(function(ch) {
+        var alvo = novoMap[ch];
+        if (!alvo) return;
+        var latVal = Number(alvo.lat);
+        var lngVal = Number(alvo.lng);
+
+        var pinoEl = criarPinoSVG(alvo);
+        var marcador = new google.maps.marker.AdvancedMarkerElement({
+          position: { lat: latVal, lng: lngVal },
+          map: mapaPrincipal,
+          title: alvo.nome,
+          content: pinoEl,
+          gmpClickable: true
+        });
+
+        var _clickTimeout = null;
+        var acaoClique = function () {
+          mapaPrincipal.panTo({ lat: alvo.lat, lng: alvo.lng });
+          if (typeof window.aplicarBounceNoMarcador === 'function') window.aplicarBounceNoMarcador(marcador);
+          try { window.abrirCardMobile(alvo); } catch (err) { console.error('[ERRO] Falha ao abrir card:', err); }
+        };
+        marcador.addEventListener("gmp-click", function () {
+          if (_clickTimeout) clearTimeout(_clickTimeout);
+          _clickTimeout = setTimeout(acaoClique, 300);
+        });
+        pinoEl.addEventListener("click", function (e) {
+          e.stopPropagation();
+          if (_clickTimeout) clearTimeout(_clickTimeout);
+          _clickTimeout = setTimeout(acaoClique, 300);
+        });
+        pinoEl.addEventListener("dblclick", function (e) {
+          e.preventDefault(); e.stopPropagation();
+          if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
+          toggleSecundarios(alvo, marcador);
+        });
+        var _longPressTimer = null;
+        var _touchMoved = false;
+        pinoEl.addEventListener("touchstart", function (e) {
+          _touchMoved = false;
+          _longPressTimer = setTimeout(function () {
+            if (!_touchMoved) { if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; } toggleSecundarios(alvo, marcador); }
+          }, 600);
+        }, { passive: true });
+        pinoEl.addEventListener("touchmove", function () { _touchMoved = true; if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; } }, { passive: true });
+        pinoEl.addEventListener("touchend", function () { if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; } }, { passive: true });
+        pinoEl.addEventListener("contextmenu", function (e) { e.preventDefault(); e.stopPropagation(); if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; } toggleSecundarios(alvo, marcador); });
+
+        marcador._mandadoRef = alvo.mandado;
+        marcador._chaveUnica = ch;
+        listaMarcadores.push(marcador);
+      });
     }
 
-    // Limpar secundários visíveis
-    Object.keys(secundariosVisiveis).forEach(function(k) {
-      if (secundariosVisiveis[k]) {
-        secundariosVisiveis[k].markers.forEach(function(m) { m.map = null; });
-        secundariosVisiveis[k].polylines.forEach(function(p) { p.setMap(null); });
+    // Auto-exibir secundários apenas quando o botão global estiver habilitado
+    var deveExibirSecundarios = (window._exibirSecundariosGlobal === true);
+
+    // Set com os mandados ativos no filtro atual
+    var mandadosFiltradosSet = new Set(dadosFiltrados.map(function (d) { return d.mandado; }));
+
+    // Sempre limpar secundários de mandados que não devem ser exibidos ou saíram do filtro
+    Object.keys(secundariosVisiveis).forEach(function (k) {
+      if (!deveExibirSecundarios || !mandadosFiltradosSet.has(k)) {
+        if (secundariosVisiveis[k]) {
+          if (secundariosVisiveis[k].markers) {
+            secundariosVisiveis[k].markers.forEach(function (m) { m.map = null; });
+          }
+          if (secundariosVisiveis[k].polylines) {
+            secundariosVisiveis[k].polylines.forEach(function (p) { p.setMap(null); });
+          }
+        }
+        delete secundariosVisiveis[k];
       }
     });
-    secundariosVisiveis = {};
 
-    dadosFiltrados.forEach(function(alvo) {
-      if (typeof alvo.lat !== 'number' || typeof alvo.lng !== 'number' || isNaN(alvo.lat) || isNaN(alvo.lng)) return;
-      
-      var pinoEl = criarPinoSVG(alvo);
-
-      var marcador = new google.maps.marker.AdvancedMarkerElement({
-        position: { lat: alvo.lat, lng: alvo.lng },
-        map: mapaPrincipal,
-        title: alvo.nome,
-        content: pinoEl,
-        gmpClickable: true // Obrigatório na API v=weekly para funcionar o gmp-click
-      });
-
-      // Click → centraliza e abre card (com debounce para não conflitar com dblclick)
-      var _clickTimeout = null;
-      var acaoClique = function() {
-        console.log('[DEBUG] Executando ação do clique (após debounce). Alvo:', alvo.mandado);
-        mapaPrincipal.panTo({ lat: alvo.lat, lng: alvo.lng });
-        try {
-          window.abrirCardMobile(alvo);
-          console.log('[DEBUG] abrirCardMobile executado com sucesso.');
-        } catch (err) {
-          console.error('[ERRO CRÍTICO] Falha ao abrir o card:', err, alvo);
+    if (deveExibirSecundarios) {
+      var alvosSec = [];
+      dadosFiltrados.forEach(function (alvo) {
+        var latVal = Number(alvo.lat);
+        var lngVal = Number(alvo.lng);
+        if (isNaN(latVal) || isNaN(lngVal) || alvo.lat === null || alvo.lng === null || alvo.lat === undefined || alvo.lng === undefined) return;
+        var marc = listaMarcadores.find(function (m) { return m._mandadoRef === alvo.mandado; });
+        if (marc && !secundariosVisiveis[alvo.mandado]) {
+          alvosSec.push({ alvo: alvo, marc: marc });
         }
-      };
-
-      marcador.addEventListener("gmp-click", function() {
-        console.log('[DEBUG] Evento gmp-click disparado no marcador:', alvo.nome);
-        if (_clickTimeout) clearTimeout(_clickTimeout);
-        _clickTimeout = setTimeout(acaoClique, 300);
       });
 
-      pinoEl.addEventListener("click", function(e) {
-        console.log('[DEBUG] Evento DOM click disparado no pinoEl:', alvo.nome);
-        e.stopPropagation(); // Evita dupla ativação caso o gmp-click também dispare
-        if (_clickTimeout) clearTimeout(_clickTimeout);
-        _clickTimeout = setTimeout(acaoClique, 300);
-      });
-
-      // Double-click → mostra/esconde secundários (Desktop)
-      pinoEl.addEventListener("dblclick", function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
-        toggleSecundarios(alvo, marcador);
-      });
-
-      // Long press (Touch and hold) → mostra/esconde secundários (Mobile/Tablet)
-      var _longPressTimer = null;
-      var _touchMoved = false;
-      pinoEl.addEventListener("touchstart", function(e) {
-        _touchMoved = false;
-        _longPressTimer = setTimeout(function() {
-          if (!_touchMoved) {
-            if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
-            toggleSecundarios(alvo, marcador);
+      if (alvosSec.length > 0) {
+        var processarLoteSec = function (index) {
+          var batchSize = 25;
+          var limit = Math.min(index + batchSize, alvosSec.length);
+          for (var i = index; i < limit; i++) {
+            mostrarSecundariosAuto(alvosSec[i].alvo, alvosSec[i].marc);
           }
-        }, 600);
-      }, { passive: true });
-      pinoEl.addEventListener("touchmove", function() {
-        _touchMoved = true;
-        if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
-      }, { passive: true });
-      pinoEl.addEventListener("touchend", function() {
-        if (_longPressTimer) { clearTimeout(_longPressTimer); _longPressTimer = null; }
-      }, { passive: true });
+          if (limit < alvosSec.length) {
+            requestAnimationFrame(function () { processarLoteSec(limit); });
+          } else {
+            atualizarClustererGlobal();
+          }
+        };
+        requestAnimationFrame(function () { processarLoteSec(0); });
+      } else {
+        atualizarClustererGlobal();
+      }
+    } else {
+      atualizarClustererGlobal();
+    }
+  }
 
-      // Fallback: contextmenu (right-click desktop / long-press some devices)
-      pinoEl.addEventListener("contextmenu", function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (_clickTimeout) { clearTimeout(_clickTimeout); _clickTimeout = null; }
-        toggleSecundarios(alvo, marcador);
-      });
+  // Atualizar Marker Clusterer global considerando marcadores principais e secundários visíveis
+  function atualizarClustererGlobal() {
+    if (!window.markerClusterer || !mapaPrincipal) return;
 
-      marcador._mandadoRef = alvo.mandado;
-      listaMarcadores.push(marcador);
+    var todos = [].concat(listaMarcadores);
+    Object.keys(secundariosVisiveis).forEach(function (k) {
+      if (secundariosVisiveis[k] && Array.isArray(secundariosVisiveis[k].markers)) {
+        secundariosVisiveis[k].markers.forEach(function (m) {
+          if (m && m.map) todos.push(m);
+        });
+      }
     });
 
-    // Iniciar Marker Clusterer com os marcadores instanciados
-    if (window.markerClusterer && listaMarcadores.length > 0) {
-      clustererInstancia = new window.markerClusterer.MarkerClusterer({
-        map: mapaPrincipal,
-        markers: listaMarcadores
-      });
+    if (todos.length > 0) {
+      if (clustererInstancia) {
+        clustererInstancia.clearMarkers();
+        clustererInstancia.addMarkers(todos);
+      } else {
+        clustererInstancia = new window.markerClusterer.MarkerClusterer({
+          map: mapaPrincipal,
+          markers: todos
+        });
+      }
+    } else if (clustererInstancia) {
+      clustererInstancia.clearMarkers();
     }
+  }
 
-    // Auto-exibir secundários se há filtro de CPI/BPM/CIA ativo
+  // Verificar se um endereço secundário pertence ao filtro de área ativo (CPI / BPM / CIA / DP)
+  function secundarioPertenceAoFiltro(sec, alvo) {
     var cpiVal = (document.getElementById('filtroCPI') || {}).value || 'TODOS';
     var btlVal = (document.getElementById('filtroBatalhao') || {}).value || 'TODOS';
     var ciaVal = (document.getElementById('filtroCIA') || {}).value || 'TODOS';
-    if (cpiVal !== 'TODOS' || btlVal !== 'TODOS' || ciaVal !== 'TODOS' || window._exibirSecundariosGlobal) {
-      dadosFiltrados.forEach(function(alvo) {
-        if (typeof alvo.lat !== 'number' || typeof alvo.lng !== 'number') return;
-        // Buscar marcador correspondente
-        var marc = listaMarcadores.find(function(m) { return m._mandadoRef === alvo.mandado; });
-        if (marc && !secundariosVisiveis[alvo.mandado]) {
-          // Mostrar secundários automaticamente (sem toggle)
-          mostrarSecundariosAuto(alvo, marc);
-        }
-      });
+    var elDP = document.getElementById('filtroDP');
+    var dpVal = elDP ? elDP.value : 'TODOS';
+
+    if (cpiVal === 'TODOS' && btlVal === 'TODOS' && ciaVal === 'TODOS' && dpVal === 'TODOS') return true;
+
+    var normCPI = typeof normalizarArea === 'function' ? normalizarArea(cpiVal) : cpiVal.toUpperCase();
+    var normBTL = typeof normalizarArea === 'function' ? normalizarArea(btlVal) : btlVal.toUpperCase();
+    var normCIA = typeof normalizarArea === 'function' ? normalizarArea(ciaVal) : ciaVal.toUpperCase();
+    var normDP = typeof normalizarArea === 'function' ? normalizarArea(dpVal) : dpVal.toUpperCase();
+
+    var secCPI = typeof normalizarArea === 'function' ? normalizarArea(sec.cpi || sec.cpiArea || '') : (sec.cpi || '').toUpperCase();
+    var secBTL = typeof normalizarArea === 'function' ? normalizarArea(sec.batalhao || sec.bpmArea || '') : (sec.batalhao || '').toUpperCase();
+    var secCIA = typeof normalizarArea === 'function' ? normalizarArea(sec.cia || sec.ciaArea || '') : (sec.cia || '').toUpperCase();
+    var secDP = typeof normalizarArea === 'function' ? normalizarArea(sec.delegacia || sec.dpArea || '') : (sec.delegacia || '').toUpperCase();
+
+    if (secCPI || secBTL || secCIA || secDP) {
+      if (cpiVal !== 'TODOS' && secCPI && secCPI !== normCPI) return false;
+      if (btlVal !== 'TODOS' && secBTL && secBTL !== normBTL) return false;
+      if (ciaVal !== 'TODOS' && secCIA && secCIA !== normCIA) return false;
+      if (dpVal !== 'TODOS' && secDP && secDP !== normDP) return false;
+      return true;
     }
+
+    var secLat = Number(sec.lat);
+    var secLng = Number(sec.lng);
+    var priLat = Number(alvo.lat);
+    var priLng = Number(alvo.lng);
+    if (isNaN(secLat) || isNaN(secLng) || isNaN(priLat) || isNaN(priLng)) return false;
+
+    // Se o secundário está a mais de ~0.25 graus (aprox. 25km) do principal, não desenha linha para fora da subárea
+    var dLat = Math.abs(secLat - priLat);
+    var dLng = Math.abs(secLng - priLng);
+    if (dLat > 0.25 || dLng > 0.25) {
+      return false;
+    }
+
+    return true;
   }
 
   // Mostrar secundários automaticamente (sem toggle)
   function mostrarSecundariosAuto(alvo, marcadorPrincipal) {
     try {
-      var listaSec = JSON.parse(alvo.geodataSecundarios || "[]");
+      var rawSecAuto = alvo.geodataSecundarios || alvo.secundarios || [];
+      var listaSec = Array.isArray(rawSecAuto) ? rawSecAuto : (typeof rawSecAuto === 'string' ? (function() { try { return JSON.parse(rawSecAuto); } catch(e) { return []; } })() : []);
       if (listaSec.length === 0) return;
 
       var markers = [];
       var polylines = [];
+      var priLat = Number(alvo.lat);
+      var priLng = Number(alvo.lng);
 
-      listaSec.forEach(function(sec) {
-        if (typeof sec.lat !== 'number' || typeof sec.lng !== 'number') return;
+      listaSec.forEach(function (sec) {
+        var secLat = Number(sec.lat);
+        var secLng = Number(sec.lng);
+        if (isNaN(secLat) || isNaN(secLng) || sec.lat === null || sec.lng === null || sec.lat === undefined || sec.lng === undefined) return;
+        if (!secundarioPertenceAoFiltro(sec, alvo)) return;
 
-        var secEl = document.createElement('div');
-        secEl.innerHTML = '<svg width="28" height="36" viewBox="0 0 28 36" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 35C14 35 26 23 26 13C26 6.4 20.6 1 14 1C7.4 1 2 6.4 2 13C2 23 14 35 14 35Z" fill="rgba(255,165,0,0.85)" stroke="rgba(0,0,0,0.3)" stroke-width="1"/><circle cx="14" cy="13" r="5" fill="white" opacity="0.9"/></svg>';
-
-        var marcSec = new google.maps.marker.AdvancedMarkerElement({
-          position: { lat: sec.lat, lng: sec.lng },
-          map: mapaPrincipal,
-          title: "Possível Paradeiro: " + alvo.nome,
-          content: secEl,
-          gmpClickable: true
+        // Verificar se já existe um pino (marcador secundário clone) nesta mesma coordenada
+        var jaExisteMarcador = listaMarcadores.some(function (m) {
+          if (!m.position) return false;
+          var mLat = Number(typeof m.position.lat === 'function' ? m.position.lat() : m.position.lat);
+          var mLng = Number(typeof m.position.lng === 'function' ? m.position.lng() : m.position.lng);
+          return Math.abs(mLat - secLat) < 0.0001 && Math.abs(mLng - secLng) < 0.0001;
         });
 
-        marcSec.addEventListener("gmp-click", function() {
-          mapaPrincipal.panTo({ lat: sec.lat, lng: sec.lng });
-          window.abrirCardMobile(alvo);
-        });
+        if (!jaExisteMarcador) {
+          var alvoClone = Object.assign({}, alvo, { _isSecundarioClone: true });
+          var secEl = criarPinoSVG(alvoClone);
 
-        markers.push(marcSec);
+          var marcSec = new google.maps.marker.AdvancedMarkerElement({
+            position: { lat: secLat, lng: secLng },
+            map: mapaPrincipal,
+            title: "Possível Paradeiro (" + alvo.nome + ")",
+            content: secEl,
+            gmpClickable: true
+          });
 
-        // Linha tracejada
-        var line = new google.maps.Polyline({
-          path: [{ lat: alvo.lat, lng: alvo.lng }, { lat: sec.lat, lng: sec.lng }],
-          strokeColor: '#dc2626',
-          strokeOpacity: 0,
-          strokeWeight: 2,
-          map: mapaPrincipal,
-          icons: [{
-            icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, strokeColor: '#dc2626', scale: 4, strokeWeight: 3 },
-            offset: '0',
-            repeat: '18px'
-          }]
-        });
-        polylines.push(line);
+          marcSec.addEventListener("gmp-click", function () {
+            mapaPrincipal.panTo({ lat: secLat, lng: secLng });
+            window.abrirCardMobile(alvo);
+          });
+
+          markers.push(marcSec);
+
+          if (!isNaN(priLat) && !isNaN(priLng)) {
+            var polylineAuto = new google.maps.Polyline({
+              path: [
+                { lat: priLat, lng: priLng },
+                { lat: secLat, lng: secLng }
+              ],
+              geodesic: true,
+              strokeColor: '#f59e0b',
+              strokeOpacity: 0.85,
+              strokeWeight: 2.5,
+              map: mapaPrincipal
+            });
+            polylines.push(polylineAuto);
+          }
+        }
       });
 
       secundariosVisiveis[alvo.mandado] = { markers: markers, polylines: polylines };
@@ -1069,69 +1460,75 @@
 
     if (secundariosVisiveis[key]) {
       // Remover
-      secundariosVisiveis[key].markers.forEach(function(m) { m.map = null; });
-      secundariosVisiveis[key].polylines.forEach(function(p) { p.setMap(null); });
+      secundariosVisiveis[key].markers.forEach(function (m) { m.map = null; });
+      secundariosVisiveis[key].polylines.forEach(function (p) { p.setMap(null); });
       delete secundariosVisiveis[key];
+      atualizarClustererGlobal();
       return;
     }
 
     // Criar secundários
     try {
-      const lista = JSON.parse(alvo.geodataSecundarios || '[]');
+      const rawSecCriar = alvo.geodataSecundarios || alvo.secundarios || [];
+      const lista = Array.isArray(rawSecCriar) ? rawSecCriar : (typeof rawSecCriar === 'string' ? (function() { try { return JSON.parse(rawSecCriar); } catch(e) { return []; } })() : []);
       if (lista.length === 0) return;
 
       const markers = [];
       const polylines = [];
+      const priLat = Number(alvo.lat);
+      const priLng = Number(alvo.lng);
 
-      lista.forEach(function(sec) {
-        if (typeof sec.lat !== 'number' || typeof sec.lng !== 'number' || isNaN(sec.lat) || isNaN(sec.lng)) return;
-        
-        // Pino secundário (amarelo simples)
-        const secEl = document.createElement('div');
-        secEl.className = 'pin-marker';
-        secEl.innerHTML = `
-          <svg width="30" height="40" viewBox="0 0 40 52" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M20 51C20 51 38 33.5 38 19C38 9.059 29.941 1 20 1C10.059 1 2 9.059 2 19C2 33.5 20 51 20 51Z" fill="#f39c12" stroke="rgba(0,0,0,0.3)" stroke-width="1.5"/>
-            <circle cx="20" cy="19" r="10" fill="rgba(0,0,0,0.2)"/>
-            <text x="20" y="23" text-anchor="middle" fill="white" font-size="12" font-weight="bold">?</text>
-          </svg>`;
+      lista.forEach(function (sec) {
+        var secLat = Number(sec.lat);
+        var secLng = Number(sec.lng);
+        if (isNaN(secLat) || isNaN(secLng) || sec.lat === null || sec.lng === null || sec.lat === undefined || sec.lng === undefined) return;
 
-        const marcSec = new google.maps.marker.AdvancedMarkerElement({
-          position: { lat: sec.lat, lng: sec.lng },
-          map: mapaPrincipal,
-          title: "Possível Paradeiro: " + alvo.nome,
-          content: secEl,
-          gmpClickable: true
+        // Verificar se já existe um pino (marcador secundário clone) nesta mesma coordenada
+        var jaExisteMarcador = listaMarcadores.some(function (m) {
+          if (!m.position) return false;
+          var mLat = Number(typeof m.position.lat === 'function' ? m.position.lat() : m.position.lat);
+          var mLng = Number(typeof m.position.lng === 'function' ? m.position.lng() : m.position.lng);
+          return Math.abs(mLat - secLat) < 0.0001 && Math.abs(mLng - secLng) < 0.0001;
         });
 
-        marcSec.addEventListener("gmp-click", function() {
-          mapaPrincipal.panTo({ lat: sec.lat, lng: sec.lng });
-          window.abrirCardMobile(alvo);
-        });
+        if (!jaExisteMarcador) {
+          var alvoClone = Object.assign({}, alvo, { _isSecundarioClone: true });
+          var secEl = criarPinoSVG(alvoClone);
 
-        markers.push(marcSec);
+          const marcSec = new google.maps.marker.AdvancedMarkerElement({
+            position: { lat: secLat, lng: secLng },
+            map: mapaPrincipal,
+            title: "Possível Paradeiro (" + alvo.nome + ")",
+            content: secEl,
+            gmpClickable: true
+          });
 
-        // Linha tracejada
-        const line = new google.maps.Polyline({
-          path: [
-            { lat: alvo.lat, lng: alvo.lng },
-            { lat: sec.lat, lng: sec.lng }
-          ],
-          geodesic: true,
-          strokeColor: '#dc2626',
-          strokeOpacity: 0,
-          strokeWeight: 2,
-          map: mapaPrincipal,
-          icons: [{
-            icon: { path: 'M 0,-1 0,1', strokeOpacity: 1, strokeColor: '#dc2626', scale: 4, strokeWeight: 3 },
-            offset: '0',
-            repeat: '18px'
-          }]
-        });
-        polylines.push(line);
+          marcSec.addEventListener("gmp-click", function () {
+            mapaPrincipal.panTo({ lat: secLat, lng: secLng });
+            window.abrirCardMobile(alvo);
+          });
+
+          markers.push(marcSec);
+
+          if (!isNaN(priLat) && !isNaN(priLng)) {
+            const polyline = new google.maps.Polyline({
+              path: [
+                { lat: priLat, lng: priLng },
+                { lat: secLat, lng: secLng }
+              ],
+              geodesic: true,
+              strokeColor: '#f59e0b',
+              strokeOpacity: 0.85,
+              strokeWeight: 2.5,
+              map: mapaPrincipal
+            });
+            polylines.push(polyline);
+          }
+        }
       });
 
-      secundariosVisiveis[key] = { markers, polylines };
+      secundariosVisiveis[key] = { markers: markers, polylines: polylines };
+      atualizarClustererGlobal();
     } catch (e) { console.error("Erro ao toggle secundários:", e); }
   }
 
@@ -1142,10 +1539,10 @@
     const R = 6371;
     const dLat = (lat2 - lat1) * Math.PI / 180;
     const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
 
   function iniciarGeolocalizacao() {
@@ -1158,7 +1555,7 @@
     }
 
     navigator.geolocation.getCurrentPosition(
-      function(pos) {
+      function (pos) {
         _gpsResolvido = true;
         posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         mapaPrincipal.setCenter(posicaoPatrulheiro);
@@ -1174,11 +1571,11 @@
         }
 
         // Identificar área após polígonos carregarem
-        setTimeout(function() { atualizarBadgeAreaGPS(); }, 3000);
+        setTimeout(function () { atualizarBadgeAreaGPS(); }, 3000);
       },
-      function(error) { 
+      function (error) {
         _gpsResolvido = true;
-        console.warn('[Sentinela] GPS indisponível (mapa continua funcionando): ', error.message || error); 
+        console.warn('[Sentinela] GPS indisponível (mapa continua funcionando): ', error.message || error);
         window._cpiAutoSelecionado = true;
         _tentarExibirSemGPS();
       },
@@ -1187,7 +1584,7 @@
 
     // Watch contínuo para atualizar a posição da viatura/celular
     watchPositionId = navigator.geolocation.watchPosition(
-      function(pos) {
+      function (pos) {
         posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         if (window.marcadorPatrulheiro) {
           window.marcadorPatrulheiro.position = posicaoPatrulheiro;
@@ -1202,7 +1599,7 @@
         }
         atualizarBadgeAreaGPS();
       },
-      function() {},
+      function () { },
       { enableHighAccuracy: true, maximumAge: 30000 }
     );
   }
@@ -1223,7 +1620,7 @@
     }
     _semGpsJaExibiu = true;
     console.log('[Sentinela v2.4] Exibindo mapa sem GPS - filtro TODOS');
-    
+
     // Forçar exibição e resize imediatamente para evitar tela cinza
     const mapEl = document.getElementById("mapa");
     console.log('[DEBUG-MAP] Div mapa dimensoes:', mapEl ? mapEl.offsetWidth + 'x' + mapEl.offsetHeight : 'null');
@@ -1233,7 +1630,7 @@
     }
 
     if (typeof filtrarNoMapa === 'function') filtrarNoMapa();
-    if (typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS','TODOS','TODOS','TODOS');
+    if (typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS', 'TODOS', 'TODOS', 'TODOS');
 
     _autoFitMapaNoPinos();
   }
@@ -1245,19 +1642,19 @@
       if (typeof google !== 'undefined' && mapaPrincipal) {
         console.log('[DEBUG-MAP] Aplicando fallback manual de centro do mapa');
         google.maps.event.trigger(mapaPrincipal, 'resize');
-        
+
         let lat = parseFloat(configsSistema && configsSistema.mapa_lat_padrao);
         if (isNaN(lat) || Math.abs(lat) > 90) lat = -22.9056;
-        
+
         let lng = parseFloat(configsSistema && configsSistema.mapa_lng_padrao);
         if (isNaN(lng) || Math.abs(lng) > 180) lng = -47.0608;
-        
+
         const zoom = parseInt(configsSistema && configsSistema.mapa_zoom_padrao) || 10;
-        
+
         console.log('[DEBUG-MAP] Fallback coords seguras:', lat, lng, zoom);
         mapaPrincipal.setCenter({ lat: lat, lng: lng });
         mapaPrincipal.setZoom(zoom);
-        
+
         // Verifica dimensões novamente
         const mapEl = document.getElementById("mapa");
         console.log('[DEBUG-MAP] Div mapa dimensoes apos fallback:', mapEl ? mapEl.offsetWidth + 'x' + mapEl.offsetHeight : 'null');
@@ -1267,7 +1664,7 @@
     try {
       var bounds = new google.maps.LatLngBounds();
       var count = 0;
-      listaMarcadores.forEach(function(m) {
+      listaMarcadores.forEach(function (m) {
         if (m.position) {
           bounds.extend(m.position);
           count++;
@@ -1277,14 +1674,14 @@
         console.log('[DEBUG-MAP] Aplicando fitBounds em', count, 'marcadores');
         mapaPrincipal.fitBounds(bounds, { top: 80, bottom: 80, left: 40, right: 40 });
         console.log('[Sentinela v2.4] Auto-fit aplicado para ' + count + ' marcadores');
-        var listener = google.maps.event.addListenerOnce(mapaPrincipal, 'idle', function() {
+        var listener = google.maps.event.addListenerOnce(mapaPrincipal, 'idle', function () {
           if (mapaPrincipal.getZoom() > 15) {
-             console.log('[DEBUG-MAP] Limitando zoom pós fitBounds para 15');
-             mapaPrincipal.setZoom(15);
+            console.log('[DEBUG-MAP] Limitando zoom pós fitBounds para 15');
+            mapaPrincipal.setZoom(15);
           }
         });
       }
-    } catch(e) {
+    } catch (e) {
       console.error('[Sentinela v2.4] Erro no auto-fit:', e);
     }
   }
@@ -1307,7 +1704,7 @@
       var yi = paths[i].lat, xi = paths[i].lng;
       var yj = paths[j].lat, xj = paths[j].lng;
       if (((yi > lat) !== (yj > lat)) &&
-          (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
+        (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) {
         inside = !inside;
       }
     }
@@ -1315,6 +1712,10 @@
   }
 
   var badgeAreaGPSNode = null;
+
+  var _lastBadgeGpsTime = 0;
+  var _lastBadgeGpsLat = 0;
+  var _lastBadgeGpsLng = 0;
 
   /**
    * Identifica em qual polígono o patrulheiro está e atualiza o badge
@@ -1324,6 +1725,17 @@
 
     var lat = posicaoPatrulheiro.lat;
     var lng = posicaoPatrulheiro.lng;
+
+    var agora = Date.now();
+    var distLat = Math.abs(lat - _lastBadgeGpsLat);
+    var distLng = Math.abs(lng - _lastBadgeGpsLng);
+    if (_lastBadgeGpsTime > 0 && (agora - _lastBadgeGpsTime < 4000) && (distLat < 0.0002 && distLng < 0.0002)) {
+      return;
+    }
+    _lastBadgeGpsTime = agora;
+    _lastBadgeGpsLat = lat;
+    _lastBadgeGpsLng = lng;
+
     var areaEncontrada = null;
 
     // Buscar nos polígonos já renderizados
@@ -1333,35 +1745,45 @@
       if (!path) continue;
 
       var pathArray = [];
-      path.forEach(function(latLng) {
+      path.forEach(function (latLng) {
         pathArray.push({ lat: latLng.lat(), lng: latLng.lng() });
       });
 
       if (pontoNoPoligonoJS(lat, lng, pathArray)) {
         areaEncontrada = poligonosInstancias[i];
-        
+
         // Auto-selecionar o CPI local no filtro se ainda não foi feito
         if (!window._cpiAutoSelecionado && areaEncontrada.cpi) {
           window._cpiAutoSelecionado = true;
+          window._cpiGpsEncontrado = areaEncontrada.cpi;
+
+          // Auto-selecionar no filtro dos gráficos se ele já estiver carregado
+          var selectGraf = document.getElementById('filtroComandoGraficos');
+          if (selectGraf) {
+            selectGraf.value = areaEncontrada.cpi;
+            if (typeof aoMudarComandoGraficos === 'function') {
+              aoMudarComandoGraficos();
+            }
+          }
+
           if (document.getElementById('filtroCPI')) {
-             document.getElementById('filtroCPI').value = areaEncontrada.cpi;
-             if (document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').value = areaEncontrada.cpi;
-             montarFiltrosBatalhao(false);
-             filtrarNoMapa();
-             // Pintar o polígono do CPI no mapa
-             aplicarFiltrosDePoligono(
-               areaEncontrada.cpi,
-               document.getElementById('filtroBatalhao') ? document.getElementById('filtroBatalhao').value : 'TODOS',
-               document.getElementById('filtroCIA') ? document.getElementById('filtroCIA').value : 'TODOS',
-               document.getElementById('filtroDP') ? document.getElementById('filtroDP').value : 'TODOS'
-             );
+            document.getElementById('filtroCPI').value = areaEncontrada.cpi;
+            if (document.getElementById('filtroCPIMobile')) document.getElementById('filtroCPIMobile').value = areaEncontrada.cpi;
+            montarFiltrosBatalhao(false);
+            if (typeof popularTiposMandadoSelect === 'function') popularTiposMandadoSelect();
+            filtrarNoMapa();
+            // Pintar o polígono do CPI no mapa
+            aplicarFiltrosDePoligono(
+              areaEncontrada.cpi,
+              document.getElementById('filtroBatalhao') ? document.getElementById('filtroBatalhao').value : 'TODOS',
+              document.getElementById('filtroCIA') ? document.getElementById('filtroCIA').value : 'TODOS',
+              document.getElementById('filtroDP') ? document.getElementById('filtroDP').value : 'TODOS'
+            );
           }
         }
         break;
       }
     }
-
-    window.gpsAreaEncontrada = areaEncontrada;
 
     // Buscar dados completos do polígono (batalhao, cia, delegacia) via dados carregados
     var badge = badgeAreaGPSNode || document.getElementById('badgeAreaGPS');
@@ -1378,18 +1800,18 @@
     if (areaEncontrada) {
       // Buscar detalhes via callback do servidor (delegacia e cidade)
       var info = areaEncontrada;
-      
+
       // Layout Único Fixo (Header) - Container em Coluna
       var html = '<div style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px; height:100%;">';
-      
+
       // LINHA SUPERIOR
       html += '<div style="display:flex; align-items:center; gap:8px; padding-right:4px;">';
-      
+
       // Ícone GPS + CPI
       html += '<div style="display:flex; align-items:center; gap:6px;">';
       html += '<span class="material-symbols-outlined gps-icon-badge" style="color:#ffffff; animation: pulse-gps 2s infinite;">my_location</span>';
       if (info.cpi) {
-         html += '<span class="gps-cpi-badge" style="color:#ffffff; background:rgba(255,255,255,0.15); border-radius:6px; border:1px solid rgba(255,255,255,0.25); letter-spacing:0.5px;">' + info.cpi.toUpperCase() + '</span>';
+        html += '<span class="gps-cpi-badge" style="color:#ffffff; background:rgba(255,255,255,0.15); border-radius:6px; border:1px solid rgba(255,255,255,0.25); letter-spacing:0.5px;">' + info.cpi.toUpperCase() + '</span>';
       }
       html += '</div>';
 
@@ -1397,10 +1819,10 @@
       html += '<div style="display:flex; flex-direction:column; justify-content:center; align-items:center; border-left:1px solid rgba(255,255,255,0.2); padding-left:8px; line-height:1.15; white-space:nowrap;">';
       html += '<span class="gps-bat-badge" style="color:var(--text-primary); letter-spacing:0.5px;">' + (info.batalhao ? info.batalhao.toUpperCase() : 'ÁREA DESCONHECIDA') + '</span>';
       if (info.cia) {
-         html += '<span class="gps-cia-badge" style="color:var(--text-secondary); margin-top:1px;">' + info.cia.toUpperCase() + '</span>';
+        html += '<span class="gps-cia-badge" style="color:var(--text-secondary); margin-top:1px;">' + info.cia.toUpperCase() + '</span>';
       }
       html += '</div>';
-      
+
       html += '</div>';
 
       // Para obter delegacia, buscar via servidor uma vez
@@ -1418,20 +1840,20 @@
         var agora = new Date().getTime();
         if (!badge._ultimaChamadaRedeArea || (agora - badge._ultimaChamadaRedeArea > 15000)) {
           badge._ultimaChamadaRedeArea = agora;
-          google.script.run.withSuccessHandler(function(area) {
+          google.script.run.withSuccessHandler(function (area) {
             if (area) {
               var extraHtml = '';
               if (area.delegacia) {
-                 extraHtml += '<div class="gps-dp-loaded-badge" style="display:flex; align-items:center; justify-content:center; gap:4px; color:rgba(255,255,255,0.9); width:100%; border-top:1px solid rgba(255,255,255,0.15); padding-top:3px; margin-top:2px;">';
-                 extraHtml += '<span class="material-symbols-outlined gps-dp-icon-badge" style="color:#ffffff;">account_balance</span> ' + area.delegacia.toUpperCase();
-                 extraHtml += '</div>';
+                extraHtml += '<div class="gps-dp-loaded-badge" style="display:flex; align-items:center; justify-content:center; gap:4px; color:rgba(255,255,255,0.9); width:100%; border-top:1px solid rgba(255,255,255,0.15); padding-top:3px; margin-top:2px;">';
+                extraHtml += '<span class="material-symbols-outlined gps-dp-icon-badge" style="color:#ffffff;">account_balance</span> ' + area.delegacia.toUpperCase();
+                extraHtml += '</div>';
               }
               badge._extraInfo = extraHtml;
               badge.innerHTML = html + extraHtml + '</div>';
             } else {
               badge.innerHTML = html + '</div>';
             }
-          }).withFailureHandler(function() {
+          }).withFailureHandler(function () {
             badge.innerHTML = html + '</div>';
           }).identificarAreaPorCoordenadas(lat, lng);
         } else {
@@ -1451,8 +1873,7 @@
   /* ================================================================
      MÓDULO 6: POLÍGONOS DE ÁREAS (BPM/CIA) E CACHE LOCAL (INDEXEDDB)
      ================================================================ */
-  window.poligonosInstancias = window.poligonosInstancias || [];
-  let poligonosInstancias = window.poligonosInstancias;
+  window.poligonosInstancias = [];
   let poligonosLabels = [];
   let poligonosVisiveis = true;
   let poligonosCarregados = false;
@@ -1465,22 +1886,22 @@
     let request;
     try {
       request = indexedDB.open(dbName, 2);
-    } catch(e) {
+    } catch (e) {
       callbackFalha(); return;
     }
-    request.onupgradeneeded = function(e) {
+    request.onupgradeneeded = function (e) {
       let db = e.target.result;
       if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
       if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
     };
-    request.onsuccess = function(e) {
+    request.onsuccess = function (e) {
       let db = e.target.result;
       if (!db.objectStoreNames.contains("Poligonos")) { callbackFalha(); return; }
       try {
         let transaction = db.transaction(["Poligonos"], "readonly");
         let store = transaction.objectStore("Poligonos");
         let getRequest = store.get("dados_mapa");
-        getRequest.onsuccess = function() {
+        getRequest.onsuccess = function () {
           if (getRequest.result && String(getRequest.result.versao) === String(versaoServidor)) {
             callbackSucesso(getRequest.result.dados);
           } else {
@@ -1498,19 +1919,19 @@
     let request;
     try {
       request = indexedDB.open(dbName, 2);
-    } catch(e) { return; }
-    request.onupgradeneeded = function(e) {
+    } catch (e) { return; }
+    request.onupgradeneeded = function (e) {
       let db = e.target.result;
       if (!db.objectStoreNames.contains("Poligonos")) db.createObjectStore("Poligonos", { keyPath: "id" });
       if (!db.objectStoreNames.contains("Mandados")) db.createObjectStore("Mandados", { keyPath: "id" });
     };
-    request.onsuccess = function(e) {
+    request.onsuccess = function (e) {
       let db = e.target.result;
       try {
         let transaction = db.transaction(["Poligonos"], "readwrite");
         let store = transaction.objectStore("Poligonos");
         store.put({ id: "dados_mapa", versao: String(versaoServidor), dados: dados });
-      } catch (err) {}
+      } catch (err) { }
     };
   }
 
@@ -1519,22 +1940,22 @@
 
     var versaoCachePoligono = versaoServidor || "0"; // Vindo da checagem central se disponível
 
-    var failsafePoligonos = setTimeout(function() {
+    var failsafePoligonos = setTimeout(function () {
       if (!poligonosCarregados) {
         if (typeof filtrarNoMapa === 'function') filtrarNoMapa();
         fecharTelaDeCarregamento();
       }
     }, 30000);
 
-    lerCachePoligonos(versaoCachePoligono, function(dadosCache) {
+    lerCachePoligonos(versaoCachePoligono, function (dadosCache) {
       // SUCESSO: Dados lidos do Cache e versão bate.
       clearTimeout(failsafePoligonos);
       console.log("Polígonos lidos do HD/IndexedDB em ms!");
       processarDadosPoligonos(dadosCache);
-    }, function() {
+    }, function () {
       // FALHA: Cache vazio ou versão desatualizada
       console.log("Baixando polígonos atualizados do Servidor...");
-      google.script.run.withSuccessHandler(function(dados) {
+      google.script.run.withSuccessHandler(function (dados) {
         clearTimeout(failsafePoligonos);
         if (!dados || dados.length === 0) {
           if (typeof filtrarNoMapa === 'function') filtrarNoMapa();
@@ -1543,7 +1964,7 @@
         }
         salvarCachePoligonos(versaoCachePoligono, dados);
         processarDadosPoligonos(dados);
-      }).withFailureHandler(function(err) {
+      }).withFailureHandler(function (err) {
         clearTimeout(failsafePoligonos);
         if (typeof filtrarNoMapa === 'function') filtrarNoMapa();
         fecharTelaDeCarregamento();
@@ -1554,9 +1975,9 @@
   function processarDadosPoligonos(dados) {
     if (poligonosCarregados) return;
     poligonosCarregados = true;
-    
+
     // Renderizar com callback — só monta filtros quando TODOS os lotes terminarem
-    renderizarPoligonos(dados, function() {
+    renderizarPoligonos(dados, function () {
       adicionarBotaoPoligonos();
       montarFiltrosCPI();
       montarFiltrosBatalhao(false);
@@ -1585,9 +2006,8 @@
 
   function renderizarPoligonos(dados, onComplete) {
     // Limpar anteriores
-    poligonosInstancias.forEach(function(p) { p.polygon.setMap(null); });
-    poligonosInstancias.length = 0;
-    window.poligonosInstancias = poligonosInstancias;
+    poligonosInstancias.forEach(function (p) { p.polygon.setMap(null); });
+    poligonosInstancias = [];
 
     // Processar em lotes para não travar a UI
     var LOTE = 50;
@@ -1599,29 +2019,24 @@
         try {
           let item = dados[i];
           let geo = JSON.parse(item.geoJson);
-          if (!geo || !geo.coordinates || !geo.coordinates[0]) continue;
+          if (!geo || !geo.coordinates) continue;
 
-          let allPaths = [];
-
+          var allPaths = [];
           if (geo.type === "MultiPolygon") {
-            geo.coordinates.forEach(function(polygon) {
-              polygon.forEach(function(ring) {
-                allPaths.push(ring.map(function(coord) {
+            geo.coordinates.forEach(function (polygonRings) {
+              polygonRings.forEach(function (ring) {
+                allPaths.push(ring.map(function (coord) {
                   return { lat: coord[1], lng: coord[0] };
                 }));
               });
             });
-          } else if (geo.type === "Polygon") {
-            geo.coordinates.forEach(function(ring) {
-              allPaths.push(ring.map(function(coord) {
+          } else {
+            geo.coordinates.forEach(function (ring) {
+              allPaths.push(ring.map(function (coord) {
                 return { lat: coord[1], lng: coord[0] };
               }));
             });
-          } else {
-            continue;
           }
-
-          if (allPaths.length === 0) continue;
 
           var corHex = item.cor || '#3388ff';
 
@@ -1642,14 +2057,14 @@
             window.infoWindowPoligono = new google.maps.InfoWindow();
           }
 
-          polygon.addListener('click', function(e) {
+          polygon.addListener('click', function (e) {
             if (window.infoWindowPoligono) window.infoWindowPoligono.close();
             if (window.infoWindowAtiva) window.infoWindowAtiva.close();
 
             let fCPI = (document.getElementById('filtroCPI') || {}).value || 'TODOS';
             let fBPM = (document.getElementById('filtroBatalhao') || {}).value || 'TODOS';
             let nomeMostrar = "";
-            
+
             if (fCPI === 'TODOS') {
               nomeMostrar = item.cpi;
               if (!nomeMostrar) nomeMostrar = item.batalhao && item.batalhao.toUpperCase().includes('CPA') ? "CPA GERAL" : item.batalhao;
@@ -1664,9 +2079,9 @@
             if (!pos) {
               let path = this.getPath();
               if (path && path.getLength() > 0) {
-                 pos = path.getAt(0);
+                pos = path.getAt(0);
               } else {
-                 return;
+                return;
               }
             }
 
@@ -1678,13 +2093,13 @@
             }
 
             window.infoWindowPoligono.setContent(
-              '<div style="display:flex; flex-direction:column; gap:4px; padding:12px 16px; font-family:var(--font-sans, sans-serif); min-width:140px;">' +
-                '<div style="display:flex; align-items:center; gap:4px; font-size:9px; font-weight:800; color:var(--brand-red); text-transform:uppercase; letter-spacing:0.8px;">' +
-                  '<span class="material-symbols-outlined" style="font-size:12px; color:var(--brand-red);">map</span> Identificação de Área' +
-                '</div>' +
-                '<div style="font-size:13px; font-weight:900; color:var(--text-primary,#fff); letter-spacing:-0.3px; text-transform:uppercase; margin-top:2px; white-space:nowrap;">' + 
-                  nomeMostrar + 
-                '</div>' +
+              '<div style="display:flex; flex-direction:column; gap:6px; padding:10px 12px; font-family:var(--font-sans, sans-serif); min-width:160px; align-items:center;">' +
+              '<div style="display:flex; justify-content:center; align-items:center; gap:6px; font-size:10px; font-weight:900; color:var(--brand-red); text-transform:uppercase; letter-spacing:1px; border-bottom:1px solid rgba(255,255,255,0.15); padding-bottom:6px; width:100%;">' +
+              '<span class="material-symbols-outlined" style="font-size:14px; color:var(--brand-red);">map</span> ÁREA' +
+              '</div>' +
+              '<div style="font-size:14px; font-weight:900; color:#ffffff; letter-spacing:0.5px; text-transform:uppercase; margin-top:4px; white-space:nowrap; text-align:center; text-shadow:0 0 8px rgba(255,255,255,0.3);">' +
+              nomeMostrar +
+              '</div>' +
               '</div>'
             );
             window.infoWindowPoligono.setPosition(pos);
@@ -1762,12 +2177,12 @@
     let overlayText = document.getElementById('mapStatusText');
 
     if (poligonosLabels && poligonosLabels.length > 0) {
-      poligonosLabels.forEach(function(l) { l.map = null; });
+      poligonosLabels.forEach(function (l) { l.map = null; });
     }
     poligonosLabels = [];
 
     if (!poligonosVisiveis) {
-      poligonosInstancias.forEach(function(p) { p.polygon.setMap(null); });
+      poligonosInstancias.forEach(function (p) { p.polygon.setMap(null); });
       if (overlay) overlay.style.display = 'none';
       return;
     }
@@ -1777,7 +2192,7 @@
       if (filtroCPI !== 'TODOS') parts.push(filtroCPI);
       if (filtroBPM !== 'TODOS') parts.push(filtroBPM);
       if (filtroCIA !== 'TODOS') parts.push(filtroCIA);
-      
+
       const elDP = document.getElementById('filtroDP');
       if (elDP && elDP.value !== 'TODOS') parts.push(elDP.value);
 
@@ -1805,12 +2220,12 @@
       return coresAtribuidas[chave];
     }
 
-    poligonosInstancias.forEach(function(p) {
+    poligonosInstancias.forEach(function (p) {
       let matchCPI = (filtroCPI === 'TODOS' || p.cpi === filtroCPI);
       let matchBPM = (filtroBPM === 'TODOS' || p.batalhao === filtroBPM);
       let matchCIA = (filtroCIA === 'TODOS' || p.cia === filtroCIA);
       let matchDP = (!filtroDP || filtroDP === 'TODOS' || p.delegacia === filtroDP);
-      
+
       if (matchCPI && matchBPM && matchCIA && matchDP) {
         var corBase;
 
@@ -1858,7 +2273,7 @@
       // O layersPanel é o segundo filho do layersWrapper (primeiro é o btnLayers)
       var layersPanel = layersWrapper.querySelector('div');
       if (!layersPanel) return;
-      
+
       var btnPoligonos = document.createElement('button');
       btnPoligonos.id = 'btnTogglePoligonos';
       btnPoligonos.innerHTML = '<span class="material-symbols-outlined" style="font-size:20px;color:var(--success);text-shadow:0 0 8px rgba(46, 204, 113, 0.4);">hexagon</span>';
