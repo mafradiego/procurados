@@ -83,32 +83,75 @@
       if (areaData.cpi === "FORA DO ESTADO") {
         return '<div style="display:flex;margin-top:4px;"><span style="font-size:9px;font-weight:800;color:var(--danger);padding:3px 8px;background:rgba(255,59,48,0.15);border-radius:3px;border:1px solid rgba(255,59,48,0.3);">FORA DO ESTADO</span></div>';
       }
+      let rawCpi = areaData.cpi || areaData.cpiArea || '';
+      let limpoCpi = String(rawCpi).trim().replace(/^CPM-/i, '').replace(/CPM-CPA/gi, 'CPA');
+      let rotuloCpi = (/CPA|CPAM/i.test(rawCpi) || /CPA|CPAM/i.test(limpoCpi)) ? 'CPA' : 'CPI';
+      let cpiVal = (limpoCpi && limpoCpi !== 'N/A') ? limpoCpi : '';
+      let btlVal = (areaData.batalhao || areaData.bpmArea || '').trim();
+      if (btlVal === 'N/A') btlVal = '';
+      let ciaVal = (areaData.cia || areaData.ciaArea || '').trim();
+      if (ciaVal === 'N/A') ciaVal = '';
+
+      let sLat = Number(areaData.lat || areaData.latitude || 0);
+      let sLng = Number(areaData.lng || areaData.longitude || 0);
+
+      if ((!cpiVal || !btlVal || !ciaVal) && !isNaN(sLat) && sLat !== 0 && !isNaN(sLng) && sLng !== 0) {
+        if (typeof identificarAreaPorCoordenadas === 'function') {
+          try {
+            let areaLoc = identificarAreaPorCoordenadas(sLat, sLng);
+            if (areaLoc) {
+              if (!cpiVal && areaLoc.cpi) {
+                rawCpi = areaLoc.cpi;
+                limpoCpi = String(rawCpi).trim().replace(/^CPM-/i, '').replace(/CPM-CPA/gi, 'CPA');
+                rotuloCpi = (/CPA|CPAM/i.test(rawCpi) || /CPA|CPAM/i.test(limpoCpi)) ? 'CPA' : 'CPI';
+                cpiVal = limpoCpi;
+              }
+              if (!btlVal && areaLoc.batalhao) btlVal = areaLoc.batalhao;
+              if (!ciaVal && areaLoc.cia) ciaVal = areaLoc.cia;
+            }
+          } catch(e) {}
+        }
+      }
+
+      if (!cpiVal && !btlVal && !ciaVal) return '';
+
       let h = '<div style="display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;">';
-      if (areaData.cpi) h += '<span style="font-size:9px;font-weight:800;color:var(--brand-red);padding:3px 6px;background:rgba(169,32,32,0.12);border-radius:3px;border:1px solid var(--brand-red);">COMANDO: ' + areaData.cpi + '</span>';
-      if (areaData.batalhao) h += '<span style="font-size:9px;font-weight:700;color:var(--text-primary);padding:3px 6px;background:rgba(255,255,255,0.08);border-radius:3px;border:1px solid rgba(255,255,255,0.2);">BTL: ' + areaData.batalhao + '</span>';
-      if (areaData.cia) h += '<span style="font-size:9px;font-weight:700;color:var(--text-primary);padding:3px 6px;background:rgba(255,255,255,0.08);border-radius:3px;border:1px solid rgba(255,255,255,0.2);">CIA: ' + areaData.cia + '</span>';
-      if (areaData.delegacia) h += '<span style="font-size:9px;font-weight:700;color:var(--text-secondary);padding:3px 6px;background:rgba(255,255,255,0.04);border-radius:3px;border:1px solid rgba(255,255,255,0.1);">DP: ' + areaData.delegacia + '</span>';
+      if (cpiVal) h += `<span style="font-size:9px;font-weight:900;color:#fca5a5;padding:2px 6px;background:rgba(239,68,68,0.15);border-radius:4px;border:1px solid rgba(239,68,68,0.5);">${rotuloCpi}: ${cpiVal}</span>`;
+      if (btlVal) h += `<span style="font-size:9px;font-weight:900;color:#fde047;padding:2px 6px;background:rgba(251,191,36,0.15);border-radius:4px;border:1px solid rgba(251,191,36,0.5);">BTL: ${btlVal}</span>`;
+      if (ciaVal) h += `<span style="font-size:9px;font-weight:900;color:#86efac;padding:2px 6px;background:rgba(34,197,94,0.15);border-radius:4px;border:1px solid rgba(34,197,94,0.5);">CIA: ${ciaVal}</span>`;
       h += '</div>';
       return h;
     };
     try {
-      const listaSec = JSON.parse(alvo.geodataSecundarios || "[]");
+      let rawSecCard = alvo.geodataSecundarios || alvo.secundarios || [];
+      let listaSec = [];
+      if (Array.isArray(rawSecCard)) {
+        listaSec = rawSecCard;
+      } else if (typeof rawSecCard === 'string') {
+        try { listaSec = JSON.parse(rawSecCard); } catch (eSecParse) { listaSec = []; }
+      }
       if (listaSec.length > 0) {
         listaSec.forEach(function(sec, idx) {
+          let sObj = (typeof sec === 'string') ? { endereco: sec } : (sec || {});
+          let sEnd = sObj.endereco || sObj.texto || (typeof sec === 'string' ? sec : 'Endereço secundário sem texto');
+          let sLat = Number(sObj.lat || sObj.latitude || 0);
+          let sLng = Number(sObj.lng || sObj.longitude || 0);
+
           let kmSec = '';
-          if (posicaoPatrulheiro && typeof sec.lat === 'number' && typeof sec.lng === 'number') {
-            const d = calcularHaversine(posicaoPatrulheiro.lat, posicaoPatrulheiro.lng, sec.lat, sec.lng);
+          if (posicaoPatrulheiro && !isNaN(sLat) && sLat !== 0 && !isNaN(sLng) && sLng !== 0) {
+            const d = calcularHaversine(posicaoPatrulheiro.lat, posicaoPatrulheiro.lng, sLat, sLng);
             kmSec = '<div class="km-badge" style="font-size:10px;padding:4px 8px;margin-bottom:6px;"><span class="material-symbols-outlined" style="font-size:14px;">near_me</span> ' + d.toFixed(1) + ' km</div>';
           }
           // Área do endereço secundário
-          let areaSec = montarAreaBadge(sec);
+          let areaSec = montarAreaBadge(sObj);
+          let btnRotaSec = (!isNaN(sLat) && sLat !== 0 && !isNaN(sLng) && sLng !== 0) ?
+            '<button class="btn-rota-sec" onclick="abrirGpsNativo(' + sLat + ', ' + sLng + ')"><span class="material-symbols-outlined" style="font-size:16px;">explore</span> ROTA</button>' +
+            '<button class="btn-rota-sec" style="width:auto;padding:8px;background:#FBBC04;" onclick="abrirStreetView(' + sLat + ', ' + sLng + ')" title="Street View"><svg width="16" height="16" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M12.56 14.33c-.34.27-.56.7-.56 1.17V21h7c1.1 0 2-.9 2-2v-5.98c-.94-.33-1.95-.52-3-.52-2.03 0-3.93.7-5.44 1.83zM12 6c1.93 0 3.5-1.57 3.5-3.5S13.93-1 12-1 8.5.57 8.5 2.5 10.07 6 12 6zm-1.44 8.33C9.07 12.93 7.14 12.23 5 12.23c-1.05 0-2.06.19-3 .52V19c0 1.1.9 2 2 2h7v-5.5c0-.47-.22-.9-.56-1.17l-.88-.67zM12 8c-1.66 0-3 1.34-3 3 0 .35.07.69.18 1.01L12 14.34l2.82-2.33c.11-.32.18-.66.18-1.01 0-1.66-1.34-3-3-3z"/></svg></button>' : '';
+
           htmlSecundarios += '<div class="endereco-sec-item">' + kmSec +
-            '<div class="endereco-texto"><strong>Outro Endereço ' + (idx + 1) + ':</strong>' + sec.endereco + btnCopiar(sec.endereco) + '</div>' +
+            '<div class="endereco-texto"><strong>Outro Endereço ' + (idx + 1) + ':</strong>' + sEnd + btnCopiar(sEnd) + '</div>' +
             areaSec +
-            '<div style="display:flex;gap:6px;">' +
-              '<button class="btn-rota-sec" onclick="abrirGpsNativo(' + sec.lat + ', ' + sec.lng + ')"><span class="material-symbols-outlined" style="font-size:16px;">explore</span> ROTA</button>' +
-              '<button class="btn-rota-sec" style="width:auto;padding:8px;background:#FBBC04;" onclick="abrirStreetView(' + sec.lat + ', ' + sec.lng + ')" title="Street View"><svg width="16" height="16" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M12.56 14.33c-.34.27-.56.7-.56 1.17V21h7c1.1 0 2-.9 2-2v-5.98c-.94-.33-1.95-.52-3-.52-2.03 0-3.93.7-5.44 1.83zM12 6c1.93 0 3.5-1.57 3.5-3.5S13.93-1 12-1 8.5.57 8.5 2.5 10.07 6 12 6zm-1.44 8.33C9.07 12.93 7.14 12.23 5 12.23c-1.05 0-2.06.19-3 .52V19c0 1.1.9 2 2 2h7v-5.5c0-.47-.22-.9-.56-1.17l-.88-.67zM12 8c-1.66 0-3 1.34-3 3 0 .35.07.69.18 1.01L12 14.34l2.82-2.33c.11-.32.18-.66.18-1.01 0-1.66-1.34-3-3-3z"/></svg></button>' +
-            '</div></div>';
+            '<div style="display:flex;gap:6px;margin-top:6px;">' + btnRotaSec + '</div></div>';
         });
       } else {
         htmlSecundarios = '<div style="color:var(--text-muted);font-size:11px;text-align:center;padding:10px;">Nenhum endereço adicional.</div>';
@@ -121,10 +164,37 @@
     dataPura = dataPura ? dataPura[1].replace(/\./g, '/') : strValidade;
 
     // Perfil
+    var calcIdade = function(dataStr) {
+      if (!dataStr || typeof dataStr !== 'string') return '';
+      var s = dataStr.trim();
+      if (!s || s === 'N/A' || s === '-' || s === 'Não informado' || s === 'Não consta') return '';
+      var dia, mes, ano;
+      var mBR = s.match(/^(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{4})/);
+      if (mBR) {
+        dia = parseInt(mBR[1], 10);
+        mes = parseInt(mBR[2], 10);
+        ano = parseInt(mBR[3], 10);
+      } else {
+        var mISO = s.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+        if (mISO) {
+          ano = parseInt(mISO[1], 10);
+          mes = parseInt(mISO[2], 10);
+          dia = parseInt(mISO[3], 10);
+        }
+      }
+      if (!dia || !mes || !ano || isNaN(dia) || isNaN(mes) || isNaN(ano)) return '';
+      var hoje = new Date();
+      var id = hoje.getFullYear() - ano;
+      var m = (hoje.getMonth() + 1) - mes;
+      if (m < 0 || (m === 0 && hoje.getDate() < dia)) id--;
+      return (id >= 0 && id < 130) ? ' <span style="color:#fbbf24; font-weight:800; font-size:11px;">(' + id + ' anos)</span>' : '';
+    };
+
     let htmlPerfil = '';
     const addP = function(lbl, val) { if (isValido(val)) htmlPerfil += '<div style="margin:0;padding:2px 0;"><strong>' + lbl + ':</strong> ' + val + '</div>'; };
     addP("Nome Social", extras.nomeSocial); addP("RJI", extras.rji); addP("Alcunha", extras.alcunha);
-    addP("Nasc", alvo.nascimento); addP("Sexo", alvo.sexo); addP("Cor", alvo.cor);
+    let strNasc = isValido(alvo.nascimento) ? (alvo.nascimento + calcIdade(alvo.nascimento)) : '';
+    addP("Nasc", strNasc); addP("Sexo", alvo.sexo); addP("Cor", alvo.cor);
     addP("Natural", alvo.naturalidade); addP("Filiação", alvo.filiacao); addP("Marcas", extras.marcas);
 
     // Info Processual
@@ -151,10 +221,21 @@
     let badgesHtml = '';
     
     blocosLeis.forEach((bloco, idx) => {
+      let espExtr = extP(bloco, 'Espécie de prisão:');
       let lei = extP(bloco, 'Lei:');
       let artigo = extP(bloco, 'Artigo:');
       let paragrafo = extP(bloco, 'Parágrafo:');
       let inciso = extP(bloco, 'Inciso:');
+
+      // Se for Prisão Civil / Pensão Alimentícia (CPC 13105 / Art. 528)
+      let isPensaoCivil = (artigo === '528') || 
+                          (lei && (lei.toUpperCase().includes('PROCESSO CIVIL') || lei.toUpperCase().includes('13105') || lei.toUpperCase().includes('CPC'))) ||
+                          (espExtr && (espExtr.toUpperCase().includes('CIVIL') || espExtr.toUpperCase().includes('CÍVEL') || espExtr.toUpperCase().includes('ALIMENTO')));
+
+      if (isPensaoCivil) {
+        lei = '13105';
+        if (!isValido(artigo) || artigo === '-') artigo = '528';
+      }
 
       if (lei !== "N/A" && lei.toLowerCase().includes("art")) {
         let mP = lei.match(/§\s*(.+)$/); if (mP && paragrafo === "N/A") paragrafo = mP[1].trim();
@@ -179,90 +260,110 @@
       if (lei === "N/A") lei = "-"; if (artigo === "N/A") artigo = "-"; if (paragrafo === "N/A") paragrafo = "-"; if (inciso === "N/A") inciso = "-";
       
       let crInfo = classificarCrime(bloco);
-      if (idx === 0) crInfo = crimeInfo; 
       
       badgesHtml += '<div class="crime-badge" style="background:' + crInfo.cor + ';color:white;margin:0;">' + crInfo.nome + '</div>';
 
       let stylizedTipificacao = (function(leiNum, artNum, parNum, incNum, crInfo) {
-          var _tabLeis = window._tabelaLeis || [];
-          function limparNum(v) { return String(v || '').replace(/[.\s]/g, '').replace(/[°ºª]/g, '').trim(); }
-          
-          var leiL = limparNum(leiNum);
-          var artL = limparNum(artNum);
-          var parL = limparNum(parNum).replace(/§/g, '').trim();
-          var incL = limparNum(incNum);
-          
-          let tDiploma = null;
-          let tArtigo = null;
-          let tParagrafo = null;
-
-          // Busca Artigo
-          for (var i=0; i<_tabLeis.length; i++) {
-            var t = _tabLeis[i];
-            if (limparNum(t.numeroLei) === leiL && limparNum(t.artigo) === artL) {
-              if (t.leiNome) tDiploma = t.leiNome;
-              tArtigo = t.tipificacaoCompleta || t.categoria || null;
-              break;
-            }
-          }
-
-          // Busca Paragrafo
-          if (parL && parL !== '-') {
-            var parUpper = parL.toUpperCase();
-            for (var i=0; i<_tabLeis.length; i++) {
-              var t = _tabLeis[i];
-              if (limparNum(t.numeroLei) === leiL && limparNum(t.artigo) === artL && (limparNum(t.paragrafo) === parL || (t.paragrafo||'').toUpperCase() === parUpper)) {
-                if (t.leiNome && !tDiploma) tDiploma = t.leiNome;
-                tParagrafo = t.tipificacaoCompleta || t.categoria || null;
-                break;
-              }
-            }
-          }
-          
-          let arrInc = (incNum && incNum !== '-') ? incNum.split(',') : [];
-          let incisosHTML = '';
-          
-          if (arrInc.length > 0) {
-             let incLista = '';
-             arrInc.forEach(inc => {
-                let iClean = limparNum(inc);
-                if (!iClean) return;
-                let iDesc = null;
-                for (var i=0; i<_tabLeis.length; i++) {
-                   var t = _tabLeis[i];
-                   if (limparNum(t.numeroLei) === leiL && limparNum(t.artigo) === artL && limparNum(t.inciso) === iClean) {
-                       iDesc = t.tipificacaoCompleta || t.categoria || null;
-                       break;
-                   }
-                }
-                if (iDesc) {
-                   incLista += '<div style="display:flex; align-items:center; justify-content:center; gap: 8px; font-size: 11px; color: var(--text-secondary); margin-bottom:4px;">' + 
-                     '<div style="background: rgba(var(--danger-rgb, 255,59,48), 0.1); border: 1px solid var(--danger, #ff3b30); border-radius: 6px; padding: 2px 6px; color: var(--danger, #ff3b30); font-weight:800;">' + inc.trim() + '</div>' + 
-                     '<span>' + (iDesc) + '</span></div>';
-                } else {
-                   incLista += '<div style="display:flex; align-items:center; justify-content:center; gap: 8px; font-size: 11px; color: var(--text-secondary); margin-bottom:4px;">' + 
-                     '<div style="background: rgba(var(--danger-rgb, 255,59,48), 0.1); border: 1px solid var(--danger, #ff3b30); border-radius: 6px; padding: 2px 6px; color: var(--danger, #ff3b30); font-weight:800;">' + inc.trim() + '</div>' + 
-                     '<span>⚠ Não cadastrado na aba Leis (Lei ' + (leiNum) + ', Art. ' + (artNum) + ', Inc. ' + (inc.trim()) + ')</span></div>';
-                }
-             });
-             
-             incisosHTML = '<div style="background: rgba(255,59,48, 0.08); border: 1px solid rgba(255,59,48, 0.2); border-radius: 12px; padding: 12px; text-align:center; margin-top:8px;">' +
-                           '<div style="font-size: 11px; font-weight: 800; color: #ff3b30; text-transform: uppercase; margin-bottom: 8px;">' +
-                           '⚖ INCISOS APLICADOS (' + arrInc.length + ')</div>' + incLista + '</div>';
-          }
-          
-          let tDiplomaText = tDiploma ? (tDiploma).toUpperCase() : (leiNum && leiNum !== '-' ? 'LEI ' + (leiNum) : 'LEI NÃO ESPECIFICADA');
+          let hasPar = (parNum && parNum !== '-' && parNum !== 'N/A');
+          let hasInc = (incNum && incNum !== '-' && incNum !== 'N/A');
+          let parText = hasPar ? ' § ' + parNum : '';
+          let tDiplomaText = crInfo.leiNome ? (crInfo.leiNome).toUpperCase() : (leiNum && leiNum !== '-' && leiNum !== 'N/A' ? 'LEI ' + leiNum : 'CÓDIGO PENAL');
           let boxMainHtml = '';
-          
-          if (artNum && artNum !== '-') {
-             boxMainHtml = '<div style="background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08); border-radius: 12px; padding: 12px; margin-top: 10px; text-align:center;">' +
-               '<div style="font-weight: 800; font-size: 11px; color: var(--text-primary); text-transform: uppercase;">📖 ART. ' + (artNum) + ' — ' + tDiplomaText + '</div>' +
-               '<div style="font-weight: 700; font-size: 13px; color: var(--text-primary); margin: 6px 0;">' + (tArtigo ? (tArtigo) : crInfo.nome) + '</div>' +
-               (tParagrafo ? '<div style="font-size: 11px; color: ' + crInfo.cor + '; font-weight: 700;">' + (parNum) + ': ' + (tParagrafo) + '</div>' : '') +
+
+          function buscarDescricaoInciso(leiN, artN, parN, incSingle) {
+            var _tabLeis = window._tabelaLeis || [];
+            if (!_tabLeis || _tabLeis.length === 0) return null;
+
+            var norm = function(v) {
+              if (!v) return '';
+              return String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.\s§ºª°]/g, '').toUpperCase().trim();
+            };
+
+            var leiL = norm(leiN).replace(/\D/g, '');
+            var artL = norm(artN);
+            var parL = norm(parN);
+            var incL = norm(incSingle);
+
+            for (var i = 0; i < _tabLeis.length; i++) {
+              var t = _tabLeis[i];
+              if (!t.artigo) continue;
+              var tArtArr = String(t.artigo).toUpperCase().split(/[|,;]/).map(norm).filter(Boolean);
+              var mArt = tArtArr.some(function(a){ return artL === a || (artL.replace(/\D/g,'') && artL.replace(/\D/g,'') === a.replace(/\D/g,'')); });
+              if (!mArt) continue;
+
+              if (t.numeroLei && leiL) {
+                var tLeiArr = String(t.numeroLei).toUpperCase().split(/[|,;]/).map(norm).filter(Boolean);
+                var mLei = tLeiArr.some(function(l){ return l.replace(/\D/g,'') === leiL || leiL.includes(l.replace(/\D/g,'')); });
+                if (!mLei) continue;
+              }
+
+              if (!t.inciso) continue;
+              var tIncArr = String(t.inciso).toUpperCase().split(/[|,;]/).map(norm).filter(Boolean);
+              var mInc = tIncArr.some(function(ic){ return ic === incL; });
+              if (!mInc) continue;
+
+              if (parL && parL !== '-' && parL !== 'CAPUT' && t.paragrafo) {
+                var tParArr = String(t.paragrafo).toUpperCase().split(/[|,;]/).map(norm).filter(Boolean);
+                var mPar = tParArr.some(function(p){ return p === parL || p.replace(/\D/g,'') === parL.replace(/\D/g,''); });
+                if (!mPar) continue;
+              }
+
+              return t.tipificacaoCompleta || t.categoria;
+            }
+            return null;
+          }
+
+          if (artNum && artNum !== '-' && artNum !== 'N/A') {
+             let mainTitle = '';
+             let categoryBadge = '';
+             let boxBorderColor = crInfo.cor || '#6b7280';
+
+             if (crInfo.naoClassificado) {
+                mainTitle = '⚠️ Não cadastrado na aba Leis (Lei ' + leiNum + ', Art. ' + artNum + (hasPar ? parText : '') + (hasInc ? ', Inc. ' + incNum : '') + ')';
+                boxBorderColor = '#f59e0b';
+             } else {
+                mainTitle = crInfo.tipificacaoCompleta || crInfo.nome;
+                if (crInfo.nome) {
+                   categoryBadge = '<span style="display:inline-block; font-size:10px; font-weight:900; background:' + crInfo.cor + '; color:#ffffff; padding:2px 8px; border-radius:6px; text-transform:uppercase; margin-bottom:6px; letter-spacing:0.5px;">' + crInfo.nome + '</span><br>';
+                }
+             }
+
+             let incisosBlock = '';
+             if (hasInc) {
+                let incArray = incNum.split(/[,|;]|\s+\be(?:\/ou)?\b\s+|\s+\bE(?:\/OU)?\b\s+/i).map(function(s){ return s.replace(/^inciso\s*/i, '').replace(/^inc\.?\s*/i, '').trim(); }).filter(Boolean);
+                
+                let incCardsHtml = incArray.map(function(inc) {
+                   let incDesc = buscarDescricaoInciso(leiNum, artNum, parNum, inc);
+                   let descText = incDesc ? incDesc : '⚠️ Não cadastrado na aba Leis';
+                   let textColor = incDesc ? '#f8fafc' : '#f59e0b';
+
+                   return '<div style="background: rgba(239,68,68,0.12); border: 1px solid rgba(239,68,68,0.35); border-radius: 8px; padding: 8px 10px; margin-top: 6px; text-align: left; display: flex; align-items: flex-start; gap: 8px;">' +
+                            '<span style="background: #ef4444; color: #ffffff; font-weight: 900; font-size: 10px; padding: 2px 8px; border-radius: 4px; flex-shrink: 0; margin-top: 1px; letter-spacing: 0.5px;">' +
+                              'INCISO ' + inc.toUpperCase() +
+                            '</span>' +
+                            '<span style="font-size: 12px; font-weight: 700; color: ' + textColor + '; line-height: 1.4; flex: 1;">' +
+                              descText +
+                            '</span>' +
+                          '</div>';
+                }).join('');
+
+                incisosBlock = '<div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.15); text-align: left;">' +
+                  '<div style="font-size: 10px; font-weight: 800; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; text-align: center; margin-bottom: 4px;">' +
+                    '⚖ INCISO' + (incArray.length > 1 ? 'S' : '') + ' APLICADO' + (incArray.length > 1 ? 'S' : '') + ' (' + incArray.length + ')' +
+                  '</div>' +
+                  incCardsHtml +
+                  '</div>';
+             }
+
+             boxMainHtml = '<div style="background: rgba(15,23,42,0.65); border: 1px solid rgba(255,255,255,0.12); border-left: 4px solid ' + boxBorderColor + '; border-radius: 12px; padding: 12px; margin-top: 10px; text-align:center;">' +
+               '<div style="font-weight: 800; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing:0.5px;">📖 ART. ' + (artNum) + parText + ' — ' + tDiplomaText + '</div>' +
+               '<div style="margin-top:6px;">' + categoryBadge + '</div>' +
+               '<div style="font-weight: 700; font-size: 13px; color: #f8fafc; margin: 4px 0; line-height:1.4;">' + mainTitle + '</div>' +
+               incisosBlock +
                '</div>';
           }
           
-          return boxMainHtml + incisosHTML;
+          return boxMainHtml;
       })(lei, artigo, paragrafo, inciso, crInfo);
 
       htmlTipificacoes += '<div class="proc-tipificacao-box" style="border-left-color:' + crInfo.cor + '; margin-top:8px; padding-bottom:12px;">' +
@@ -286,67 +387,149 @@
 
     // Bloco de Área (CPI/BPM/CIA/DP) para o endereço principal
     let htmlArea = '';
-    if (alvo.cpi || alvo.bpmArea || alvo.ciaArea || alvo.dpArea) {
-      if (alvo.cpi === "FORA DO ESTADO") {
+    let cpiPrincipal = (alvo.cpiArea || alvo.cpi || '').trim();
+    let btlPrincipal = (alvo.bpmArea || alvo.batalhao || '').trim();
+    let ciaPrincipal = (alvo.ciaArea || alvo.cia || '').trim();
+    let dpPrincipal = (alvo.dpArea || alvo.delegacia || '').trim();
+
+    if (cpiPrincipal || btlPrincipal || ciaPrincipal || dpPrincipal) {
+      if (cpiPrincipal === "FORA DO ESTADO") {
         htmlArea = '<div style="display:flex;margin-top:8px;"><span style="font-size:10px;font-weight:800;color:var(--danger);padding:4px 10px;background:rgba(255,59,48,0.15);border-radius:4px;border:1px solid rgba(255,59,48,0.3);">FORA DO ESTADO</span></div>';
       } else {
         htmlArea = '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;padding:8px 10px;background:var(--bg-depressed);border-radius:8px;border-left:3px solid var(--brand-red);">';
-        if (alvo.cpi) htmlArea += '<span style="font-size:10px;font-weight:800;color:var(--brand-red);padding:4px 8px;background:rgba(169,32,32,0.12);border-radius:4px;border:1px solid var(--brand-red);">COMANDO: ' + alvo.cpi + '</span>';
-        if (alvo.bpmArea) htmlArea += '<span style="font-size:10px;font-weight:700;color:var(--text-primary);padding:4px 8px;background:rgba(255,255,255,0.08);border-radius:4px;border:1px solid rgba(255,255,255,0.2);">BTL: ' + alvo.bpmArea + '</span>';
-        if (alvo.ciaArea) htmlArea += '<span style="font-size:10px;font-weight:700;color:var(--text-primary);padding:4px 8px;background:rgba(255,255,255,0.08);border-radius:4px;border:1px solid rgba(255,255,255,0.2);">CIA: ' + alvo.ciaArea + '</span>';
-        if (alvo.dpArea) htmlArea += '<span style="font-size:10px;font-weight:700;color:var(--text-secondary);padding:4px 8px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.1);">DP: ' + alvo.dpArea + '</span>';
-        if (alvo.cidade) htmlArea += '<span style="font-size:10px;font-weight:700;color:var(--text-muted);padding:4px 8px;background:rgba(255,255,255,0.04);border-radius:4px;border:1px solid rgba(255,255,255,0.1);"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">location_city</span> ' + alvo.cidade + '</span>';
+        if (cpiPrincipal) htmlArea += '<span style="font-size:10px;font-weight:900;color:#fca5a5;padding:4px 8px;background:rgba(239,68,68,0.18);border-radius:4px;border:1px solid rgba(239,68,68,0.5);">COMANDO: ' + cpiPrincipal + '</span>';
+        if (btlPrincipal) htmlArea += '<span style="font-size:10px;font-weight:900;color:#93c5fd;padding:4px 8px;background:rgba(59,130,246,0.18);border-radius:4px;border:1px solid rgba(59,130,246,0.5);">BTL: ' + btlPrincipal + '</span>';
+        if (ciaPrincipal) htmlArea += '<span style="font-size:10px;font-weight:900;color:#86efac;padding:4px 8px;background:rgba(34,197,94,0.18);border-radius:4px;border:1px solid rgba(34,197,94,0.5);">CIA: ' + ciaPrincipal + '</span>';
+        if (dpPrincipal) htmlArea += '<span style="font-size:10px;font-weight:900;color:#c084fc;padding:4px 8px;background:rgba(168,85,247,0.18);border-radius:4px;border:1px solid rgba(168,85,247,0.5);">DP: ' + dpPrincipal + '</span>';
+        if (alvo.cidade) htmlArea += '<span style="font-size:10px;font-weight:900;color:#fde047;padding:4px 8px;background:rgba(251,191,36,0.18);border-radius:4px;border:1px solid rgba(251,191,36,0.5);"><span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">location_city</span> ' + alvo.cidade + '</span>';
         htmlArea += '</div>';
       }
     }
 
-    let tituloDisplay = alvo.tipoMandado || extras.titulo || "MANDADO DE PRISÃO";
-    let dataSistemaDisplay = alvo.data || "N/A";
-    let dataBnmpDisplay = alvo.dataBNMP || extras.emissao || "N/A";
-    
-    // Tentado e Doméstica
-    let condicaoCrimeEspecial = '';
-    let isDomestica = infoRaw.toUpperCase().includes('VIOLÊNCIA DOMÉSTICA: SIM') || (extras.violenciaDomestica === true);
-    let isTentado = infoRaw.toUpperCase().includes('TENTADO: SIM');
-    if (isDomestica) condicaoCrimeEspecial += '<span style="background:var(--warning);color:#1a1a1a;padding:4px 8px;border-radius:4px;font-weight:900;font-size:10px;">V. DOMÉSTICA</span>';
-    if (isTentado) condicaoCrimeEspecial += '<span style="background:#dc2626;color:white;padding:4px 8px;border-radius:4px;font-weight:900;font-size:10px;">TENTADO</span>';
-    if (condicaoCrimeEspecial) condicaoCrimeEspecial = '<div style="display:flex;gap:8px;justify-content:center;margin-top:8px;">' + condicaoCrimeEspecial + '</div>';
+      let tituloDisplay = alvo.tipoMandado || extras.titulo || "MANDADO DE PRISÃO";
+      let rawDataSis = alvo.dataLancamento || alvo.dataSistema || alvo.data || alvo.dataAdicao || alvo.dataCadastro || alvo.dataHora || alvo.criadoEm || (extras ? (extras.dataLancamento || extras.dataSistema || extras.data) : null) || "N/A";
+      let dataSistemaDisplay = "N/A";
+      if (rawDataSis && rawDataSis !== "N/A" && rawDataSis !== "-") {
+        let strSis = String(rawDataSis).trim();
+        let matchSis = strSis.match(/(\d{2}[\/\-]\d{2}[\/\-]\d{4})/);
+        if (matchSis) {
+          dataSistemaDisplay = matchSis[1].replace(/-/g, '/');
+        } else {
+          dataSistemaDisplay = strSis.split(' ')[0];
+        }
+      }
+            let rawBnmp = (alvo.dataBNMP || extras.emissao || "N/A").toString();
+        let dataBnmpDisplay = rawBnmp.substring(0, 10);
+        let matchBnmp = rawBnmp.match(/\\d{2}[\\/\\-]\\d{2}[\\/\\-]\\d{4}/);
+        if (matchBnmp) {
+            dataBnmpDisplay = matchBnmp[0].replace(/-/g, '/');
+        } else {
+            let matchText = rawBnmp.match(/(\\d{1,2})\\s+de\\s+([A-Za-zÀ-Ÿ]+)\\s+de\\s+(\\d{4})/i);
+            if (matchText) {
+                const mapMes = {"janeiro":"01","fevereiro":"02","março":"03","abril":"04","maio":"05","junho":"06","julho":"07","agosto":"08","setembro":"09","outubro":"10","novembro":"11","dezembro":"12"};
+                let mNum = mapMes[matchText[2].toLowerCase()] || "01";
+                dataBnmpDisplay = matchText[1].padStart(2, '0') + "/" + mNum + "/" + matchText[3];
+            } else {
+                dataBnmpDisplay = rawBnmp.length > 10 ? rawBnmp.substring(0, 10) : rawBnmp;
+            }
+        }
+      let dataConferenciaDisplay = alvo.dataConferencia || "N/A";
+      
+      // Tentado e Doméstica
+      let condicaoCrimeEspecial = '';
+      let isDomestica = infoRaw.toUpperCase().includes('VIOLÊNCIA DOMÉSTICA: SIM') || (extras.violenciaDomestica === true);
+      let isTentado = infoRaw.toUpperCase().includes('TENTADO: SIM');
+      if (isDomestica) condicaoCrimeEspecial += '<span style="background:var(--warning);color:#1a1a1a;padding:4px 8px;border-radius:4px;font-weight:900;font-size:10px;">V. DOMÉSTICA</span>';
+      if (isTentado) condicaoCrimeEspecial += '<span style="background:#dc2626;color:white;padding:4px 8px;border-radius:4px;font-weight:900;font-size:10px;">TENTADO</span>';
+      if (condicaoCrimeEspecial) condicaoCrimeEspecial = '<div style="display:flex;gap:8px;justify-content:center;margin-top:8px;">' + condicaoCrimeEspecial + '</div>';
+  
+      let chkProcurado = (!alvo.status || alvo.status.toUpperCase() !== 'CAPTURADO') ? 'checked' : '';
+      let chkCapturado = (alvo.status && alvo.status.toUpperCase() === 'CAPTURADO') ? 'checked' : '';
+  
+      let iconAlgemas = '';
+      if (chkCapturado) {
+          iconAlgemas = '<div style="width:70px; flex-shrink:0; display:flex; align-items:center; justify-content:center; border-right:1px solid rgba(255,255,255,0.1); margin-right:12px; padding-right:12px;">' + 
+            '<svg width="50" height="50" viewBox="0 0 696 703" fill="none" xmlns="http://www.w3.org/2000/svg" style="background:#1a9c54; border-radius:50%; box-shadow: 0 0 15px rgba(26,156,84,0.8); border: 2px solid white; padding: 4px;">' +
+            '<path d="M10.1953 672.353V30.646C10.1953 23.0627 16.2812 16.9155 23.7891 16.9155H672.211C679.719 16.9155 685.805 23.0627 685.805 30.646V672.353C685.805 679.937 679.719 686.084 672.211 686.084H23.7891C16.2812 686.084 10.1953 679.937 10.1953 672.353Z" fill="#B9ACAC"/>' +
+            '<path d="M99.2344 16.9155H23.7891C16.2812 16.9155 10.1953 23.0627 10.1953 30.646V672.353C10.1953 679.937 16.2812 686.084 23.7891 686.084H672.211C679.719 686.084 685.805 679.937 685.805 672.353V30.646C685.805 23.0627 679.719 16.9155 672.211 16.9155H146.812" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M48.4087 58.1797H647.593V644.821H48.4087V58.1797Z" fill="#685E68"/>' +
+            '<path d="M48.4087 58.1797H89.262V644.821H48.4087V58.1797Z" fill="#E1D3CE"/>' +
+            '<path d="M434.058 414.672C420.565 432.275 399.459 443.639 375.764 443.639H320.237C296.541 443.639 275.435 432.275 261.942 414.671L179.14 458.894V644.818H516.862V458.894L434.058 414.672Z" fill="#F1C066"/>' +
+            '<path d="M342.287 496.696C344.963 500.892 351.038 500.892 353.715 496.696L388.244 442.558C384.123 443.277 379.948 443.64 375.765 443.641H320.239C316.056 443.64 311.881 443.277 307.759 442.558L342.287 496.696Z" fill="#F89580"/>' +
+            '<path d="M312.594 450.141L342.287 496.695C344.963 500.891 351.038 500.891 353.715 496.695L383.408 450.141" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M434.058 414.672C428.205 422.31 420.945 428.733 412.679 433.589L452.826 455.03C455.011 456.197 456.84 457.944 458.116 460.083C459.391 462.222 460.066 464.671 460.066 467.168V644.821H516.862V458.897L434.058 414.672Z" fill="#D5992A"/>' +
+            '<path d="M495.072 447.259L435.309 415.34M375.764 445.014H320.238C317.656 445.013 315.108 444.884 312.595 444.626V644.821H383.408V444.624C380.892 444.882 378.344 445.012 375.764 445.014ZM260.691 415.34L200.928 447.259V457.76H201.835C212.162 457.76 220.965 465.893 221.274 476.318C221.497 483.826 217.436 490.397 211.379 493.73C217.278 496.974 221.282 503.292 221.282 510.554C221.282 517.816 217.277 524.133 211.379 527.379C217.278 530.624 221.282 536.941 221.282 544.203C221.282 551.465 217.277 557.782 211.379 561.027C217.436 564.359 221.497 570.931 221.274 578.439C220.965 588.864 212.162 596.997 201.835 596.997H200.928V644.819H271.74V427.046C267.657 423.551 263.953 419.627 260.691 415.34Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M160.075 58.1797H200.928V644.821H160.075V58.1797Z" fill="#E1D3CE"/>' +
+            '<path d="M178.918 58.1797H200.928V644.821H178.918V58.1797ZM67.2523 58.1797H89.262V644.821H67.2523V58.1797Z" fill="#CDBFBA"/>' +
+            '<path d="M160.075 594.869V644.819H200.928V596.998M200.928 457.76V349.389M200.928 309.884V58.1797H160.075V459.888" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M271.741 58.1797H312.594V644.821H271.741V58.1797Z" fill="#E1D3CE"/>' +
+            '<path d="M290.584 58.1797H312.594V644.821H290.584V58.1797Z" fill="#CDBFBA"/>' +
+            '<path d="M271.741 427.046V644.819H312.594V444.624M312.594 124.672V58.1797H271.741V144.105" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M383.406 58.1797H424.26V644.821H383.406V58.1797Z" fill="#E1D3CE"/>' +
+            '<path d="M402.25 58.1797H424.26V644.821H402.25V58.1797Z" fill="#CDBFBA"/>' +
+            '<path d="M424.26 144.105V58.1797H383.406V124.672M383.406 444.624V644.819H424.26V427.046" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M495.072 58.1797H535.925V644.821H495.072V58.1797Z" fill="#E1D3CE"/>' +
+            '<path d="M513.916 58.1797H535.925V644.821H513.916V58.1797Z" fill="#CDBFBA"/>' +
+            '<path d="M495.072 349.389V457.76M535.925 459.888V58.1797H495.072V309.884M495.072 596.998V644.82H535.925V594.869M48.4087 58.1797H89.262V644.821H48.4087V58.1797Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M495.072 349.389V457.76M535.925 459.888V58.1797H495.072V309.884M495.072 596.998V644.82H535.925V594.869M48.4087 58.1797H89.262V644.821H48.4087V58.1797Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M606.738 58.1797H647.591V644.821H606.738V58.1797Z" fill="#E1D3CE"/>' +
+            '<path d="M625.581 58.1797H647.591V644.821H625.581V58.1797Z" fill="#CDBFBA"/>' +
+            '<path d="M606.738 167.511V644.819H647.591V58.1797H606.738V119.455" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M230.667 294.995H246.467V273.533C246.467 255.23 261.156 240.393 279.277 240.393H416.725C434.845 240.393 449.534 255.23 449.534 273.533V294.995H465.335C471.014 294.995 476.371 296.405 481.094 298.883V254.284C481.094 180.039 421.506 119.853 348.001 119.853C274.496 119.853 214.909 180.041 214.909 254.284V298.883C219.775 296.324 225.181 294.99 230.667 294.995Z" fill="#61410D"/>' +
+            '<path d="M348 119.854C344.451 119.856 340.938 119.996 337.461 120.273C380.674 142.484 410.279 187.826 410.279 240.157V240.394H416.723C434.844 240.394 449.533 255.231 449.533 273.534V294.996H465.333C471.013 294.996 476.37 296.406 481.093 298.886V254.287C481.093 180.041 421.506 119.854 348 119.854Z" fill="#4A3108"/>' +
+            '<path d="M481.092 297.398V254.285C481.092 180.041 421.504 119.854 348 119.854C274.495 119.854 214.908 180.041 214.908 254.285V297.398" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M246.366 293.684H230.666C211.006 293.684 195.07 309.781 195.07 329.637C195.07 349.494 211.008 365.59 230.666 365.59H246.366V293.684Z" fill="#FFB09E"/>' +
+            '<path d="M245.167 293.684H230.666C211.006 293.684 195.07 309.781 195.07 329.637C195.07 349.494 211.008 365.59 230.666 365.59H245.167V293.684Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M465.335 293.684H449.634V365.591H465.335C484.994 365.591 500.93 349.494 500.93 329.638C500.93 309.781 484.992 293.684 465.335 293.684Z" fill="#F89580"/>' +
+            '<path d="M465.335 293.684H449.634V365.591H465.335C484.994 365.591 500.93 349.494 500.93 329.638C500.93 309.781 484.992 293.684 465.335 293.684Z" fill="#F89580"/>' +
+            '<path d="M450.833 293.684H465.335C484.992 293.684 500.93 309.781 500.93 329.638C500.93 349.494 484.994 365.591 465.335 365.591H450.833V293.684Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M245.167 273.533V369.19C245.167 411.067 278.777 445.014 320.236 445.014H375.763C417.222 445.014 450.831 411.067 450.831 369.19V273.533C450.831 254.506 435.56 239.082 416.723 239.082H279.277C260.439 239.082 245.167 254.505 245.167 273.533Z" fill="#FFCEBF"/>' +
+            '<path d="M416.723 239.082H374.103C392.94 239.082 408.211 254.506 408.211 273.533V369.19C408.211 411.067 374.602 445.014 333.142 445.014H375.763C417.222 445.014 450.831 411.067 450.831 369.19V273.533C450.833 254.505 435.561 239.082 416.723 239.082Z" fill="#FFB09E"/>' +
+            '<path d="M245.167 273.533V369.19C245.167 411.067 278.777 445.014 320.236 445.014H375.763C417.222 445.014 450.831 411.067 450.831 369.19V273.533C450.831 254.506 435.56 239.082 416.723 239.082H279.277C260.439 239.082 245.167 254.505 245.167 273.533Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M348 351.474C338.18 351.474 330.219 343.433 330.219 333.514C330.219 324.916 336.201 317.73 344.19 315.968C346.4 315.481 348 313.545 348 311.26V302.213M302.888 302.213V318.447M393.112 302.213V318.447M281.081 278.683H324.694V267.67M414.919 278.683H371.307V267.67M312.936 404.622C312.936 392.886 322.356 383.372 333.974 383.372H362.025C373.643 383.372 383.062 392.886 383.062 404.622" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M221.282 544.204C221.282 551.466 217.277 557.784 211.379 561.029C217.436 564.362 221.497 570.933 221.274 578.441C220.965 588.867 212.162 596.999 201.835 596.999H171.444C153.923 596.999 139.719 582.652 139.719 564.955V489.805C139.719 472.108 153.923 457.761 171.444 457.761H201.835C212.162 457.761 220.965 465.894 221.274 476.319C221.497 483.827 217.436 490.399 211.379 493.731C217.278 496.975 221.282 503.293 221.282 510.556C221.282 517.82 217.277 524.136 211.379 527.382C214.376 529.025 216.879 531.455 218.622 534.417C220.365 537.378 221.284 540.759 221.282 544.204Z" fill="#FFCEBF"/>' +
+            '<path d="M221.282 544.204C221.282 536.942 217.277 530.625 211.379 527.38C217.278 524.136 221.282 517.818 221.282 510.555C221.282 503.291 217.277 496.975 211.379 493.731C217.436 490.399 221.497 483.827 221.274 476.319C220.965 465.894 212.162 457.761 201.835 457.761H171.444C169.718 457.761 168.026 457.905 166.374 458.173C181.486 460.624 193.031 473.851 193.031 489.805V564.954C193.031 580.908 181.486 594.134 166.375 596.586C168.027 596.854 169.719 596.998 171.446 596.998H201.836C212.163 596.998 220.966 588.865 221.275 578.44C221.498 570.932 217.437 564.361 211.38 561.028C217.278 557.784 221.282 551.466 221.282 544.204Z" fill="#FFB09E"/>' +
+            '<path d="M139.719 550.592V564.954C139.719 582.651 153.923 596.998 171.444 596.998H201.835C212.162 596.998 220.965 588.865 221.274 578.44C221.497 570.932 217.436 564.361 211.379 561.028C217.278 557.784 221.282 551.466 221.282 544.204C221.282 536.942 217.277 530.625 211.379 527.38C217.278 524.136 221.282 517.818 221.282 510.555C221.282 503.291 217.277 496.975 211.379 493.731C217.436 490.399 221.497 483.827 221.274 476.319C220.965 465.894 212.162 457.761 201.835 457.761H171.444C153.923 457.761 139.719 472.108 139.719 489.807V502.535" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M474.718 510.555C474.718 503.293 478.723 496.975 484.621 493.729C478.564 490.397 474.503 483.826 474.726 476.318C475.035 465.892 483.838 457.76 494.165 457.76H524.556C542.077 457.76 556.281 472.107 556.281 489.804V564.954C556.281 582.651 542.077 596.998 524.556 596.998H494.165C483.838 596.998 475.035 588.865 474.726 578.44C474.503 570.932 478.564 564.36 484.621 561.028C478.722 557.783 474.718 551.466 474.718 544.203C474.718 536.939 478.723 530.623 484.621 527.377C481.625 525.733 479.123 523.302 477.38 520.341C475.637 517.38 474.717 513.999 474.718 510.555Z" fill="#FFCEBF"/>' +
+            '<path d="M524.554 457.76H497.071C514.592 457.76 528.796 472.107 528.796 489.805V564.954C528.796 582.651 514.592 596.998 497.071 596.998H524.554C542.075 596.998 556.279 582.651 556.279 564.954V489.805C556.281 472.107 542.077 457.76 524.554 457.76Z" fill="#FFB09E"/>' +
+            '<path d="M474.718 510.555C474.718 503.293 478.723 496.975 484.621 493.729C478.564 490.397 474.503 483.826 474.726 476.318C475.035 465.892 483.838 457.76 494.165 457.76H524.556C542.077 457.76 556.281 472.107 556.281 489.804V564.954C556.281 582.651 542.077 596.998 524.556 596.998H494.165C483.838 596.998 475.035 588.865 474.726 578.44C474.503 570.932 478.564 564.36 484.621 561.028C478.722 557.783 474.718 551.466 474.718 544.203C474.718 536.939 478.723 530.623 484.621 527.377C481.625 525.733 479.123 523.302 477.38 520.341C475.637 517.38 474.717 513.999 474.718 510.555Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '<path d="M48.4087 58.1797H647.593V644.821H48.4087V58.1797Z" stroke="black" stroke-width="15" stroke-miterlimit="1" stroke-linecap="round" stroke-linejoin="round"/>' +
+            '</svg>' +
+            '</div>';
+      }
 
-    let chkProcurado = (!alvo.status || alvo.status.toUpperCase() !== 'CAPTURADO') ? 'checked' : '';
-    let chkCapturado = (alvo.status && alvo.status.toUpperCase() === 'CAPTURADO') ? 'checked' : '';
-
-    let statusBadge = chkCapturado 
-        ? '<div style="font-size:16px;font-weight:900;letter-spacing:2px;color:#1a9c54;text-align:center;margin-bottom:12px;margin-top:8px;"><span class="material-symbols-outlined" style="vertical-align:middle;font-size:20px;">check_circle</span> CAPTURADO</div>'
-        : '<div style="font-size:16px;font-weight:900;letter-spacing:2px;color:var(--brand-red);text-align:center;margin-bottom:12px;margin-top:8px;"><span class="material-symbols-outlined" style="vertical-align:middle;font-size:20px;">warning</span> PROCURADO</div>';
-
-    return '<div class="card-container card-container--highlight" style="--card-highlight-color:' + crimeInfo.cor + ';">' +
-      '<div class="card-header-full">' +
-        // Linha 1: Status (PROCURADO/CAPTURADO)
-        statusBadge +
-        // Linha 2: Badges de crime juntos
-        '<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
-          badgesHtml +
+      let statusBadge = chkCapturado 
+          ? '<div style="font-size:22px;font-weight:900;letter-spacing:2px;color:#1a9c54;text-align:center;margin-bottom:8px;text-shadow: 0 0 10px rgba(26,156,84,0.6);"><span class="material-symbols-outlined" style="vertical-align:middle;font-size:28px;">check_circle</span> CAPTURADO</div>'
+          : '<div style="font-size:22px;font-weight:900;letter-spacing:2px;color:var(--brand-red);text-align:center;margin-bottom:8px;text-shadow: 0 0 10px rgba(220,38,38,0.6);"><span class="material-symbols-outlined" style="vertical-align:middle;font-size:28px;">warning</span> PROCURADO</div>';
+  
+      return '<div class="card-container card-container--highlight" style="--card-highlight-color:' + crimeInfo.cor + ';">' +
+        '<div class="card-header-full" style="display:flex; flex-direction:row;">' +
+          iconAlgemas +
+          '<div style="flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; max-width:100%; overflow:hidden;">' +
+            statusBadge +
+            '<div style="display:flex;align-items:center;justify-content:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">' +
+              badgesHtml +
+            '</div>' +
+            '<div style="display:flex; flex-direction:column; align-items:center; background:rgba(0,0,0,0.3); border-radius:8px; padding:6px 12px; margin-bottom:10px; border:1px solid rgba(255,255,255,0.1); min-width:80%; max-width:100%; box-sizing:border-box;">' +
+              '<div style="font-size:11px;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;color:white;text-shadow:0 1px 3px rgba(0,0,0,0.8); margin-bottom:4px;">' + tituloDisplay + '</div>' +
+              '<div style="display:flex;align-items:center;justify-content:center;gap:6px;overflow:hidden; max-width:100%; box-sizing:border-box;">' +
+                '<span class="material-symbols-outlined" style="font-size:15px;color:white;opacity:0.9;flex-shrink:0;">gavel</span>' +
+                '<span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:white;letter-spacing:0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.8);">' + alvo.mandado + '</span>' + btnCopiar(alvo.mandado) +
+              '</div>' +
+            '</div>' +
+            '<div class="data-badge ' + validadeClass + '" style="margin-bottom:8px;text-align:center;background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:6px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);display:inline-block;">MANDADO VÁLIDO ATÉ: <span class="data-valor" style="font-weight:900;">' + dataPura + '</span>' +
+              (validadeTexto ? '<span class="validade-restante" style="margin-left:8px;">' + validadeTexto + '</span>' : '') +
+            '</div>' +
+            condicaoCrimeEspecial +
+            '<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px; max-width:100%;">' +
+              '<div style="font-size:10px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);padding:4px 8px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:6px;box-shadow:var(--neu-raised-sm);">Data Sistema: <strong style="color:var(--brand-red);">' + dataSistemaDisplay + '</strong></div>' +
+              '<div style="font-size:10px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);padding:4px 8px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:6px;box-shadow:var(--neu-raised-sm);">Incluído BNMP: <strong style="color:var(--brand-blue);">' + dataBnmpDisplay + '</strong></div>' +
+              '<div style="font-size:10px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);padding:4px 8px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:6px;box-shadow:var(--neu-raised-sm);">Conferência: <strong style="color:#10b981;">' + dataConferenciaDisplay + '</strong></div>' +
+            '</div>' +
+          '</div>' +
         '</div>' +
-        // Linha 3: Tipo do mandado
-        '<div style="font-size:11px;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;color:white;text-shadow:0 1px 3px rgba(0,0,0,0.8);padding:5px 14px;background:rgba(0,0,0,0.3);border-radius:99px;border:1px solid rgba(255,255,255,0.1);display:inline-block;">' + tituloDisplay + '</div>' +
-        // Linha 4: Número do mandado
-        '<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin:10px 0 8px;overflow:hidden;background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:6px;display:inline-flex;">' +
-          '<span class="material-symbols-outlined" style="font-size:15px;color:white;opacity:0.9;flex-shrink:0;">gavel</span>' +
-          '<span style="font-family:var(--font-mono);font-size:13px;font-weight:700;color:white;letter-spacing:0.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 2px rgba(0,0,0,0.8);">' + alvo.mandado + '</span>' + btnCopiar(alvo.mandado) +
-        '</div><br>' +
-        // Linha 5: Validade
-        '<div class="data-badge ' + validadeClass + '" style="margin-bottom:8px;text-align:center;background:rgba(0,0,0,0.3);padding:4px 8px;border-radius:6px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);display:inline-block;">MANDADO VÁLIDO ATÉ: <span class="data-valor" style="font-weight:900;">' + dataPura + '</span>' +
-          (validadeTexto ? '<span class="validade-restante" style="margin-left:8px;">' + validadeTexto + '</span>' : '') +
-        '</div>' +
-        // Linha Especial
-        condicaoCrimeEspecial +
-        // Linha 6: Datas
-        '<div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:12px;">' +
-          '<div style="font-size:10px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);padding:4px 10px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:6px;box-shadow:var(--neu-raised-sm);">Data Sistema: <strong style="color:var(--brand-red);">' + dataSistemaDisplay + '</strong></div>' +
-          '<div style="font-size:10px;color:white;text-shadow:0 1px 2px rgba(0,0,0,0.8);padding:4px 10px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.08);border-radius:6px;box-shadow:var(--neu-raised-sm);">Data BNMP: <strong style="color:var(--brand-blue);">' + dataBnmpDisplay + '</strong></div>' +
-        '</div>' +
-      '</div>' +
-      '<div class="grid-wrapper">' +
+        '<div class="grid-wrapper">'
+ +
         '<div class="coluna-tatica-1">' +
           '<div class="bloco-perfil">' +
             '<div class="identificacao-top-row">' +
@@ -357,9 +540,9 @@
               '<div class="nome-alvo-destaque" style="color: white;"><span style="color: white;">NOME: ' + alvo.nome + '</span>' + btnCopiar(alvo.nome) + '</div>' +
               '<div class="perfil-inner-row">' +
                 (function() {
-                  let link = alvo.fotoUrl;
+                  let link = (alvo.fotoUrl && alvo.fotoUrl !== 'N/A') ? alvo.fotoUrl : (alvo.foto && alvo.foto !== 'N/A' ? alvo.foto : null);
                   if (link && link.includes("uc?id=")) link = link.replace("uc?id=", "thumbnail?id=") + "&sz=w500";
-                  if (link && link !== "N/A" && link.startsWith("http")) return '<img src="' + link + '" class="foto-perfil-card" />';
+                  if (link) return '<img src="' + link + '" class="foto-perfil-card" />';
                   return '<div class="foto-placeholder"><span class="material-symbols-outlined" style="font-size:28px;">photo_camera</span>Sem Foto</div>';
                 })() +
                 '<div style="flex:1;"><div class="dados-colunas">' + htmlPerfil + '</div></div>' +
@@ -378,7 +561,7 @@
                   '<button class="btn-rota" style="width:auto;padding:8px 12px;background:#FBBC04;color:#1a1a1a;display:inline-flex;align-items:center;gap:4px;font-weight:700;" onclick="abrirStreetView(' + alvo.lat + ', ' + alvo.lng + ')" title="Street View"><svg width="16" height="16" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M12.56 14.33c-.34.27-.56.7-.56 1.17V21h7c1.1 0 2-.9 2-2v-5.98c-.94-.33-1.95-.52-3-.52-2.03 0-3.93.7-5.44 1.83zM12 6c1.93 0 3.5-1.57 3.5-3.5S13.93-1 12-1 8.5.57 8.5 2.5 10.07 6 12 6zm-1.44 8.33C9.07 12.93 7.14 12.23 5 12.23c-1.05 0-2.06.19-3 .52V19c0 1.1.9 2 2 2h7v-5.5c0-.47-.22-.9-.56-1.17l-.88-.67zM12 8c-1.66 0-3 1.34-3 3 0 .35.07.69.18 1.01L12 14.34l2.82-2.33c.11-.32.18-.66.18-1.01 0-1.66-1.34-3-3-3z"/></svg> STREET</button>' +
                 '</div>' +
               '</div>' +
-              '<div class="outros-enderecos">' + htmlSecundarios + '</div>' +
+              '<div class="outros-enderecos" style="display:flex;flex-direction:column;gap:8px;">' + htmlSecundarios + '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -435,172 +618,305 @@
   /* ================================================================
      MÓDULO 6: CLASSIFICAÇÃO DE CRIMES (SVG ICONS)
      ================================================================ */
+  function gerarSvgTexto(label, total) {
+    var tam = 9;
+    if (label.length <= 2) tam = 12;
+    else if (label.length <= 3) tam = 10;
+    else if (label.length <= 4) tam = 8.5;
+    else if (label.length <= 5) tam = 7.5;
+    else tam = 6.5;
+    var countBadge = (total && total > 1) ? '<circle cx="18" cy="4" r="4.5" fill="#ef4444" stroke="#ffffff" stroke-width="0.5"/><text x="18" y="5.5" text-anchor="middle" font-size="4" font-weight="900" font-family="Impact,Arial Black,sans-serif" fill="white">+' + (total-1) + '</text>' : '';
+    return '<text x="8" y="11.5" text-anchor="middle" font-size="' + tam + '" font-weight="900" font-family="Impact,Arial Black,sans-serif" fill="white" letter-spacing="0.3">' + label + '</text>' + countBadge;
+  }
+
+  var _cacheClassificarCrime = new Map();
+  var _cacheLeisVersion = 0;
+  window.limparCacheClassificacao = function() { _cacheClassificarCrime.clear(); _cacheLeisVersion++; window._ultimoRadarHash = null; };
+
+  function normText(v) {
+    if (!v) return '';
+    return String(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[.\s§ºª°]/g, '').toUpperCase().trim();
+  }
+
+  function isValidoVal(v) {
+    var s = normText(v);
+    return s !== '' && s !== '-' && s !== 'NA' && s !== 'N/A' && s !== 'NAOINFORMADO';
+  }
+
+  function encontrarMatchNaTabelaLeis(leiExtr, artExtr, parExtr, incExtr, espExtr) {
+    var _tabLeis = window._tabelaLeis || [];
+    if (!_tabLeis || _tabLeis.length === 0) return null;
+
+    var leiL = normText(leiExtr);
+    var artL = normText(artExtr);
+    var parL = normText(parExtr);
+    var incL = normText(incExtr);
+    var espL = normText(espExtr);
+
+    var isPensaoCivil = (artL === '528') ||
+                        (leiL.includes('PROCESSO') || leiL.includes('13105') || leiL.includes('CPC')) ||
+                        (espL.includes('CIVIL') || espL.includes('CIVEL') || espL.includes('ALIMENT'));
+
+    if (isPensaoCivil) {
+      leiL = '13105';
+      if (!artL) artL = '528';
+    }
+
+    var leiNumsExtr = leiL.replace(/\D/g, '');
+    var melhorMatch = null;
+    var maiorPontuacao = -1;
+
+    for (var i = 0; i < _tabLeis.length; i++) {
+      var leiRow = _tabLeis[i];
+
+      // Special check for Pensao
+      var categUp = normText(leiRow.categoria);
+      var ptUp = normText(leiRow.pinoTexto);
+      if (categUp === "PENSAO" || ptUp === "PENSAO" || categUp === "CIVIL" || categUp.includes("ALIMENT")) {
+        if (isPensaoCivil) {
+          var mParPensao = true;
+          if (isValidoVal(leiRow.paragrafo)) {
+            var pDbArr = String(leiRow.paragrafo).toUpperCase().split(/[|,;]/).map(normText).filter(Boolean);
+            var extNums = String(parExtr || '').replace(/[§ºª°]/g,' ').split(/[\s|,;e]+/).map(normText).filter(Boolean);
+            mParPensao = pDbArr.some(function(p){ return extNums.includes(p); });
+          }
+          if (mParPensao) {
+            return leiRow;
+          }
+        }
+      }
+
+      // 1. Match Lei
+      var mLei = false;
+      var lDbArr = [leiRow.numeroLei, leiRow.leiNome, leiRow.nomeLei].filter(Boolean).join('|').toUpperCase().split(/[|,;]/).map(normText).filter(Boolean);
+      if (lDbArr.length === 0 || !isValidoVal(leiExtr)) {
+        mLei = true;
+      } else {
+        for (var _l = 0; _l < lDbArr.length; _l++) {
+          var lLimpo = lDbArr[_l];
+          var lNum = lLimpo.replace(/\D/g, '');
+          if ((leiNumsExtr && lNum && leiNumsExtr === lNum) || (leiL && lLimpo && (leiL === lLimpo || leiL.includes(lLimpo) || lLimpo.includes(leiL)))) {
+            mLei = true;
+            break;
+          }
+        }
+      }
+      if (!mLei) continue;
+
+      // 2. Match Artigo
+      var mArt = false;
+      if (isValidoVal(leiRow.artigo)) {
+        var aDbArr = String(leiRow.artigo).toUpperCase().split(/[|,;]/).map(normText).filter(Boolean);
+        for (var _a = 0; _a < aDbArr.length; _a++) {
+          if (artL === aDbArr[_a] || (artL.replace(/\D/g, '') && artL.replace(/\D/g, '') === aDbArr[_a].replace(/\D/g, ''))) {
+            mArt = true;
+            break;
+          }
+        }
+      }
+      if (!mArt) continue;
+
+      // 3. Match Parágrafo
+      var mPar = false;
+      var pontPar = 0;
+      var leiTemPar = isValidoVal(leiRow.paragrafo) && normText(leiRow.paragrafo) !== 'CAPUT';
+      var blkTemPar = isValidoVal(parExtr) && parL !== 'CAPUT';
+
+      if (blkTemPar && leiTemPar) {
+        var pDbArr = String(leiRow.paragrafo).toUpperCase().split(/[|,;]/).map(normText).filter(Boolean);
+        var blkParArr = String(parExtr).replace(/[§ºª°]/g, ' ').split(/[\s|,;e]+/).map(normText).filter(Boolean);
+        for (var _p = 0; _p < pDbArr.length; _p++) {
+          var pDbNorm = pDbArr[_p];
+          for (var _bp = 0; _bp < blkParArr.length; _bp++) {
+            var bParNorm = blkParArr[_bp];
+            if (pDbNorm === bParNorm || (pDbNorm.replace(/\D/g, '') && pDbNorm.replace(/\D/g, '') === bParNorm.replace(/\D/g, ''))) {
+              mPar = true;
+              break;
+            }
+          }
+          if (mPar) break;
+        }
+        if (mPar) pontPar = 30;
+      } else if (!blkTemPar && !leiTemPar) {
+        mPar = true;
+        pontPar = 20;
+      } else {
+        mPar = false;
+      }
+      if (!mPar) continue;
+
+      // 4. Match Inciso
+      var mInc = false;
+      var pontInc = 0;
+      var leiTemInc = isValidoVal(leiRow.inciso) && normText(leiRow.inciso) !== 'CAPUT';
+      var blkTemInc = isValidoVal(incExtr) && incL !== 'CAPUT';
+
+      if (blkTemInc && leiTemInc) {
+        var iDbArr = String(leiRow.inciso).toUpperCase().split(/[|,;]/).map(normText).filter(Boolean);
+        var blkIncArr = String(incExtr).split(/[\s|,;e]+/).map(normText).filter(Boolean);
+        for (var _i = 0; _i < iDbArr.length; _i++) {
+          var iDbNorm = iDbArr[_i];
+          for (var _bi = 0; _bi < blkIncArr.length; _bi++) {
+            if (iDbNorm === blkIncArr[_bi]) {
+              mInc = true;
+              break;
+            }
+          }
+          if (mInc) break;
+        }
+        if (mInc) pontInc = 30;
+      } else if (!blkTemInc && !leiTemInc) {
+        mInc = true;
+        pontInc = 20;
+      } else {
+        mInc = false;
+      }
+      if (!mInc) continue;
+
+      var pontuacaoTotal = 100 + pontPar + pontInc;
+      if (pontuacaoTotal > maiorPontuacao) {
+        maiorPontuacao = pontuacaoTotal;
+        melhorMatch = leiRow;
+      }
+    }
+
+    return melhorMatch;
+  }
+
   function classificarCrime(infoProc) {
-    let texto = (infoProc || '').toUpperCase();
+    if (!infoProc) return { nome: 'Outros', cor: '#6b7280', pinoTexto: 'CRIME', svgPath: gerarSvgTexto('CRIME', 0), tipificacaoCompleta: null, naoClassificado: false, totalCrimes: 0 };
+
+    // Limpar campos de Síntese / Motivo para nunca capturar artigos de fundamentação da sentença
+    var infoLimpa = (infoProc || '')
+      .replace(/\|\s*(?:Motivo|S[íi]ntese)\s*:[^|]*/gi, '')
+      .replace(/(?:Motivo|S[íi]ntese)\s*:[^|]*/gi, '');
+
+    var tabelaCarregada = (window._tabelaLeis && window._tabelaLeis.length > 0);
+    if (tabelaCarregada) {
+      var cached = _cacheClassificarCrime.get(infoLimpa);
+      if (cached) return Object.assign({}, cached);
+    }
+
+    let texto = (infoLimpa || '').toUpperCase();
     texto = texto.replace(/VIOL[ÊE]NCIA DOM[É|E]STICA:\s*(?:N\/?A|NÃO|NAO|-)/g, '');
     const isValido = function(val) { if (!val) return false; return !["", "-", "N/A", "NÃO INFORMADO"].includes(val.trim().toUpperCase()); };
-
-    function gerarSvgTexto(label) {
-      var tam = 9;
-      if (label.length <= 2) tam = 12;
-      else if (label.length <= 3) tam = 10;
-      else if (label.length <= 4) tam = 8.5;
-      else if (label.length <= 5) tam = 7.5;
-      else tam = 6.5;
-      return '<text x="8" y="11.5" text-anchor="middle" font-size="' + tam + '" font-weight="900" font-family="Impact,Arial Black,sans-serif" fill="white" letter-spacing="0.3">' + label + '</text>';
-    }
-
-    // Helper: Extrair de infoProc
     const extP = function(txt, lbl) { const r = new RegExp(lbl + '\\s*([^|\\n]+)', 'i'); const m = txt.match(r); return m ? m[1].trim() : "N/A"; };
-    var leiExtr = extP(infoProc, 'Lei:'); var artExtr = extP(infoProc, 'Artigo:'); 
-    var parExtr = extP(infoProc, 'Parágrafo:'); var incExtr = extP(infoProc, 'Inciso:');
-    var espExtr = extP(infoProc, 'Espécie(?: de| da) (?:prisão|Internação):');
-    if (espExtr === "N/A") espExtr = extP(infoProc, 'Espécie de prisão:');
 
-    // Limpar Artigo se estiver sujo com §
-    if (leiExtr !== "N/A" && leiExtr.toLowerCase().includes("art")) {
-      let mA = leiExtr.match(/art\.?\s*([^,§|]+)/i); if (mA && !isValido(artExtr)) artExtr = mA[1].trim();
-      leiExtr = leiExtr.split(/(?:,|\s)\s*art\.?/i)[0].trim();
-    }
-    // Pós-processamento: detectar incisos embutidos no parágrafo (dados legados como "§ 2º, I")
-    if (isValido(parExtr) && (!isValido(incExtr) || incExtr === 'N/A')) {
-      var _mInc = parExtr.match(/^(§\s*\d+[ºª°]?(?:-[A-Z])?)[\s,]+([IVXLCDM]{1,5}(?:\s*,\s*[IVXLCDM]{1,5})*)$/);
-      if (_mInc) {
-        parExtr = _mInc[1].trim();
-        incExtr = _mInc[2].trim();
-      }
-    }
-
-    // Helper: Romar numerais
-    function expandirIncisos(textoInciso) {
-      if (!isValido(textoInciso)) return [];
-      var txt = textoInciso.toUpperCase().replace(/\./g, '').replace(/º/g, '');
-      var tokens = txt.split(/[\s,;e]+/);
-      var romanos = ["I","II","III","IV","V","VI","VII","VIII","IX","X","XI","XII","XIII","XIV","XV"];
-      var idxMap = {};
-      for(var i=0; i<romanos.length; i++) idxMap[romanos[i]] = i;
-      var expandidos = [];
-      var iToken = 0;
-      while(iToken < tokens.length) {
-        if(tokens[iToken] === "A" || tokens[iToken] === "AO") {
-          if(iToken > 0 && iToken + 1 < tokens.length) {
-            var start = tokens[iToken-1]; var end = tokens[iToken+1];
-            if(idxMap[start] !== undefined && idxMap[end] !== undefined) {
-               var sIdx = idxMap[start]; var eIdx = idxMap[end];
-               if(sIdx < eIdx) { for(var j = sIdx + 1; j <= eIdx; j++) expandidos.push(romanos[j]); }
-            }
-          }
-          iToken++;
-        } else {
-          if(idxMap[tokens[iToken]] !== undefined) expandidos.push(tokens[iToken]);
-          iToken++;
-        }
-      }
-      return expandidos;
+    var espExtr = extP(infoLimpa, 'Espécie de prisão:');
+    var blocos = [];
+    var strParts = infoLimpa.split(/\|\s*Lei:/i);
+    if (strParts.length > 1) {
+       for (var b = 1; b < strParts.length; b++) {
+          var pseudoTxt = "Lei:" + strParts[b];
+          blocos.push({
+             leiExtr: extP(pseudoTxt, 'Lei:'),
+             artExtr: extP(pseudoTxt, 'Artigo:'),
+             parExtr: extP(pseudoTxt, 'Parágrafo:'),
+             incExtr: extP(pseudoTxt, 'Inciso:'),
+             textoPedaço: pseudoTxt.toUpperCase()
+          });
+       }
+       var primeiroBloco = {
+             leiExtr: extP(infoLimpa, 'Lei:'),
+             artExtr: extP(infoLimpa, 'Artigo:'),
+             parExtr: extP(infoLimpa, 'Parágrafo:'),
+             incExtr: extP(infoLimpa, 'Inciso:'),
+             textoPedaço: strParts[0].toUpperCase()
+       };
+       blocos.unshift(primeiroBloco);
+    } else {
+       blocos.push({
+          leiExtr: extP(infoLimpa, 'Lei:'),
+          artExtr: extP(infoLimpa, 'Artigo:'),
+          parExtr: extP(infoLimpa, 'Parágrafo:'),
+          incExtr: extP(infoLimpa, 'Inciso:'),
+          textoPedaço: texto
+       });
     }
 
-    var incisosExtraidos = expandirIncisos(incExtr);
+    var blocosUnicos = [];
+    var assinaturas = new Set();
+    blocos.forEach(function(blk) {
+       var sig = blk.leiExtr + "|" + blk.artExtr + "|" + blk.parExtr + "|" + blk.incExtr;
+       if (!assinaturas.has(sig)) {
+          assinaturas.add(sig);
+          blocosUnicos.push(blk);
+       }
+    });
 
-    // 1. Tentar match pela tabela de leis do banco
-    if (window._tabelaLeis && window._tabelaLeis.length > 0) {
-      // Helper: limpar número (remove pontos, espaços, traços não-semânticos)
-      var limparNum = function(v) { return (v || '').replace(/\./g, '').replace(/\s/g, '').trim(); };
-      
-      for (var i = 0; i < window._tabelaLeis.length; i++) {
-        var lei = window._tabelaLeis[i];
-        var categUp = (lei.categoria || '').toUpperCase();
-        var ptUp = (lei.pinoTexto || '').toUpperCase();
-        var pt = (lei.pinoTexto || categUp.substring(0, 5)).toUpperCase();
-        
-        // 1A. Regra especial: Prisão Civil / Pensão alimentícia
-        if (categUp === "PENSÃO" || ptUp === "PENSÃO" || categUp === "CIVIL") {
-           if (espExtr.toUpperCase().includes("CIVIL") || espExtr.toUpperCase().includes("CÍVEL") || espExtr.toUpperCase().includes("ALIMENTO")) {
-              return { nome: lei.categoria, cor: lei.cor || '#2563eb', pinoTexto: pt, svgPath: gerarSvgTexto(pt), tipificacaoCompleta: lei.tipificacaoCompleta, naoClassificado: false };
-           }
-        }
-
-        // 1B. Match estruturado por Lei + Artigo (+ Par + Inciso)
-        var leiNum = limparNum(lei.numeroLei);
-        var leiExtrNum = limparNum(leiExtr);
-        var artLimpo = limparNum(lei.artigo);
-        var artExtrLimpo = limparNum(artExtr);
-        
-        if (leiNum && artLimpo && leiExtrNum && artExtrLimpo) {
-           // Match de Lei: comparação numérica limpa (2848 === 2848)
-           var mLei = leiExtrNum === leiNum || leiExtrNum.includes(leiNum) || leiNum.includes(leiExtrNum);
-           // Match de Artigo: comparação exata ou com sufixo (-A, etc.)
-           var mArt = artExtrLimpo === artLimpo || artExtr.replace(/\s/g,'') === lei.artigo.replace(/\s/g,'');
-           
-           if (mLei && mArt) {
-              // Verifica parágrafo (se a tabela exige parágrafo específico)
-              var mPar = true;
-              if (isValido(lei.paragrafo)) {
-                 if (lei.paragrafo.toUpperCase() === "CAPUT") {
-                    mPar = !isValido(parExtr) || parExtr.toUpperCase().includes("CAPUT");
-                 } else {
-                    var parTabLimpo = limparNum(lei.paragrafo);
-                    mPar = isValido(parExtr) && (parExtr.includes(lei.paragrafo) || parExtr.includes("§" + parTabLimpo) || parExtr.includes("§ " + parTabLimpo) || limparNum(parExtr.replace(/[§ºª°]/g,'')).includes(parTabLimpo));
-                 }
-              }
-              // Verifica inciso (se a tabela exige inciso específico)
-              var mInc = true;
-              if (isValido(lei.inciso)) {
-                 mInc = incisosExtraidos.includes(lei.inciso.toUpperCase()) || (isValido(incExtr) && incExtr.toUpperCase().includes(lei.inciso.toUpperCase()));
-              }
-              
-              if (mPar && mInc) {
-                 return { nome: lei.categoria, cor: lei.cor || '#6b7280', pinoTexto: pt, svgPath: gerarSvgTexto(pt), tipificacaoCompleta: lei.tipificacaoCompleta, naoClassificado: false };
-              }
-           }
-        }
-
-        // 1C. Match legado por Palavras-Chave
-        if (lei.palavrasChave) {
-          var keywords = lei.palavrasChave.toUpperCase().split('|');
-          for (var k = 0; k < keywords.length; k++) {
-            var kw = keywords[k].trim();
-            if (kw && texto.includes(kw)) {
-              return { nome: lei.categoria, cor: lei.cor || '#6b7280', pinoTexto: pt, svgPath: gerarSvgTexto(pt), tipificacaoCompleta: lei.tipificacaoCompleta, naoClassificado: false };
-            }
-          }
-        }
-      }
+    var resultados = [];
+    var fallbackGravity = {
+       "HOMICÍDIO": 100, "LATROCÍNIO": 95, "ESTUPRO": 90, "ROUBO": 80, 
+       "TRÁFICO": 75, "ORGANIZAÇÃO": 70, "MARIA DA PENHA": 65, "VIOLÊNCIA DOMÉSTICA": 65, "LESÃO": 60,
+       "FURTO": 50, "RECEPTAÇÃO": 45, "ESTELIONATO": 40, "PENSÃO": 10, "CIVIL": 10
+    };
+    function getGravidade(lei) {
+       if (lei && lei.gravidade && lei.gravidade > 0) return lei.gravidade;
+       var cat = ((lei && lei.categoria) || "").toUpperCase();
+       for (var key in fallbackGravity) {
+          if (cat.includes(key)) return fallbackGravity[key];
+       }
+       return 20;
     }
 
-    // 2. Fallback hardcoded caso _tabelaLeis ainda não tenha sido carregada
-    var fallback = [
-      { kw: ['HOMIC','121','LATROCÍNIO','LATROCINIO'], nome: 'Homicídio', cor: '#8b0000', pt: 'HOMIC' },
-      { kw: ['ESTUPRO','213','217'], nome: 'Estupro', cor: '#991b1b', pt: 'JACK' },
-      { kw: ['MARIA DA PENHA','VIOLÊNCIA DOMÉSTICA','VIOLENCIA DOMESTICA','11340'], nome: 'V. Doméstica', cor: '#e11d48', pt: 'PENHA' },
-      { kw: ['ROUBO','157'], nome: 'Roubo', cor: '#dc2626', pt: 'ROUBO' },
-      { kw: ['FURTO','155'], nome: 'Furto', cor: '#ea580c', pt: 'FURTO' },
-      { kw: ['TRÁFICO','TRAFICO','DROGAS','ENTORPECENTE'], nome: 'Tráfico', cor: '#7c3aed', pt: 'TRÁF' },
-      { kw: ['ESTELIONATO','171'], nome: 'Estelionato', cor: '#ca8a04', pt: '171' },
-      { kw: ['RECEPTAÇÃO','RECEPTACAO','180'], nome: 'Receptação', cor: '#b45309', pt: '180' },
-      { kw: ['CIVIL','ALIMENTO','PENSÃO'], nome: 'Alimentícia', cor: '#2563eb', pt: 'CIVIL' },
-      { kw: ['ARMA','PORTE','POSSE','244','10826'], nome: 'Porte de Arma', cor: '#475569', pt: 'ARMA' },
-      { kw: ['TRÂNSITO','TRANSITO','CTB'], nome: 'Trânsito', cor: '#0891b2', pt: 'CTB' },
-      { kw: ['SEQUESTRO','CÁRCERE','148'], nome: 'Sequestro', cor: '#7f1d1d', pt: '148' },
-      { kw: ['LESÃO CORPORAL','LESAO CORPORAL','129'], nome: 'Lesão Corporal', cor: '#b91c1c', pt: 'LESÃO' },
-      { kw: ['ASSOCIAÇÃO','ASSOCIACAO','288'], nome: 'Organização Crim.', cor: '#4338ca', pt: '288' },
-      { kw: ['AMEAÇA','AMEACA','147'], nome: 'Ameaça', cor: '#9f1239', pt: '147' },
-      { kw: ['FISCAL','TRIBUTÁRIO'], nome: 'Fiscal', cor: '#059669', pt: 'FISCAL' }
-    ];
+    for (var b = 0; b < blocosUnicos.length; b++) {
+       var blk = blocosUnicos[b];
+       var match = encontrarMatchNaTabelaLeis(blk.leiExtr, blk.artExtr, blk.parExtr, blk.incExtr, espExtr);
 
-    for (var f = 0; f < fallback.length; f++) {
-      for (var j = 0; j < fallback[f].kw.length; j++) {
-        if (texto.includes(fallback[f].kw[j])) {
-          return { nome: fallback[f].nome, cor: fallback[f].cor, pinoTexto: fallback[f].pt, svgPath: gerarSvgTexto(fallback[f].pt), tipificacaoCompleta: null, naoClassificado: false };
-        }
-      }
+       if (match) {
+          var pt = (match.pinoTexto || match.categoria || 'CRIME').toUpperCase();
+          var matchObj = {
+             nome: match.categoria,
+             cor: match.cor || '#6b7280',
+             pinoTexto: pt,
+             tipificacaoCompleta: match.tipificacaoCompleta || match.categoria,
+             leiNome: match.leiNome || match.nomeLei || null,
+             gravidade: getGravidade(match),
+             pinoPiscando: (match.pinoPiscando === true || String(match.pinoPiscando).toUpperCase() === 'SIM'),
+             naoClassificado: false,
+             lei: blk.leiExtr,
+             artigo: blk.artExtr,
+             paragrafo: blk.parExtr,
+             inciso: blk.incExtr
+          };
+          resultados.push(matchObj);
+       } else if (blk.artExtr && blk.artExtr !== 'N/A' && blk.artExtr !== '-') {
+          resultados.push({
+             nome: 'NÃO CLASSIFICADO',
+             cor: '#f59e0b',
+             pinoTexto: '???',
+             tipificacaoCompleta: '⚠️ Não cadastrado na aba Leis',
+             leiNome: null,
+             gravidade: 1,
+             pinoPiscando: false,
+             naoClassificado: true,
+             lei: blk.leiExtr,
+             artigo: blk.artExtr,
+             paragrafo: blk.parExtr,
+             inciso: blk.incExtr
+          });
+       }
     }
 
-    // 3. Se não bateu com nada → NÃO CLASSIFICADO (alerta amarelo)
-    if (texto.trim().length > 0) {
-      return { nome: 'Não Classificado', cor: '#f59e0b', pinoTexto: '???', svgPath: gerarSvgTexto('???'), tipificacaoCompleta: null, naoClassificado: true };
-    }
-
-    // 4. Sem informação processual
-    return { nome: 'Outros', cor: '#6b7280', pinoTexto: 'CRIME', svgPath: gerarSvgTexto('CRIME'), tipificacaoCompleta: null, naoClassificado: false };
+    var totalCrimes = blocosUnicos.length > 0 ? blocosUnicos.length : 0;
+    var resultado;
+    if (resultados.length > 0) {
+       resultados.sort(function(a, b) { return b.gravidade - a.gravidade; });
+       var principal = resultados[0];
+       principal.svgPath = gerarSvgTexto(principal.pinoTexto, totalCrimes);
+       principal.totalCrimes = totalCrimes;
+       principal.todosCrimes = resultados;
+       principal.pinoPiscando = resultados.some(function(r) { return r.pinoPiscando === true; });
+       resultado = principal;
+  } else if (texto.trim().length > 0) {
+    resultado = { nome: 'NÃO CLASSIFICADO', cor: '#f59e0b', pinoTexto: '???', svgPath: gerarSvgTexto('???', totalCrimes), tipificacaoCompleta: '⚠️ Não cadastrado na aba Leis', naoClassificado: true, pinoPiscando: false, totalCrimes: totalCrimes };
+  } else {
+    resultado = { nome: 'Outros', cor: '#6b7280', pinoTexto: 'CRIME', svgPath: gerarSvgTexto('CRIME', totalCrimes), tipificacaoCompleta: null, naoClassificado: false, pinoPiscando: false, totalCrimes: totalCrimes };
   }
-</script>
+
+  if (tabelaCarregada) {
+    if (_cacheClassificarCrime.size > 5000) _cacheClassificarCrime.clear();
+    _cacheClassificarCrime.set(infoLimpa, resultado);
+  }
+  return resultado;
+}</script>
