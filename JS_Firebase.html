@@ -1,0 +1,234 @@
+<script>
+// ================================================================
+// SENTINELA — MÓDULO FIREBASE FRONTEND (JS_Firebase.html)
+// Inicialização do Firebase SDK, listeners em tempo real e fallback
+// ================================================================
+
+(function() {
+  'use strict';
+
+  // Estado do módulo Firebase
+  window.firebaseState = {
+    initialized: false,
+    connected: false,
+    lastUpdate: 0,
+    config: null,
+    db: null,
+    error: null
+  };
+
+  /**
+   * Inicializa o Firebase SDK no frontend.
+   * Chamado após o login do usuário ser confirmado.
+   */
+  window.initFirebase = function() {
+    if (window.firebaseState.initialized) return;
+
+    // Buscar config do backend (seguro)
+    google.script.run
+      .withSuccessHandler(function(config) {
+        if (!config || !config.databaseURL) {
+          console.warn('[Firebase] Config inválida ou databaseURL ausente');
+          window.firebaseState.error = 'Config inválida';
+          return;
+        }
+
+        window.firebaseState.config = config;
+
+        try {
+          // Inicializar Firebase App
+          if (!firebase.apps || firebase.apps.length === 0) {
+            firebase.initializeApp(config);
+          }
+
+          // Referência ao Realtime Database
+          window.firebaseState.db = firebase.database();
+          window.firebaseState.initialized = true;
+
+          console.log('[Firebase] ✅ Inicializado com sucesso');
+
+          // Monitorar estado da conexão
+          monitorarConexaoFirebase_();
+
+          // Iniciar listener de mandados
+          iniciarListenerMandados_();
+
+        } catch (e) {
+          console.error('[Firebase] ❌ Erro ao inicializar:', e.message);
+          window.firebaseState.error = e.message;
+        }
+      })
+      .withFailureHandler(function(err) {
+        console.warn('[Firebase] Não foi possível obter config:', err.message);
+        window.firebaseState.error = err.message;
+      })
+      .getFirebaseConfig();
+  };
+
+  /**
+   * Monitora o estado da conexão com o Firebase.
+   */
+  function monitorarConexaoFirebase_() {
+    var db = window.firebaseState.db;
+    if (!db) return;
+
+    var connRef = db.ref('.info/connected');
+    connRef.on('value', function(snap) {
+      var conectado = snap.val() === true;
+      window.firebaseState.connected = conectado;
+
+      if (conectado) {
+        console.log('[Firebase] 🟢 Conectado ao Realtime Database');
+      } else {
+        console.log('[Firebase] 🔴 Desconectado do Realtime Database');
+      }
+    });
+  }
+
+  /**
+   * Listener de mudanças em tempo real nos mandados.
+   * Substitui o polling de verificarAtualizacaoMandados.
+   */
+  function iniciarListenerMandados_() {
+    var db = window.firebaseState.db;
+    if (!db) return;
+
+    // Escutar mudanças no metadata (mais eficiente que escutar todos os mandados)
+    var metadataRef = db.ref('metadata/lastUpdate');
+    
+    metadataRef.on('value', function(snap) {
+      var lastUpdate = snap.val();
+      if (!lastUpdate) return;
+
+      // Se o timestamp é mais novo que o local, há novos dados
+      if (lastUpdate > window.firebaseState.lastUpdate) {
+        console.log('[Firebase] 📡 Nova atualização detectada: ' + lastUpdate);
+        window.firebaseState.lastUpdate = lastUpdate;
+
+        // Só recarregar se não foi o primeiro carregamento da planilha OU se a planilha veio vazia
+        carregarMandadosDoFirebase_();
+      }
+    });
+
+    // Escutar histórico de geocodificação em tempo real
+    var consumoRef = db.ref('geocodificacao_consumo');
+    consumoRef.on('value', function(snap) {
+      var dados = snap.val();
+      var logs = [];
+      if (dados) {
+        Object.keys(dados).forEach(function(k) {
+          var entry = dados[k];
+          if (entry) logs.push(entry);
+        });
+      }
+      if (logs.length > 0) {
+        window.geocodificacaoConsumoLogs = logs;
+        if (typeof carregarStatsGeocodificacao === 'function') carregarStatsGeocodificacao();
+      } else {
+        google.script.run.withSuccessHandler(function(hLogs) {
+          window.geocodificacaoConsumoLogs = hLogs || [];
+          if (typeof carregarStatsGeocodificacao === 'function') carregarStatsGeocodificacao();
+        }).obterHistoricoConsumo();
+      }
+    });
+  }
+
+  /**
+   * Carrega todos os mandados do Firebase e atualiza a UI.
+   * Usado como fonte primária de leitura (mais rápido que Sheets).
+   */
+  function carregarMandadosDoFirebase_() {
+    var db = window.firebaseState.db;
+    if (!db) return;
+
+    var mandadosRef = db.ref('mandados');
+    mandadosRef.once('value', function(snap) {
+      var dados = snap.val();
+      var mandados = [];
+      if (dados && typeof dados === 'object') {
+        Object.keys(dados).forEach(function(chave) {
+          var m = dados[chave];
+          if (m && m.mandado) {
+            mandados.push(m);
+          }
+        });
+      }
+
+      console.log('[Firebase] 📥 ' + mandados.length + ' mandados carregados do Firebase');
+
+      // Atualizar cache local
+      try {
+        var cacheData = {
+          timestamp: new Date().getTime(),
+          dados: mandados
+        };
+        localStorage.setItem('sentinela_mandados_cache', JSON.stringify(cacheData));
+      } catch (e) {
+        // localStorage pode estourar
+      }
+
+      // Utilizar o fluxo completo de processamento (tabela, mapa, estatísticas, etc)
+      if (typeof window.processarDados === 'function') {
+        window.processarDados(mandados);
+      } else {
+        // Fallback caso a função não exista
+        window.dadosMandados = mandados;
+        window.dadosMandadosFiltrados = mandados.slice();
+        if (typeof aplicarFiltrosLista === 'function') aplicarFiltrosLista(); 
+        else if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(mandados);
+      }
+
+      // Toast discreto de atualização
+      if (window.showToast) {
+        window.showToast('Dados sincronizados via Firebase (' + mandados.length + ')', 'success');
+      }
+    }, function(error) {
+      console.error('[Firebase] Erro ao carregar mandados:', error.message);
+    });
+  }
+
+  /**
+   * Função pública para forçar leitura do Firebase.
+   * Chamada pelo sincronizarBD() como fonte primária.
+   * @param {Function} callback Callback com (dados, fonte)
+   */
+  window.carregarDoFirebase = function(callback) {
+    if (!window.firebaseState.initialized || !window.firebaseState.db) {
+      if (callback) callback(null, 'firebase_indisponivel');
+      return;
+    }
+
+    var db = window.firebaseState.db;
+    var mandadosRef = db.ref('mandados');
+
+    mandadosRef.once('value', function(snap) {
+      var dados = snap.val();
+      if (!dados) {
+        if (callback) callback(null, 'firebase_vazio');
+        return;
+      }
+
+      var mandados = [];
+      Object.keys(dados).forEach(function(chave) {
+        var m = dados[chave];
+        if (m && m.mandado) {
+          mandados.push(m);
+        }
+      });
+
+      if (callback) callback(mandados, 'firebase');
+    }, function(error) {
+      console.error('[Firebase] Erro na leitura:', error.message);
+      if (callback) callback(null, 'firebase_erro');
+    });
+  };
+
+  /**
+   * Verifica se o Firebase está pronto e conectado.
+   */
+  window.isFirebaseReady = function() {
+    return window.firebaseState.initialized && window.firebaseState.connected;
+  };
+
+})();
+</script>
