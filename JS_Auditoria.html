@@ -64,28 +64,62 @@
 
   /* ── Helpers de detecção de inconsistências ─────────────────────── */
 
+  function _isAtivo(d) {
+    if (!d || !d.status) return false;
+    var s = String(d.status).trim().toUpperCase();
+    return s !== 'CAPTURADO';
+  }
+
   function _semTipificacao(d) {
-    if (!d || d.status !== 'Procurado') return false;
+    if (!_isAtivo(d)) return false;
     var ci = (typeof classificarCrime === 'function') ? classificarCrime(d.infoProcessuais || '') : null;
-    return ci ? ci.naoClassificado === true : false;
+    if (!ci) return true;
+    var isNC = ci.naoClassificado === true || ci.nome === 'NÃO CLASSIFICADO' || ci.nome === 'Não Classificado' || ci.nome === 'Outros';
+    if (isNC) return true;
+    if (ci.todosCrimes && Array.isArray(ci.todosCrimes)) {
+      for (var i = 0; i < ci.todosCrimes.length; i++) {
+        var c = ci.todosCrimes[i];
+        if (c.naoClassificado === true || c.nome === 'NÃO CLASSIFICADO' || c.nome === 'Não Classificado' || c.nome === 'Outros' || !c.tipificacaoCompleta) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   function _semLeiArtigo(d) {
-    if (!d || d.status !== 'Procurado') return false;
+    if (!_isAtivo(d)) return false;
     var raw = d.infoProcessuais || '';
     if (!raw || raw.trim().length < 5) return true;
     var lei    = _extP(raw, 'Lei:');
     var artigo = _extP(raw, 'Artigo:');
     var invalidos = ['', 'n/a', '-', 'não informado', 'nao informado', 'vide info proc.'];
-    return invalidos.includes((lei || '').toLowerCase()) && invalidos.includes((artigo || '').toLowerCase());
+    var semLei = !lei || invalidos.includes((lei || '').trim().toLowerCase());
+    var semArtigo = !artigo || invalidos.includes((artigo || '').trim().toLowerCase());
+    if (semLei || semArtigo) return true;
+
+    var ci = (typeof classificarCrime === 'function') ? classificarCrime(raw) : null;
+    if (ci && (ci.naoClassificado === true || ci.nome === 'NÃO CLASSIFICADO' || ci.nome === 'Não Classificado' || ci.nome === 'Outros')) return true;
+
+    return false;
   }
 
   function _semEndereco(d) {
-    return d && d.status === 'Procurado' && (d.semEndereco === true || !d.enderecoPrincipal || d.enderecoPrincipal.trim() === '');
+    return d && _isAtivo(d) && (d.semEndereco === true || !d.enderecoPrincipal || d.enderecoPrincipal.trim() === '');
+  }
+
+  function _enderecoSemCoordenadas(d) {
+    if (!_isAtivo(d)) return false;
+    if (d.semEndereco) return false;
+    var end = (d.enderecoPrincipal || '').trim();
+    if (!end) return false;
+    var lat = parseFloat(d.lat);
+    var lng = parseFloat(d.lng);
+    return isNaN(lat) || isNaN(lng) || Math.abs(lat) < 0.1 || Math.abs(lng) < 0.1;
   }
 
   function _semCidade(d) {
-    if (!d || d.status !== 'Procurado') return false;
+    if (!_isAtivo(d)) return false;
     if (d.semEndereco) return false;
     var end = (d.enderecoPrincipal || '').trim();
     if (!end) return false;
@@ -97,7 +131,7 @@
   /* ── NOVAS verificações de formato ──────────────────────────────── */
 
   function _mandadoFormatoInvalido(d) {
-    if (!d || d.status !== 'Procurado') return false;
+    if (!_isAtivo(d)) return false;
     var num = (d.mandado || '').trim();
     if (!num) return false; // sem mandado → já pega em outra categoria
     var tamanhoOk = num.length >= _LEN_MANDADO_MIN && num.length <= _LEN_MANDADO_MAX;
@@ -106,7 +140,7 @@
   }
 
   function _processoFormatoInvalido(d) {
-    if (!d || d.status !== 'Procurado') return false;
+    if (!_isAtivo(d)) return false;
     var num = _obterNumeroProcesso(d).trim();
     if (!num) return false; // sem processo cadastrado → não penaliza aqui (já falta lei/artigo)
     var tamanhoOk = num.length >= _LEN_PROCESSO_MIN && num.length <= _LEN_PROCESSO_MAX;
@@ -115,7 +149,7 @@
   }
 
   function _tituloFormatoInvalido(d) {
-    if (!d || d.status !== 'Procurado') return false;
+    if (!_isAtivo(d)) return false;
     var titulo = _obterTitulo(d);
     if (!titulo) return false; // título não preenchido → outro problema
     var len = titulo.length;
@@ -123,7 +157,7 @@
   }
 
   function _usouFallback(d) {
-    if (!d || d.status !== 'Procurado') return false;
+    if (!_isAtivo(d)) return false;
     var raw = d.infoProcessuais || '';
     var artigo = _extP(raw, 'Artigo:');
     // Se o artigo é "Vide Info Proc." significa que o parser não extraiu corretamente
@@ -137,13 +171,21 @@
     return false;
   }
 
+  // v4.9.85: Detecta inconsistência de cidade/UF inserida pela validação pré-geocodificação
+  function _enderecoSemCidadeUF(d) {
+    if (!_isAtivo(d)) return false;
+    var obs = (d.observacoes || '').toUpperCase();
+    if (obs.includes('INCONSISTÊNCIA CIDADE') || obs.includes('INCONSISTÊNCIA: ENDEREÇO')) return true;
+    // Verificar se o endereço tem pino na sede por falta de cidade
+    if (obs.includes('CIDADE NÃO COBERTA NA TABELA CIDADES')) return true;
+    return false;
+  }
+
   function _getInconsistencias(d) {
     var cats = [];
     if (_semTipificacao(d))          cats.push('tipificacao');
     if (_semLeiArtigo(d))            cats.push('lei');
     if (_usouFallback(d))            cats.push('tipificacao-fallback');
-    if (_semEndereco(d))             cats.push('endereco');
-    if (_semCidade(d))               cats.push('cidade');
     if (_mandadoFormatoInvalido(d))  cats.push('fmt-mandado');
     if (_processoFormatoInvalido(d)) cats.push('fmt-processo');
     if (_tituloFormatoInvalido(d))   cats.push('fmt-titulo');
@@ -153,6 +195,7 @@
   /* ── Carregar e renderizar ─────────────────────────────────────── */
 
   function carregarAuditoria() {
+    if (typeof _buildCidadesDatalist === 'function') _buildCidadesDatalist();
     var loading  = document.getElementById('auditoria-loading');
     var lista    = document.getElementById('auditoria-lista');
     var vazio    = document.getElementById('auditoria-vazio');
@@ -180,8 +223,7 @@
     var iconReload = document.getElementById('iconReloadAuditoria');
     if (iconReload) { iconReload.classList.remove('spin-anim'); }
 
-    var cntTip = 0, cntLei = 0, cntEnd = 0, cntCid = 0,
-        cntFmtM = 0, cntFmtP = 0, cntFmtT = 0, cntFallback = 0;
+    var cntTip = 0, cntLei = 0, cntFmtM = 0, cntFmtP = 0, cntFmtT = 0, cntFallback = 0;
     _auditoriaCache = [];
 
     dadosMandados.forEach(function(d) {
@@ -191,8 +233,6 @@
       if (cats.includes('tipificacao'))          cntTip++;
       if (cats.includes('lei'))                   cntLei++;
       if (cats.includes('tipificacao-fallback'))   cntFallback++;
-      if (cats.includes('endereco'))              cntEnd++;
-      if (cats.includes('cidade'))                cntCid++;
       if (cats.includes('fmt-mandado'))           cntFmtM++;
       if (cats.includes('fmt-processo'))          cntFmtP++;
       if (cats.includes('fmt-titulo'))            cntFmtT++;
@@ -202,12 +242,19 @@
     _s('cnt-sem-tipificacao', cntTip);
     _s('cnt-sem-lei',         cntLei);
     _s('cnt-tipif-fallback',  cntFallback);
-    _s('cnt-sem-endereco',    cntEnd);
-    _s('cnt-sem-cidade',      cntCid);
     _s('cnt-fmt-mandado',     cntFmtM);
     _s('cnt-fmt-processo',    cntFmtP);
     _s('cnt-fmt-titulo',      cntFmtT);
     _s('cnt-total-auditoria', _auditoriaCache.length);
+
+    // Atualizar badges das categorias de filtro
+    _s('badge-cat-todos',               _auditoriaCache.length);
+    _s('badge-cat-tipificacao',         cntTip);
+    _s('badge-cat-lei',                 cntLei);
+    _s('badge-cat-tipificacao-fallback', cntFallback);
+    _s('badge-cat-fmt-mandado',         cntFmtM);
+    _s('badge-cat-fmt-processo',        cntFmtP);
+    _s('badge-cat-fmt-titulo',          cntFmtT);
 
     var badge = document.getElementById('badgeAuditoriaNav');
     if (badge) {
@@ -229,26 +276,55 @@
       return;
     }
 
-    _auditoriaFiltroAtivo = 'todos';
-    document.querySelectorAll('.audit-filter-btn').forEach(function(b) {
-      b.classList.remove('active'); b.style.opacity = '0.7';
-    });
-    var btnTodos = document.querySelector('.audit-filter-btn[data-cat="todos"]');
-    if (btnTodos) { btnTodos.classList.add('active'); btnTodos.style.opacity = '1'; }
+    var prevFilter = (typeof _auditoriaFiltroAtivo !== 'undefined' && _auditoriaFiltroAtivo) ? _auditoriaFiltroAtivo : 'todos';
+    _auditoriaFiltroAtivo = prevFilter;
 
-    _renderizarAuditoria(_auditoriaCache);
+    filtrarAuditoria(prevFilter);
+  }
+
+  function removerAcentosAuditoria(str) {
+    if (!str) return '';
+    return String(str)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase();
+  }
+
+  function limparBuscaAuditoria() {
+    var input = document.getElementById('buscaAuditoriaInput');
+    if (input) { input.value = ''; input.focus(); }
+    filtrarAuditoria(_auditoriaFiltroAtivo);
+  }
+
+  function filtrarAuditoriaSearch() {
+    filtrarAuditoria(_auditoriaFiltroAtivo);
   }
 
   function filtrarAuditoria(cat, btn) {
-    _auditoriaFiltroAtivo = cat;
+    _auditoriaFiltroAtivo = cat || 'todos';
     document.querySelectorAll('.audit-filter-btn').forEach(function(b) {
       b.classList.remove('active'); b.style.opacity = '0.6';
     });
-    if (btn) { btn.classList.add('active'); btn.style.opacity = '1'; }
+    var btnAtivo = btn || document.querySelector('.audit-filter-btn[data-cat="' + _auditoriaFiltroAtivo + '"]');
+    if (btnAtivo) { btnAtivo.classList.add('active'); btnAtivo.style.opacity = '1'; }
 
-    var filtrados = cat === 'todos'
-      ? _auditoriaCache
-      : _auditoriaCache.filter(function(item) { return item.cats.includes(cat); });
+    var inputBusca = document.getElementById('buscaAuditoriaInput');
+    var btnLimpar = document.getElementById('btnLimparBuscaAuditoria');
+    var rawSearch = (inputBusca || {}).value || '';
+    if (btnLimpar) btnLimpar.style.display = rawSearch.trim().length > 0 ? 'flex' : 'none';
+
+    var query = removerAcentosAuditoria(rawSearch.trim());
+
+    var filtrados = _auditoriaCache.filter(function(item) {
+      var catOk = (_auditoriaFiltroAtivo === 'todos' || item.cats.includes(_auditoriaFiltroAtivo));
+      if (!catOk) return false;
+      if (!query) return true;
+
+      var nomeNorm = removerAcentosAuditoria(item.d.nome || '');
+      var mandadoNorm = removerAcentosAuditoria(item.d.mandado || '');
+      var cpfNorm = removerAcentosAuditoria(item.d.cpf || '');
+      return nomeNorm.includes(query) || mandadoNorm.includes(query) || cpfNorm.includes(query);
+    });
 
     _renderizarAuditoria(filtrados);
   }
@@ -260,7 +336,7 @@
     lista.style.display = 'flex';
 
     if (itens.length === 0) {
-      lista.innerHTML = '<div style="text-align:center;padding:40px;color:#475569;font-size:13px;font-weight:700;">Nenhum mandado nesta categoria.</div>';
+      lista.innerHTML = '<div style="text-align:center;padding:40px;color:var(--text-muted);font-size:13px;font-weight:700;">Nenhum mandado encontrado.</div>';
       return;
     }
 
@@ -274,6 +350,7 @@
         'tipificacao-fallback':   { cor: '#f97316', label: '⚠ Artigo não vinculado' },
         endereco:                { cor: '#8b5cf6', label: '⚠ Sem Endereço' },
         cidade:                  { cor: '#3b82f6', label: '⚠ Sem Cidade' },
+        'cidade-uf':             { cor: '#e11d48', label: '⚠ Cidade/UF Inválida' },
         'fmt-mandado':           { cor: '#f43f5e', label: '⚠ Nº do Mandado Inválido' },
         'fmt-processo':          { cor: '#fb923c', label: '⚠ Nº Processo Inválido' },
         'fmt-titulo':            { cor: '#a78bfa', label: '⚠ Título Inválido' }
@@ -284,8 +361,27 @@
       }).join('');
 
       var raw          = d.infoProcessuais || '';
-      var leiAtual     = _extP(raw, 'Lei:') || '';
-      var artigoAtual  = _extP(raw, 'Artigo:') || '';
+      var ci           = (typeof classificarCrime === 'function') ? classificarCrime(raw) : null;
+      var leiAtual     = '';
+      var artigoAtual  = '';
+
+      // Tenta encontrar o crime específico que está sem tipificação / não cadastrado
+      if (ci && ci.todosCrimes && Array.isArray(ci.todosCrimes) && ci.todosCrimes.length > 0) {
+        var crimeErrado = ci.todosCrimes.find(function(c) {
+          return c.naoClassificado === true || c.nome === 'NÃO CLASSIFICADO' || c.nome === 'Não Classificado' || c.nome === 'Outros' || !c.tipificacaoCompleta;
+        });
+        if (crimeErrado) {
+          leiAtual = crimeErrado.lei || '';
+          artigoAtual = crimeErrado.artigo || '';
+        } else {
+          leiAtual = ci.todosCrimes[0].lei || '';
+          artigoAtual = ci.todosCrimes[0].artigo || '';
+        }
+      }
+
+      if (!leiAtual) leiAtual = _extP(raw, 'Lei:') || '';
+      if (!artigoAtual) artigoAtual = _extP(raw, 'Artigo:') || '';
+
       var endAtual     = d.enderecoPrincipal || '';
       var numMandado   = (d.mandado || '').trim();
       var numProcesso  = _obterNumeroProcesso(d);
@@ -299,38 +395,56 @@
       var dicaTitulo   = cats.includes('fmt-titulo')
         ? '<div style="font-size:9px;color:#a78bfa;margin-top:2px;">Tamanho esperado: ' + _LEN_TITULO_MIN + '–' + _LEN_TITULO_MAX + ' chars (ex: "Mandado de Prisão" … "Mandado de Internação Recaptura"). Atual: <b>' + tituloAtual.length + '</b> chars.</div>' : '';
 
+      // Montar SOMENTE os campos que necessitam de correção para esta inconsistência
+      var bodyFieldsHtml = '';
+      if (cats.includes('fmt-mandado')) {
+        bodyFieldsHtml += _buildEditFieldExtra('Nº Mandado', 'mand-' + d.mandado, numMandado, '#f43f5e', dicaMandado);
+      }
+      if (cats.includes('fmt-processo')) {
+        bodyFieldsHtml += _buildEditFieldExtra('Nº Processo (de infoProcessuais)', 'proc-num-' + d.mandado, numProcesso, '#fb923c', dicaProcesso);
+      }
+      if (cats.includes('fmt-titulo')) {
+        bodyFieldsHtml += _buildEditFieldExtra('Título do Mandado (dadosExtras.titulo)', 'tit-' + d.mandado, tituloAtual, '#a78bfa', dicaTitulo);
+      }
+      if (cats.includes('lei') || cats.includes('tipificacao') || cats.includes('tipificacao-fallback')) {
+        bodyFieldsHtml += _buildProcessualGrid(d.mandado, raw);
+      }
+      if (cats.includes('endereco') || cats.includes('cidade') || cats.includes('cidade-uf')) {
+        bodyFieldsHtml += _buildAddressGrid(d.mandado, endAtual, d.cidade || '', cats);
+      }
+
+      // Se nenhum campo específico for montado por exceção, exibe campos padrão
+      if (!bodyFieldsHtml) {
+        bodyFieldsHtml += _buildEditFieldExtra('Nº Mandado', 'mand-' + d.mandado, numMandado, '#334155', dicaMandado);
+        bodyFieldsHtml += _buildProcessualGrid(d.mandado, raw);
+        bodyFieldsHtml += _buildAddressGrid(d.mandado, endAtual, d.cidade || '', cats);
+      }
+
       var card = document.createElement('div');
-      card.className = 'audit-card';
+      card.className = 'audit-card card-operador';
       card.setAttribute('data-mandado', d.mandado);
-      card.style.cssText = 'background:#1e293b;border:1px solid #334155;border-radius:14px;overflow:hidden;transition:box-shadow 0.2s;';
+      card.style.cssText = 'background:var(--bg-surface);border:var(--glass-border);border-radius:var(--radius-md);overflow:hidden;box-shadow:var(--neu-raised-sm);transition:var(--transition);';
 
       card.innerHTML = '\
         <div style="padding:14px 16px;display:flex;align-items:flex-start;gap:14px;cursor:pointer;" onclick="_toggleAuditCard(this.closest(\'.audit-card\'))">\
           <div style="flex:1;min-width:0;">\
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">\
-              <span style="font-size:13px;font-weight:900;color:#f8fafc;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">' + (d.nome || 'Nome não informado') + '</span>\
-              <span onclick="event.stopPropagation(); navigator.clipboard.writeText(\'' + _esc(d.nome) + '\'); this.innerText=\'check\'; setTimeout(()=>this.innerText=\'content_copy\', 1000);" class="material-symbols-outlined" style="font-size:14px;color:#94a3b8;cursor:pointer;" title="Copiar Nome">content_copy</span>\
+              <span style="font-size:13px;font-weight:900;color:var(--text-primary);text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px;">' + (d.nome || 'Nome não informado') + '</span>\
+              <span onclick="event.stopPropagation(); navigator.clipboard.writeText(\'' + _esc(d.nome) + '\'); this.innerText=\'check\'; setTimeout(()=>this.innerText=\'content_copy\', 1000);" class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);cursor:pointer;" title="Copiar Nome">content_copy</span>\
               ' + badgesHtml + '\
             </div>\
             <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">\
-              <span style="font-size:10px;color:#64748b;font-family:monospace;">Mandado: ' + (numMandado || '-') + '</span>\
-              <span onclick="event.stopPropagation(); navigator.clipboard.writeText(\'' + _esc(numMandado) + '\'); this.innerText=\'check\'; setTimeout(()=>this.innerText=\'content_copy\', 1000);" class="material-symbols-outlined" style="font-size:14px;color:#94a3b8;cursor:pointer;" title="Copiar Mandado">content_copy</span>\
-              <span style="font-size:10px;color:#64748b;">CPF: ' + (d.cpf || '-') + '</span>\
-              <span style="font-size:10px;color:#64748b;">Validade: ' + (d.validade || '-') + '</span>\
+              <span style="font-size:10px;color:var(--text-muted);font-family:monospace;">Mandado: ' + (numMandado || '-') + '</span>\
+              <span onclick="event.stopPropagation(); navigator.clipboard.writeText(\'' + _esc(numMandado) + '\'); this.innerText=\'check\'; setTimeout(()=>this.innerText=\'content_copy\', 1000);" class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);cursor:pointer;" title="Copiar Mandado">content_copy</span>\
+              <span style="font-size:10px;color:var(--text-muted);">CPF: ' + (d.cpf || '-') + '</span>\
+              <span style="font-size:10px;color:var(--text-muted);">Validade: ' + (d.validade || '-') + '</span>\
             </div>\
           </div>\
-          <span class="material-symbols-outlined audit-chevron" style="font-size:20px;color:#475569;flex-shrink:0;transition:transform 0.2s;">expand_more</span>\
+          <span class="material-symbols-outlined audit-chevron" style="font-size:20px;color:var(--text-muted);flex-shrink:0;transition:transform 0.2s;">expand_more</span>\
         </div>\
-        <div class="audit-card-body" style="display:none;padding:0 16px 16px;border-top:1px solid #1e3a5f;">\
+        <div class="audit-card-body" style="display:none;padding:0 16px 16px;border-top:1px solid var(--border);">\
           <div style="padding-top:14px;display:flex;flex-direction:column;gap:14px;">\
-            ' + _buildEditFieldExtra('Nº Mandado', 'mand-' + d.mandado, numMandado, cats.includes('fmt-mandado') ? '#f43f5e' : '#334155', dicaMandado) + '\
-            ' + _buildEditFieldExtra('Nº Processo (de infoProcessuais)', 'proc-num-' + d.mandado, numProcesso, cats.includes('fmt-processo') ? '#fb923c' : '#334155', dicaProcesso) + '\
-            ' + _buildEditFieldExtra('Título do Mandado (dadosExtras.titulo)', 'tit-' + d.mandado, tituloAtual, cats.includes('fmt-titulo') ? '#a78bfa' : '#334155', dicaTitulo) + '\
-            ' + _buildEditField('Lei', 'lei-' + d.mandado, leiAtual, cats.includes('lei') ? '#f59e0b' : '#334155') + '\
-            ' + _buildEditField('Artigo', 'art-' + d.mandado, artigoAtual, cats.includes('lei') ? '#f59e0b' : '#334155') + '\
-            ' + _buildEditField('Info Processual completa', 'proc-' + d.mandado, raw, '#334155', true) + '\
-            ' + _buildEditField('Endereço Principal', 'end-' + d.mandado, endAtual, cats.includes('endereco') || cats.includes('cidade') ? '#8b5cf6' : '#334155') + '\
-            ' + _buildEditField('Cidade', 'cidade-' + d.mandado, d.cidade || '', cats.includes('cidade') ? '#3b82f6' : '#334155') + '\
+            ' + bodyFieldsHtml + '\
             <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">\
               <button onclick="_salvarAuditoria(\'' + d.mandado + '\')" style="background:linear-gradient(135deg,#7a1515,#a92020);border:none;color:#fff;font-size:12px;font-weight:800;padding:8px 20px;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:6px;">\
                 <span class="material-symbols-outlined" style="font-size:15px;">save</span>SALVAR CORREÇÃO\
@@ -344,20 +458,247 @@
       ';
 
       lista.appendChild(card);
+
+      if (window.google && google.maps && google.maps.places) {
+        var logradouroInput = document.getElementById('logradouro-' + d.mandado);
+        if (logradouroInput) {
+          var autocomplete = new google.maps.places.Autocomplete(logradouroInput, {
+            types: ['geocode'],
+            componentRestrictions: { country: 'br' }
+          });
+          
+          autocomplete.addListener('place_changed', function() {
+            var place = autocomplete.getPlace();
+            if (!place.address_components) return;
+            
+            var logradouro = '';
+            var bairro = '';
+            var cidade = '';
+            var uf = '';
+            
+            for (var i = 0; i < place.address_components.length; i++) {
+              var component = place.address_components[i];
+              var type = component.types[0];
+              if (type === 'route') logradouro = component.long_name;
+              if (type === 'sublocality_level_1' || type === 'sublocality') bairro = component.long_name;
+              if (type === 'administrative_area_level_2') cidade = component.long_name;
+              if (type === 'administrative_area_level_1') uf = component.short_name;
+            }
+            
+            if (logradouro) {
+              logradouroInput.value = logradouro.toUpperCase();
+            } else if (place.name) {
+              logradouroInput.value = place.name.toUpperCase();
+            }
+            
+            if (bairro) {
+              var bairroInput = document.getElementById('bairro-' + d.mandado);
+              if (bairroInput) bairroInput.value = bairro.toUpperCase();
+            }
+            if (cidade) {
+              var inputCidade = document.getElementById('cidade-' + d.mandado);
+              if (inputCidade) {
+                inputCidade.value = cidade.toUpperCase();
+                if (typeof _onCidadeChange === 'function') {
+                  _onCidadeChange(inputCidade, d.mandado);
+                }
+              }
+            }
+            if (uf) {
+              var ufInput = document.getElementById('uf-' + d.mandado);
+              if (ufInput && !ufInput.value) ufInput.value = uf.toUpperCase();
+            }
+          });
+        }
+      }
     });
   }
 
-  function _buildEditField(label, id, value, borderColor, isTextarea) {
-    var style = 'width:100%;background:#0f172a;border:1px solid ' + borderColor + ';color:#f8fafc;border-radius:8px;padding:8px 10px;font-size:11px;font-family:monospace;resize:vertical;box-sizing:border-box;';
-    if (isTextarea) {
-      return '<div><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div><textarea id="' + id + '" rows="4" style="' + style + '">' + _esc(value) + '</textarea></div>';
+  function _buildAddressGrid(mandado, endAtual, cidadeAtual, cats) {
+    var borderColor = cats.includes('endereco') || cats.includes('cidade') ? '#8b5cf6' : 'var(--border)';
+    var style = 'width:100%;background:var(--bg-depressed);border:1px solid ' + borderColor + ';color:var(--text-primary);border-radius:var(--radius-sm);padding:8px 10px;font-size:11px;font-family:var(--font-mono);box-sizing:border-box;';
+    
+    var logradouroVal = "";
+    var numeroVal = "";
+    var bairroVal = "";
+
+
+    return '<div style="display:flex;flex-direction:column;gap:8px;padding:10px;background:var(--bg-depressed);border:1px dashed var(--border);border-radius:var(--radius-sm);margin-top:4px;">' +
+      '<div style="font-size:11px;font-weight:800;color:var(--text-muted);text-transform:uppercase;margin-bottom:2px;">Correção de Endereço (Separado)</div>' +
+      (endAtual ? '<div style="font-size:11px;color:var(--text-primary);background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);padding:8px 10px;border-radius:6px;margin-bottom:4px;font-family:var(--font-mono);word-break:break-all;"><strong>Endereço no PDF:</strong> "' + _esc(endAtual) + '"</div>' : '') +
+      '<div style="display:flex;gap:8px;">' +
+        '<div style="flex:3;">' +
+          '<div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Logradouro</div>' +
+          '<input type="text" id="logradouro-' + mandado + '" value="' + _esc(logradouroVal) + '" style="' + style + '" placeholder="Rua, Avenida...">' +
+        '</div>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Número</div>' +
+          '<input type="text" id="numero-' + mandado + '" value="' + _esc(numeroVal) + '" style="' + style + '" placeholder="123, S/N">' +
+        '</div>' +
+      '</div>' +
+      '<div>' +
+        '<div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Bairro</div>' +
+        '<input type="text" id="bairro-' + mandado + '" value="' + _esc(bairroVal) + '" style="' + style + '" placeholder="Centro...">' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;">' +
+        '<div style="flex:2;">' +
+          '<div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">Cidade</div>' +
+          '<input type="text" id="cidade-' + mandado + '" value="" list="datalist-cidades" onchange="_onCidadeChange(this, \'' + mandado + '\')" style="' + style + '" placeholder="Ex: SÃO PAULO">' +
+        '</div>' +
+        '<div style="flex:1;">' +
+          '<div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">UF</div>' +
+          '<input type="text" id="uf-' + mandado + '" value="" style="' + style + '" placeholder="SP">' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function _onCidadeChange(inputEl, mandado) {
+    var valStr = inputEl.value || "";
+    var val = valStr.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    var ufEl = document.getElementById('uf-' + mandado);
+    if (!ufEl) return;
+    if (window._cidadesValidasFront) {
+      for (var i=0; i < window._cidadesValidasFront.length; i++) {
+        if (window._cidadesValidasFront[i].municipio === val) {
+          ufEl.value = window._cidadesValidasFront[i].uf;
+          return;
+        }
+      }
     }
-    return '<div><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div><input type="text" id="' + id + '" value="' + _esc(value) + '" style="' + style + '"></div>';
+  }
+
+  function _buildCidadesDatalist() {
+    var dl = document.getElementById('datalist-cidades');
+    if (!dl) {
+      dl = document.createElement('datalist');
+      dl.id = 'datalist-cidades';
+      document.body.appendChild(dl);
+    }
+    dl.innerHTML = '';
+    if (window._cidadesValidasFront) {
+      window._cidadesValidasFront.forEach(function(c) {
+        var opt = document.createElement('option');
+        opt.value = c.municipio;
+        opt.setAttribute('data-uf', c.uf);
+        dl.appendChild(opt);
+      });
+    }
+  }
+
+  function _obterCamposProcessuaisAgrupados(raw) {
+    var partes = (raw || '').split(/[|\n]/);
+    var gerais = [];
+    var crimes = [];
+    var crimeAtual = null;
+
+    partes.forEach(function(p) {
+      p = p.trim();
+      if (!p) return;
+      var colonIdx = p.indexOf(':');
+      if (colonIdx > 0) {
+        var key = p.substring(0, colonIdx).trim();
+        var val = p.substring(colonIdx + 1).trim();
+        var kLower = key.toLowerCase();
+
+        if (kLower === 'lei' || kLower === 'lei:') {
+          if (crimeAtual && (crimeAtual.lei || crimeAtual.artigo)) {
+            crimes.push(crimeAtual);
+          }
+          crimeAtual = { lei: val, artigo: '', paragrafo: '', inciso: '', campos: [{ key: key, val: val }] };
+        } else if (crimeAtual) {
+          if (kLower === 'artigo') crimeAtual.artigo = val;
+          if (kLower === 'parágrafo' || kLower === 'paragrafo') crimeAtual.paragrafo = val;
+          if (kLower === 'inciso') crimeAtual.inciso = val;
+          crimeAtual.campos.push({ key: key, val: val });
+        } else {
+          gerais.push({ key: key, val: val });
+        }
+      } else {
+        gerais.push({ key: 'Obs', val: p });
+      }
+    });
+
+    if (crimeAtual && (crimeAtual.lei || crimeAtual.artigo)) {
+      crimes.push(crimeAtual);
+    }
+
+    return { gerais: gerais, crimes: crimes, avulsos: [] };
+  }
+
+  function _buildProcessualGrid(mandado, raw) {
+    var parsed = _obterCamposProcessuaisAgrupados(raw);
+    var html = '<div style="display:flex;flex-direction:column;gap:12px;margin-top:4px;">\
+      <div style="font-size:10px;font-weight:900;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.5px;display:flex;align-items:center;gap:6px;">\
+        <span class="material-symbols-outlined" style="font-size:16px;color:var(--info);">gavel</span> Informações Processuais Detalhadas\
+      </div>';
+
+    // 1. Bloco de Dados Gerais do Processo
+    if (parsed.gerais.length > 0) {
+      html += '<div style="background:rgba(255,255,255,0.02);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;">\
+        <div style="font-size:9px;font-weight:800;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;">Dados do Processo e Pena</div>\
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px;">';
+      
+      parsed.gerais.forEach(function(c) {
+        html += '\
+          <div style="display:flex; flex-direction:column; gap:4px;">\
+            <label style="font-size:9px; font-weight:800; color:var(--text-muted); text-transform:uppercase; opacity:0.8;">' + _esc(c.key) + '</label>\
+            <input type="text" class="audit-proc-field" data-key="' + _esc(c.key) + '" data-mandado="' + mandado + '" value="' + _esc(c.val) + '" style="width:100%;background:var(--bg-depressed);border:1px solid #334155;color:var(--text-primary);border-radius:var(--radius-sm);padding:6px 10px;font-size:11px;font-family:var(--font-mono);box-sizing:border-box;">\
+          </div>';
+      });
+      html += '</div></div>';
+    }
+
+    // 2. Blocos por Crime Detectado
+    if (parsed.crimes.length > 0) {
+      parsed.crimes.forEach(function(crime, idx) {
+        var testStr = 'Lei: ' + crime.lei + ' | Artigo: ' + crime.artigo;
+        var ciTest = (typeof classificarCrime === 'function') ? classificarCrime(testStr) : null;
+        var isErrado = !ciTest || ciTest.naoClassificado === true || ciTest.nome === 'NÃO CLASSIFICADO' || ciTest.nome === 'Não Classificado' || ciTest.nome === 'Outros' || !ciTest.tipificacaoCompleta;
+
+        var boxBorder = isErrado ? '1px solid rgba(239,68,68,0.5)' : '1px solid rgba(16,185,129,0.3)';
+        var boxBg = isErrado ? 'rgba(239,68,68,0.06)' : 'rgba(16,185,129,0.03)';
+        var badgeHtml = isErrado
+          ? '<span style="font-size:9px;font-weight:900;background:rgba(239,68,68,0.2);color:#ef4444;padding:2px 8px;border-radius:99px;border:1px solid rgba(239,68,68,0.4);display:inline-flex;align-items:center;gap:4px;">⚠ LEI NÃO CADASTRADA NA TABELA</span>'
+          : '<span style="font-size:9px;font-weight:900;background:rgba(16,185,129,0.15);color:#10b981;padding:2px 8px;border-radius:99px;border:1px solid rgba(16,185,129,0.3);display:inline-flex;align-items:center;gap:4px;">✔ CADASTRADA' + (ciTest && ciTest.nome ? ': ' + _esc(ciTest.nome) : '') + '</span>';
+
+        html += '<div style="background:' + boxBg + ';border:' + boxBorder + ';border-radius:var(--radius-sm);padding:10px;">\
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;flex-wrap:wrap;gap:6px;">\
+            <div style="font-size:10px;font-weight:900;color:var(--text-primary);text-transform:uppercase;letter-spacing:0.5px;">Crime ' + (idx + 1) + (crime.lei ? ' (Lei ' + _esc(crime.lei) + (crime.artigo ? ', Art. ' + _esc(crime.artigo) : '') + ')' : '') + '</div>\
+            ' + badgeHtml + '\
+          </div>\
+          <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px;">';
+
+        crime.campos.forEach(function(c) {
+          var kLower = c.key.toLowerCase();
+          var inputBorder = (isErrado && (kLower === 'lei' || kLower === 'artigo')) ? '1px solid #ef4444' : '#334155';
+          var inputBg = (isErrado && (kLower === 'lei' || kLower === 'artigo')) ? 'rgba(239,68,68,0.12)' : 'var(--bg-depressed)';
+          
+          html += '\
+            <div style="display:flex; flex-direction:column; gap:4px;">\
+              <label style="font-size:9px; font-weight:800; color:' + (isErrado && (kLower === 'lei' || kLower === 'artigo') ? '#fca5a5' : 'var(--text-muted)') + '; text-transform:uppercase;">' + _esc(c.key) + '</label>\
+              <input type="text" class="audit-proc-field" data-key="' + _esc(c.key) + '" data-mandado="' + mandado + '" value="' + _esc(c.val) + '" style="width:100%;background:' + inputBg + ';border:' + inputBorder + ';color:var(--text-primary);border-radius:var(--radius-sm);padding:6px 10px;font-size:11px;font-family:var(--font-mono);box-sizing:border-box;">\
+            </div>';
+        });
+        html += '</div></div>';
+      });
+    }
+
+    html += '</div>';
+    return html;
+  }
+
+  function _buildEditField(label, id, value, borderColor, isTextarea) {
+    var style = 'width:100%;background:var(--bg-depressed);border:1px solid ' + borderColor + ';color:var(--text-primary);border-radius:var(--radius-sm);padding:8px 10px;font-size:11px;font-family:var(--font-mono);resize:vertical;box-sizing:border-box;';
+    if (isTextarea) {
+      return '<div><div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div><textarea id="' + id + '" rows="4" style="' + style + '">' + _esc(value) + '</textarea></div>';
+    }
+    return '<div><div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div><input type="text" id="' + id + '" value="' + _esc(value) + '" style="' + style + '"></div>';
   }
 
   function _buildEditFieldExtra(label, id, value, borderColor, dicaHtml) {
-    var style = 'width:100%;background:#0f172a;border:1px solid ' + borderColor + ';color:#f8fafc;border-radius:8px;padding:8px 10px;font-size:11px;font-family:monospace;box-sizing:border-box;';
-    return '<div><div style="font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div>'
+    var style = 'width:100%;background:var(--bg-depressed);border:1px solid ' + borderColor + ';color:var(--text-primary);border-radius:var(--radius-sm);padding:8px 10px;font-size:11px;font-family:var(--font-mono);box-sizing:border-box;';
+    return '<div><div style="font-size:10px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">' + label + '</div>'
       + '<input type="text" id="' + id + '" value="' + _esc(value) + '" style="' + style + '">'
       + (dicaHtml || '') + '</div>';
   }
@@ -374,24 +715,86 @@
     var isOpen = body.style.display !== 'none';
     body.style.display   = isOpen ? 'none' : 'block';
     if (chevron) chevron.style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
-    card.style.boxShadow = isOpen ? '' : '0 0 0 2px rgba(99,102,241,0.4), 0 8px 24px rgba(0,0,0,0.4)';
+    card.style.boxShadow = isOpen ? '' : '0 0 0 2px var(--border-active), 0 8px 24px rgba(0,0,0,0.4)';
   }
 
   function _salvarAuditoria(mandado) {
     var leiEl      = document.getElementById('lei-'      + mandado);
     var artEl      = document.getElementById('art-'      + mandado);
     var procEl     = document.getElementById('proc-'     + mandado);
-    var endEl      = document.getElementById('end-'      + mandado);
-    var cidadeEl   = document.getElementById('cidade-'   + mandado);
+    var logradouroEl = document.getElementById('logradouro-' + mandado);
+    var numeroEl     = document.getElementById('numero-'     + mandado);
+    var bairroEl     = document.getElementById('bairro-'     + mandado);
+    var cidadeEl     = document.getElementById('cidade-'     + mandado);
+    var ufEl         = document.getElementById('uf-'         + mandado);
+    
     var mandEl     = document.getElementById('mand-'     + mandado);
     var procNumEl  = document.getElementById('proc-num-' + mandado);
     var titEl      = document.getElementById('tit-'      + mandado);
 
     var lei        = leiEl     ? leiEl.value.trim()     : '';
     var artigo     = artEl     ? artEl.value.trim()     : '';
-    var infoProc   = procEl    ? procEl.value.trim()    : '';
-    var endereco   = endEl     ? endEl.value.trim()     : '';
-    var cidade     = cidadeEl  ? cidadeEl.value.trim()  : '';
+
+    if (!lei) {
+      var inpLei = document.querySelector('.audit-proc-field[data-mandado="' + mandado + '"][data-key="Lei"], .audit-proc-field[data-mandado="' + mandado + '"][data-key="lei"]');
+      if (inpLei) lei = inpLei.value.trim();
+    }
+    if (!artigo) {
+      var inpArt = document.querySelector('.audit-proc-field[data-mandado="' + mandado + '"][data-key="Artigo"], .audit-proc-field[data-mandado="' + mandado + '"][data-key="artigo"]');
+      if (inpArt) artigo = inpArt.value.trim();
+    }
+    
+    // Reconstruir Info Processual dos inputs do Grid
+    var inputs = document.querySelectorAll('.audit-proc-field[data-mandado="' + mandado + '"]');
+    var procParts = [];
+    inputs.forEach(function(inp) {
+      var key = inp.getAttribute('data-key');
+      var val = inp.value.trim();
+      if (key && val) {
+        procParts.push(key + ': ' + val);
+      }
+    });
+
+    var avulsosEl = document.querySelector('.audit-proc-avulsos[data-mandado="' + mandado + '"]');
+    if (avulsosEl && avulsosEl.value.trim()) {
+      var avPartes = avulsosEl.value.split('\n').map(function(s) { return s.trim(); }).filter(function(s) { return s; });
+      avPartes.forEach(function(av) {
+        procParts.push(av);
+      });
+    }
+
+    // Garantir que Lei e Artigo editados estejam na infoProc
+    var temLei = procParts.some(function(p) { return p.toLowerCase().indexOf('lei:') === 0 || p.toLowerCase().indexOf('lei :') === 0; });
+    var temArt = procParts.some(function(p) { return p.toLowerCase().indexOf('artigo:') === 0 || p.toLowerCase().indexOf('artigo :') === 0; });
+    
+    if (lei && !temLei) procParts.push('Lei: ' + lei);
+    if (artigo && !temArt) procParts.push('Artigo: ' + artigo);
+
+    var infoProc   = procParts.join(' | ');
+    
+    var logradouro = logradouroEl ? logradouroEl.value.trim() : '';
+    var numero     = numeroEl     ? numeroEl.value.trim()     : '';
+    var bairro     = bairroEl     ? bairroEl.value.trim()     : '';
+    var cidade     = cidadeEl     ? cidadeEl.value.trim().toUpperCase() : '';
+    var uf         = ufEl         ? ufEl.value.trim().toUpperCase()     : '';
+
+    var endereco = '';
+    var partes = [];
+    if (logradouro) partes.push(logradouro);
+    if (numero) {
+      if (partes.length > 0) partes[partes.length - 1] += ', ' + numero;
+      else partes.push(numero);
+    }
+    if (bairro) {
+      if (partes.length > 0) partes[partes.length - 1] += ' - ' + bairro;
+      else partes.push(bairro);
+    }
+    if (cidade) {
+      var cidStr = cidade;
+      if (uf) cidStr += ' - ' + uf;
+      partes.push(cidStr);
+    }
+    endereco = partes.join(', ');
     var novoMandado= mandEl    ? mandEl.value.trim()    : '';
     var novoProc   = procNumEl ? procNumEl.value.trim() : '';
     var novoTitulo = titEl     ? titEl.value.trim()     : '';
@@ -425,9 +828,27 @@
             if ((typeof dadosMandados !== 'undefined' ? dadosMandados : null)) {
               var idx = dadosMandados.findIndex(function(x) { return x.mandado === mandado; });
               if (idx >= 0) {
-                if (infoProc) dadosMandados[idx].infoProcessuais = infoProc;
+                if (resp.infoProcessuais) dadosMandados[idx].infoProcessuais = resp.infoProcessuais;
+                else if (infoProc) dadosMandados[idx].infoProcessuais = infoProc;
+                
                 if (endereco) dadosMandados[idx].enderecoPrincipal = endereco;
                 if (cidade)   dadosMandados[idx].cidade = cidade;
+                if (lei)      dadosMandados[idx].lei = lei;
+                if (artigo)   dadosMandados[idx].artigo = artigo;
+                
+
+                if (resp.lat !== undefined) dadosMandados[idx].lat = resp.lat;
+                if (resp.lng !== undefined) dadosMandados[idx].lng = resp.lng;
+                if (resp.lat && resp.lng) {
+                  dadosMandados[idx].semEndereco = false;
+                } else {
+                  dadosMandados[idx].semEndereco = true;
+                }
+                if (resp.batalhao) dadosMandados[idx].batalhao = resp.batalhao;
+                if (resp.cpi) dadosMandados[idx].cpi = resp.cpi;
+                if (resp.bpmArea) dadosMandados[idx].bpmArea = resp.bpmArea;
+                if (resp.ciaArea) dadosMandados[idx].ciaArea = resp.ciaArea;
+                if (resp.dpArea) dadosMandados[idx].dpArea = resp.dpArea;
               }
             }
           } else {
@@ -468,7 +889,7 @@
     }
 
     // Recalcular contadores
-    var cnt = { tipificacao:0, lei:0, 'tipificacao-fallback':0, endereco:0, cidade:0, 'fmt-mandado':0, 'fmt-processo':0, 'fmt-titulo':0 };
+    var cnt = { tipificacao:0, lei:0, 'tipificacao-fallback':0, 'fmt-mandado':0, 'fmt-processo':0, 'fmt-titulo':0 };
     _auditoriaCache.forEach(function(it) {
       it.cats.forEach(function(c) { if (cnt[c] !== undefined) cnt[c]++; });
     });
@@ -476,8 +897,6 @@
     _s('cnt-sem-tipificacao', cnt.tipificacao);
     _s('cnt-sem-lei',         cnt.lei);
     _s('cnt-tipif-fallback',  cnt['tipificacao-fallback']);
-    _s('cnt-sem-endereco',    cnt.endereco);
-    _s('cnt-sem-cidade',      cnt.cidade);
     _s('cnt-fmt-mandado',     cnt['fmt-mandado']);
     _s('cnt-fmt-processo',    cnt['fmt-processo']);
     _s('cnt-fmt-titulo',      cnt['fmt-titulo']);
@@ -497,59 +916,6 @@
   window._toggleAuditCard  = _toggleAuditCard;
   window._salvarAuditoria  = _salvarAuditoria;
   window._marcarRevisado   = _marcarRevisado;
-
-  // =========================================================
-  // RELATÓRIO DE IMPORTAÇÕES (PDF VS GOOGLE MAPS API)
-  // =========================================================
-  function gerarRelatorioImportacao() {
-    if (!dadosMandados || dadosMandados.length === 0) {
-      chamarAlertaTatico("RELATÓRIO VAZIO", "Não há mandados carregados na memória.", "OK");
-      return;
-    }
-
-    var importados = dadosMandados.slice(-100).reverse().filter(function(d) {
-      return d.enderecoPrincipal && (d.lat || d.cidade);
-    });
-
-    if (importados.length === 0) {
-      chamarAlertaTatico("RELATÓRIO VAZIO", "Nenhum mandado geocodificado encontrado para gerar o relatório.", "OK");
-      return;
-    }
-
-    var html = '<div style="font-size:11px;color:var(--text-secondary);margin-bottom:12px;">Comparativo entre o endereço original lido no PDF e o resultado resolvido pela IA / Google Maps API. Exibindo os últimos ' + importados.length + ' localizados.</div>';
-    html += '<div style="max-height:60vh;overflow-y:auto;padding-right:8px;display:flex;flex-direction:column;gap:8px;" class="custom-scrollbar">';
-    
-    importados.forEach(function(d) {
-      var endPdf = d.enderecoPrincipal || "Não informado";
-      var endApi = d.cidade ? "Cidade: " + d.cidade : "Sede Tática Fallback";
-      if (d.lat && d.lng) endApi += ' (' + parseFloat(d.lat).toFixed(4) + ', ' + parseFloat(d.lng).toFixed(4) + ')';
-      
-      var isFallback = !d.cidade || (d.observacoes && (d.observacoes.includes('Pino Sede') || d.observacoes.includes('Pino na sede')));
-      var statusIcon = isFallback ? '<span class="material-symbols-outlined" style="color:var(--danger);font-size:16px;">error</span>' : '<span class="material-symbols-outlined" style="color:var(--success);font-size:16px;">check_circle</span>';
-      
-      html += '<div style="background:var(--bg-depressed);border:1px solid var(--border);border-radius:8px;padding:12px;">';
-      html += '  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,0.05);padding-bottom:6px;">';
-      html += '    <div style="font-weight:900;font-size:12px;color:var(--text-primary);">' + escapeHTML(d.nome) + '</div>';
-      html += '    <div style="font-family:var(--font-mono);font-size:10px;font-weight:800;color:var(--text-muted);">' + d.mandado + '</div>';
-      html += '  </div>';
-      html += '  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:10px;">';
-      html += '    <div>';
-      html += '      <div style="color:var(--warning);font-weight:700;margin-bottom:2px;">Original (PDF/Lido):</div>';
-      html += '      <div style="color:var(--text-secondary);">' + escapeHTML(endPdf) + '</div>';
-      html += '    </div>';
-      html += '    <div>';
-      html += '      <div style="color:var(--brand-blue);font-weight:700;margin-bottom:2px;display:flex;align-items:center;gap:4px;">' + statusIcon + ' Result (Google Maps/IA):</div>';
-      html += '      <div style="color:' + (isFallback ? 'var(--danger)' : 'var(--success)') + ';">' + escapeHTML(endApi) + '</div>';
-      html += '    </div>';
-      html += '  </div>';
-      html += '</div>';
-    });
-    
-    html += '</div>';
-    
-    chamarAlertaTatico("RELATÓRIO DE IMPORTAÇÕES (PDF vs API)", html, "FECHAR");
-  }
-
-  window.gerarRelatorioImportacao = gerarRelatorioImportacao;
+  window._processarAuditoria = _processarAuditoria;
 
 </script>
