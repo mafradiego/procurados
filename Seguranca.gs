@@ -560,9 +560,9 @@ function atualizarFotoUsuario(fotoBase64) {
 }
 
 /**
- * Atualiza o nome de guerra do usuário logado.
+ * Atualiza o nome de guerra e a unidade do usuário logado.
  */
-function atualizarNomeUsuario(novoNome) {
+function atualizarPerfilUsuarioCompleto(novoNome, novaUnidade) {
   const emailAtivo = Session.getActiveUser().getEmail();
   if (!emailAtivo) return { sucesso: false, mensagem: "E-mail não identificado." };
 
@@ -571,13 +571,25 @@ function atualizarNomeUsuario(novoNome) {
 
   for (let i = 1; i < dados.length; i++) {
     if (dados[i][0].toString().trim().toLowerCase() === emailAtivo.toLowerCase()) {
-      abaUsuarios.getRange(i + 1, 2).setValue(novoNome);
+      if (novoNome !== undefined && novoNome !== null && novoNome !== "") {
+        abaUsuarios.getRange(i + 1, 2).setValue(novoNome);
+      }
+      if (novaUnidade !== undefined && novaUnidade !== null) {
+        abaUsuarios.getRange(i + 1, 3).setValue(novaUnidade);
+      }
       CacheService.getScriptCache().remove("AUTH_V2_" + emailAtivo.toLowerCase());
       SpreadsheetApp.flush();
-      return { sucesso: true, mensagem: "Nome atualizado com sucesso!" };
+      return { sucesso: true, mensagem: "Perfil atualizado com sucesso!" };
     }
   }
   return { sucesso: false, mensagem: "Usuário não encontrado." };
+}
+
+/**
+ * Atualiza o nome de guerra do usuário logado (retrocompatibilidade).
+ */
+function atualizarNomeUsuario(novoNome, novaUnidade) {
+  return atualizarPerfilUsuarioCompleto(novoNome, novaUnidade);
 }
 
 /**
@@ -708,8 +720,20 @@ DIRETRIZES GERAIS E CRÍTICAS:
 MAPEAMENTO DE CAMPOS:
 - 'mandado': Capture o número completo no formato (ex: NNNNNNN-NN.NNNN.N.NN.NNNN.NN.NNNN-NN).
 - 'titulo' (dentro de extras): Extraia apenas a classificação principal (ex: "MANDADO DE PRISÃO", "MANDADO DE INTERNAÇÃO"), omitindo continuações longas como 'DEFINITIVA DECORRENTE DE CONDENAÇÃO'.
+- 'emissao' (dentro de extras): A data de inclusão no BNMP. Retorne APENAS A DATA no formato DD/MM/AAAA. Ignore o nome da cidade. Pode aparecer no final do texto como "Documento gerado em: DD/MM/AAAA", ou no topo como "Cidade - UF, DD de Mes de YYYY".
 - 'infoProcessuais': Formate a string EXATAMENTE com este molde, separando por " | ":
-  "Processo: [Nº] | Órgão Judicial: [Órgão] | Espécie de prisão: [Espécie] | Lei: [Lei] | Artigo: [Artigo EXATAMENTE COMO NO PDF INCLUINDO LETRAS ex: 217-A, 217A] | Parágrafo: [Parágrafo ou N/A] | Inciso: [Inciso ou N/A] | Pena restante: [Pena] | Regime Prisional: [Regime] | Motivo: [Resumo da Síntese]"
+  "Nº do processo: [Nº] | Órgão Judicial: [Órgão] | Espécie de prisão: [Espécie] | Lei: [Lei Principal] | Artigo: [Artigo Principal] | Parágrafo: [Parágrafo] | Inciso: [Inciso] | Pena restante: [Pena] | Regime Prisional: [Regime] | Motivo: [Resumo] | Crime tentado: [Tentado ou N/A] | Violência Doméstica: [Sim/Não/N/A]"
+
+MÚLTIPLAS TIPIFICAÇÕES E COMPLEMENTO (CRÍTICO):
+- Se o documento possuir campo "Complemento", você DEVE lê-lo com atenção. Se ele contiver incisos (ex: I, II, a, b) referentes ao artigo principal, PREENCHA o campo 'Inciso' na string 'infoProcessuais'.
+- Além disso, SEMPRE anexe o texto do complemento na string 'infoProcessuais' assim: " | Complemento: [Texto do Complemento]"
+- Se houver MAIS DE UMA Lei, Artigo, Parágrafo ou Inciso (múltiplos crimes no complemento), você DEVE adicionar os crimes subsequentes NO FINAL da string 'infoProcessuais', usando EXATAMENTE o formato:
+  " | Lei: [Lei 2] | Artigo: [Artigo 2] | Parágrafo: [Parágrafo 2] | Inciso: [Inciso 2] | Lei: [Lei 3]..." (para todos os crimes extras).
+- IGUALIZE exatamente o formato acima, sem abreviações, omitindo apenas o que realmente não existir.
+
+PRISÃO CIVIL / PENSÃO ALIMENTÍCIA (CPC / LEI 13105 / ART 528):
+- Em mandados de Prisão Civil / Pensão Alimentícia (onde o campo 'Tipificação Penal' no BNMP costuma estar em branco), você DEVE obrigatoriamente atribuir:
+  Lei: "13105", Artigo: "528", e no campo 'infoProcessuais' preencha "Lei: 13105 | Artigo: 528 | Parágrafo: [3 ou N/A]".
 
 TEXTO DO DOCUMENTO A SER ANALISADO:
 ---INICIO DO DOCUMENTO---
@@ -840,7 +864,9 @@ ${textoBruto}
       throw new Error("Resposta vazia ou inválida da API do Gemini.");
     }
     
-    const jsonString = parsedResponse.candidates[0].content.parts[0].text;
+    // TRATAMENTO DEFENSIVO: Limpa delimitadores de código markdown antes do parse JSON
+    var jsonString = parsedResponse.candidates[0].content.parts[0].text;
+    jsonString = jsonString.replace(/```json/gi, '').replace(/```/g, '').trim();
     const extraido = JSON.parse(jsonString);
 
     // Defesa de dados e Pós-processamento
@@ -876,8 +902,8 @@ ${textoBruto}
     Logger.log("[DEBUG GEMINI] Dados estruturados extraídos com sucesso: " + JSON.stringify(extraido));
     extraido.tipoImportacao = "GEMINI";
 
-    // ── CADÊNCIA v4.2.0: 4.2s de delay para respeitar teto de 15 RPM ──
-    Utilities.sleep(4200);
+    // ── CADÊNCIA v4.2.0: 460ms de delay (tempo total por item ~4.3s / 13 RPM) ──
+    Utilities.sleep(460);
 
     // ── COTA v4.2.0: Registrar chamada bem-sucedida no contador diário ──
     incrementarCotaGemini_("EXTRACAO");
