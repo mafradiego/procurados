@@ -21,8 +21,26 @@
     }
   };
 
-  window.abrirCardMultiploProcurados = function (grupoItens, indexInicial) {
-    if (!grupoItens || !Array.isArray(grupoItens) || grupoItens.length === 0) return;
+  window.abrirCardMultiploProcurados = function (grupoItensRaw, indexInicial) {
+    if (!grupoItensRaw || !Array.isArray(grupoItensRaw) || grupoItensRaw.length === 0) return;
+
+    // Deduplicar mandados repetidos no mesmo grupo (evita contar o mesmo mandado várias vezes se houver endereços duplicados)
+    var mandadosUnicosSet = new Set();
+    var grupoItens = [];
+    grupoItensRaw.forEach(function(item) {
+      var mKey = (item.mandado || item.idLinha || '').trim();
+      if (mKey && !mandadosUnicosSet.has(mKey)) {
+        mandadosUnicosSet.add(mKey);
+        grupoItens.push(item);
+      } else if (!mKey) {
+        grupoItens.push(item);
+      }
+    });
+
+    if (grupoItens.length === 1) {
+      return window.abrirCardMobile(grupoItens[0]);
+    }
+
     var idx = indexInicial || 0;
     if (idx < 0) idx = grupoItens.length - 1;
     if (idx >= grupoItens.length) idx = 0;
@@ -391,27 +409,11 @@
       }
       dadosMandados = dados;
       window.dadosMandados = dados;
-      _dadosCarregados = true;
+      
       console.log('[DEBUG] Montando filtros de CPI...');
       montarFiltrosCPI();
       console.log('[DEBUG] Montando filtros de Batalhão...');
       montarFiltrosBatalhao();
-
-      // Pinos no mapa: respeitar filtros ativos (GPS ou manuais)
-      var comCoordenadas = dadosMandados.filter(function (d) { return !d.semEndereco; });
-      console.log('[DEBUG] Mandados com coordenadas:', comCoordenadas.length, 'de', dadosMandados.length);
-
-      console.log('[DEBUG] Renderizando pinos...');
-      // Fase 3 e 2: Renderizar mapa e tabela respeitando filtros ativos
-      if (typeof filtrarNoMapa === 'function') {
-        filtrarNoMapa();
-      } else {
-        renderizarPinos(comCoordenadas);
-        setTimeout(function () {
-          console.log('[DEBUG] Disparando renderizarTabelaMandados...');
-          if (typeof aplicarFiltrosLista === 'function') aplicarFiltrosLista(); else if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
-        }, 200);
-      }
 
       // Carregar polígonos verificando a versão no servidor (Fase 1 - Cache Inteligente)
       console.log('[DEBUG] Chamando obterVersaoBancos do servidor...');
@@ -422,6 +424,22 @@
         console.warn('[DEBUG] obterVersaoBancos falhou:', erro);
         carregarPoligonos("0");
       }).obterVersaoBancos();
+
+      // Carregar tabela de classificação de leis ANTES de liberar dadosCarregados
+      if (!window._tabelaLeis) {
+        console.log('[DEBUG] Solicitando obterTabelaClassificacao...');
+        google.script.run.withSuccessHandler(function (tabela) {
+          console.log('[DEBUG] obterTabelaClassificacao retornou:', tabela ? tabela.length : 'null');
+          window._tabelaLeis = tabela || [];
+          _finalizarProcessamentoDados();
+        }).withFailureHandler(function (erro) {
+          console.warn('[DEBUG] obterTabelaClassificacao falhou:', erro);
+          window._tabelaLeis = [];
+          _finalizarProcessamentoDados();
+        }).obterTabelaClassificacao();
+      } else {
+        _finalizarProcessamentoDados();
+      }
     } catch (err) {
       console.error("Erro CRITICO em processarDados:", err);
       carregarPoligonos("0"); // Garante fechamento da tela
@@ -432,31 +450,41 @@
       if (typeof _processarAuditoria === 'function') _processarAuditoria();
     } catch (err) { console.warn("[Auditoria] Erro ao atualizar cache:", err); }
 
-    // Se GPS já foi negado/inexistente, forçar exibição completa agora que temos dados
-    _tentarExibirSemGPS();
+    console.log('[Sentinela v2.4] processarDados concluído');
+  }
+  
+  function _finalizarProcessamentoDados() {
+    if (typeof window.limparCacheClassificacao === 'function') window.limparCacheClassificacao();
+    if (typeof renderizarCarrossel === 'function') renderizarCarrossel();
+    
+    _tabelaLeisCarregada = true;
+    _dadosCarregados = true;
 
-    // Carregar tabela de classificação de leis (1x)
-    if (!window._tabelaLeis) {
-      console.log('[DEBUG] Solicitando obterTabelaClassificacao...');
-      google.script.run.withSuccessHandler(function (tabela) {
-        console.log('[DEBUG] obterTabelaClassificacao retornou:', tabela ? tabela.length : 'null');
-        window._tabelaLeis = tabela || [];
-        if (typeof window.limparCacheClassificacao === 'function') window.limparCacheClassificacao();
-        if (typeof renderizarCarrossel === 'function') renderizarCarrossel();
-        if (typeof filtrarNoMapa === 'function') {
-          filtrarNoMapa();
-        } else {
-          var comCoord = dadosMandados.filter(function (d) { return !d.semEndereco; });
-          renderizarPinos(comCoord);
-          if (typeof aplicarFiltrosLista === 'function') aplicarFiltrosLista(); else if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
-        }
-      }).withFailureHandler(function (erro) {
-        console.warn('[DEBUG] obterTabelaClassificacao falhou:', erro);
-        window._tabelaLeis = [];
-      }).obterTabelaClassificacao();
+    var comCoordenadas = dadosMandados.filter(function (d) { return !d.semEndereco; });
+    console.log('[DEBUG] Mandados com coordenadas:', comCoordenadas.length, 'de', dadosMandados.length);
+    
+    // Tentar aplicar a área do GPS, caso o GPS e os polígonos já tenham finalizado ANTES dos dados
+    if (typeof atualizarBadgeAreaGPS === 'function') {
+      atualizarBadgeAreaGPS();
     }
 
-    console.log('[Sentinela v2.4] processarDados concluído');
+    // Tentar exibir mapa geral, caso o GPS tenha falhado ANTES dos dados carregarem
+    _tentarExibirSemGPS();
+
+    // Fallback: se nenhuma das funções acima executar filtrarNoMapa (ex: mapa simples sem GPS)
+    if (!_semGpsJaExibiu && !_areaGpsAplicada) {
+      if (typeof filtrarNoMapa === 'function') {
+        // Aguardando outros gatilhos (GPS ou Polígonos). Não renderiza ainda para não duplicar.
+      } else {
+        renderizarPinos(comCoordenadas);
+        setTimeout(function () {
+          console.log('[DEBUG] Disparando renderizarTabelaMandados...');
+          if (typeof aplicarFiltrosLista === 'function') aplicarFiltrosLista(); else if (typeof renderizarTabelaMandados === 'function') renderizarTabelaMandados(dadosMandados);
+        }, 200);
+      }
+    }
+    
+    fecharTelaDeCarregamento();
   }
   window.processarDados = processarDados;
 
@@ -519,8 +547,31 @@
   }
 
   function fecharTelaDeCarregamento() {
+    // Portão de Segurança Estrito: A tela de carregamento SÓ fecha quando TODOS os módulos concluírem:
+    // 1) Mandados carregados (_dadosCarregados === true)
+    // 2) Polígonos carregados (poligonosCarregados === true)
+    // 3) GPS resolvido (_gpsResolvido === true - obtido com sucesso ou recusado/timeout)
+    // 4) Área do GPS identificada, filtro aplicado e polígono desenhado no mapa (_areaGpsAplicada === true)
+    // 5) Tabela de leis carregada (_tabelaLeisCarregada === true)
+    if (!_dadosCarregados || !poligonosCarregados || !_gpsResolvido || !_areaGpsAplicada || !_tabelaLeisCarregada) {
+      console.log('[Sentinela-Init] Tela de segurança mantida enquanto a área do GPS e os pinos são desenhados...', {
+        mandados: _dadosCarregados,
+        poligonos: poligonosCarregados,
+        gps: _gpsResolvido,
+        areaAplicada: _areaGpsAplicada,
+        tabelaLeis: _tabelaLeisCarregada
+      });
+      return;
+    }
+
+    if (typeof preindexarGeografiaMandados === 'function') {
+      preindexarGeografiaMandados();
+    }
+
+    window._sistemaPronto = true;
+
     const telaSeguranca = document.getElementById("tela-seguranca");
-    if (telaSeguranca) {
+    if (telaSeguranca && telaSeguranca.style.display !== 'none') {
       telaSeguranca.style.opacity = '0';
       setTimeout(function () { telaSeguranca.style.display = 'none'; }, 500);
     }
@@ -531,8 +582,87 @@
     }
   }
 
+  window.preindexarGeografiaMandados = function() {
+    if (!dadosMandados || !poligonosInstancias || poligonosInstancias.length === 0) return;
+    if (window._geografiaIndexada) return;
+
+    console.log('[SpatialIndex] Iniciando pré-indexação espacial dos mandados...');
+    var t0 = performance.now();
+
+    poligonosInstancias.forEach(function(p) {
+      if (!p._boundsCalculado && p.polygon) {
+        try {
+          var b = new google.maps.LatLngBounds();
+          p.polygon.getPath().forEach(function(ll) { b.extend(ll); });
+          p._boundsCalculado = b;
+        } catch(e) {}
+      }
+    });
+
+    var mapaPontos = {};
+
+    function indexarPonto(lat, lng) {
+      if (!lat || !lng) return null;
+      var key = lat + ',' + lng;
+      if (mapaPontos[key] !== undefined) return mapaPontos[key];
+
+      var pt = new google.maps.LatLng(Number(lat), Number(lng));
+      var res = null;
+
+      for (var i = 0; i < poligonosInstancias.length; i++) {
+        var p = poligonosInstancias[i];
+        if (p._boundsCalculado && !p._boundsCalculado.contains(pt)) continue;
+        if (google.maps.geometry.poly.containsLocation(pt, p.polygon)) {
+          res = {
+            cpi: normalizarArea(p.cpi),
+            bpm: normalizarArea(p.batalhao),
+            cia: normalizarArea(p.cia),
+            dp: normalizarArea(p.delegacia)
+          };
+          break;
+        }
+      }
+      mapaPontos[key] = res;
+      return res;
+    }
+
+    dadosMandados.forEach(function(alvo) {
+      if (alvo.lat && alvo.lng && !alvo.semEndereco) {
+        var idxPrin = indexarPonto(alvo.lat, alvo.lng);
+        if (idxPrin) {
+          alvo._geoCpi = idxPrin.cpi;
+          alvo._geoBpm = idxPrin.bpm;
+          alvo._geoCia = idxPrin.cia;
+          alvo._geoDp = idxPrin.dp;
+        }
+      }
+
+      var rawSec = alvo.geodataSecundarios || alvo.secundarios || [];
+      var listaSec = Array.isArray(rawSec) ? rawSec : (typeof rawSec === 'string' ? (function() { try { return JSON.parse(rawSec); } catch(e) { return []; } })() : []);
+      listaSec.forEach(function(sec) {
+        if (sec.lat && sec.lng) {
+          var idxSec = indexarPonto(sec.lat, sec.lng);
+          if (idxSec) {
+            sec._geoCpi = idxSec.cpi;
+            sec._geoBpm = idxSec.bpm;
+            sec._geoCia = idxSec.cia;
+            sec._geoDp = idxSec.dp;
+          }
+        }
+      });
+    });
+
+    window._mapaIndexEspacial = mapaPontos;
+    window._geografiaIndexada = true;
+    var t1 = performance.now();
+    console.log('[SpatialIndex] Pré-indexação espacial concluída em ' + (t1 - t0).toFixed(1) + 'ms!');
+  };
+
   function carregarMandados() {
     console.log('[DEBUG] carregarMandados iniciado');
+    const lblStatus = document.getElementById("txt-status-carregamento");
+    if (lblStatus && !_gpsResolvido) lblStatus.innerText = "Carregando os endereços dos procurados...";
+
     var iconeSinc = document.querySelector('button[title="Sincronizar"] span');
     if (iconeSinc) iconeSinc.style.animation = 'spin 1s linear infinite';
 
@@ -998,23 +1128,28 @@
       var etiquetaTopoHtml = '';
       if (itensDoGrupo && Array.isArray(itensDoGrupo) && itensDoGrupo.length > 1) {
         var pessoasUnicasSet = new Set();
+        var mandadosUnicosSet = new Set();
         itensDoGrupo.forEach(function(item) {
           var idKey = (item.cpf || item.nome || '').trim().toUpperCase();
+          var mKey = (item.mandado || item.idLinha || '').trim();
           if (idKey) pessoasUnicasSet.add(idKey);
+          if (mKey) mandadosUnicosSet.add(mKey);
         });
         var numPessoas = pessoasUnicasSet.size;
-        var numMandados = itensDoGrupo.length;
+        var numMandados = mandadosUnicosSet.size || 1;
 
-        var txtPessoas = (numPessoas === 1)
-          ? (numMandados + ' MANDADOS')
-          : (numPessoas + ' PROCURADOS (' + numMandados + ')');
+        if (numMandados > 1) {
+          var txtPessoas = (numPessoas === 1)
+            ? (numMandados + ' MANDADOS')
+            : (numPessoas + ' PROCURADOS (' + numMandados + ')');
 
-        var iconePessoas = (numPessoas === 1) ? '📜' : '👥';
+          var iconePessoas = (numPessoas === 1) ? '📜' : '👥';
 
-        etiquetaTopoHtml = '<div style="background:linear-gradient(135deg, #0f172a, #1e1b4b); border:1px solid #38bdf8; border-radius:8px; padding:2px 7px; font-size:9px; font-weight:900; margin-bottom:3px; box-shadow:0 3px 8px rgba(0,0,0,0.5); display:inline-flex; align-items:center; justify-content:center; gap:4px; white-space:nowrap; z-index:15;">' +
-          '<span style="color:#facc15; font-size:11px; font-weight:bold; filter:drop-shadow(0 0 2px rgba(250,204,21,0.6));">' + iconePessoas + '</span>' +
-          '<span style="color:#ffffff; font-family:var(--font-heading); font-weight:900; letter-spacing:0.5px;">' + txtPessoas + '</span>' +
-        '</div>';
+          etiquetaTopoHtml = '<div style="background:linear-gradient(135deg, #0f172a, #1e1b4b); border:1px solid #38bdf8; border-radius:8px; padding:2px 7px; font-size:9px; font-weight:900; margin-bottom:3px; box-shadow:0 3px 8px rgba(0,0,0,0.5); display:inline-flex; align-items:center; justify-content:center; gap:4px; white-space:nowrap; z-index:15;">' +
+            '<span style="color:#facc15; font-size:11px; font-weight:bold; filter:drop-shadow(0 0 2px rgba(250,204,21,0.6));">' + iconePessoas + '</span>' +
+            '<span style="color:#ffffff; font-family:var(--font-heading); font-weight:900; letter-spacing:0.5px;">' + txtPessoas + '</span>' +
+          '</div>';
+        }
       }
 
       container.innerHTML =
@@ -1120,12 +1255,24 @@
         var chave = key;
 
         var pessoasUnicasSet = new Set();
+        var mandadosUnicosSet = new Set();
+        var itensDeduplicados = [];
+
         itensDoGrupo.forEach(function(item) {
           var idKey = (item.cpf || item.nome || '').trim().toUpperCase();
+          var mKey = (item.mandado || item.idLinha || '').trim();
           if (idKey) pessoasUnicasSet.add(idKey);
+          if (mKey) {
+            if (!mandadosUnicosSet.has(mKey)) {
+              mandadosUnicosSet.add(mKey);
+              itensDeduplicados.push(item);
+            }
+          } else {
+            itensDeduplicados.push(item);
+          }
         });
         var numPessoas = pessoasUnicasSet.size;
-        var numMandados = itensDoGrupo.length;
+        var numMandados = mandadosUnicosSet.size || itensDeduplicados.length;
 
         var textoTitle = (numMandados <= 1)
           ? alvo.nome
@@ -1148,8 +1295,8 @@
           mapaPrincipal.panTo({ lat: latVal, lng: lngVal });
           if (typeof window.aplicarBounceNoMarcador === 'function') window.aplicarBounceNoMarcador(marcador);
           try {
-            if (itensDoGrupo.length > 1) {
-              window.abrirCardMultiploProcurados(itensDoGrupo, 0);
+            if (numMandados > 1 && itensDeduplicados.length > 1) {
+              window.abrirCardMultiploProcurados(itensDeduplicados, 0);
             } else {
               window.abrirCardMobile(alvo);
             }
@@ -1267,15 +1414,18 @@
     // Set com os mandados ativos no filtro atual
     var mandadosFiltradosSet = new Set(dadosFiltrados.map(function (d) { return d.mandado; }));
 
-    // Sempre limpar secundários de mandados que não devem ser exibidos ou saíram do filtro
+    // Limpar secundários de mandados que saíram do filtro ou não foram mantidos manualmente
     Object.keys(secundariosVisiveis).forEach(function (k) {
-      if (!deveExibirSecundarios || !mandadosFiltradosSet.has(k)) {
-        if (secundariosVisiveis[k]) {
-          if (secundariosVisiveis[k].markers) {
-            secundariosVisiveis[k].markers.forEach(function (m) { m.map = null; });
+      var itemSec = secundariosVisiveis[k];
+      var mandadoNoFiltro = mandadosFiltradosSet.has(k);
+
+      if (!mandadoNoFiltro || (!deveExibirSecundarios && (!itemSec || !itemSec._manualToggle))) {
+        if (itemSec) {
+          if (itemSec.markers) {
+            itemSec.markers.forEach(function (m) { m.map = null; });
           }
-          if (secundariosVisiveis[k].polylines) {
-            secundariosVisiveis[k].polylines.forEach(function (p) { p.setMap(null); });
+          if (itemSec.polylines) {
+            itemSec.polylines.forEach(function (p) { p.setMap(null); });
           }
         }
         delete secundariosVisiveis[k];
@@ -1377,14 +1527,6 @@
     var priLat = Number(alvo.lat);
     var priLng = Number(alvo.lng);
     if (isNaN(secLat) || isNaN(secLng) || isNaN(priLat) || isNaN(priLng)) return false;
-
-    // Se o secundário está a mais de ~0.25 graus (aprox. 25km) do principal, não desenha linha para fora da subárea
-    var dLat = Math.abs(secLat - priLat);
-    var dLng = Math.abs(secLng - priLng);
-    if (dLat > 0.25 || dLng > 0.25) {
-      return false;
-    }
-
     return true;
   }
 
@@ -1397,56 +1539,55 @@
 
       var markers = [];
       var polylines = [];
-      var priLat = Number(alvo.lat);
-      var priLng = Number(alvo.lng);
+      var priLat = Number(alvo.latPrincipal);
+      if (isNaN(priLat) || priLat === 0) priLat = (!alvo._isSecundarioClone ? Number(alvo.lat || 0) : 0);
+      var priLng = Number(alvo.lngPrincipal);
+      if (isNaN(priLng) || priLng === 0) priLng = (!alvo._isSecundarioClone ? Number(alvo.lng || 0) : 0);
 
       listaSec.forEach(function (sec) {
         var secLat = Number(sec.lat);
         var secLng = Number(sec.lng);
-        if (isNaN(secLat) || isNaN(secLng) || sec.lat === null || sec.lng === null || sec.lat === undefined || sec.lng === undefined) return;
-        if (!secundarioPertenceAoFiltro(sec, alvo)) return;
+        if (isNaN(secLat) || isNaN(secLng) || sec.lat === null || sec.lng === null || sec.lat === undefined || sec.lng === undefined || secLat === 0 || secLng === 0) return;
 
-        // Verificar se já existe um pino (marcador secundário clone) nesta mesma coordenada
-        var jaExisteMarcador = listaMarcadores.some(function (m) {
-          if (!m.position) return false;
-          var mLat = Number(typeof m.position.lat === 'function' ? m.position.lat() : m.position.lat);
-          var mLng = Number(typeof m.position.lng === 'function' ? m.position.lng() : m.position.lng);
-          return Math.abs(mLat - secLat) < 0.0001 && Math.abs(mLng - secLng) < 0.0001;
+        var sEndText = (typeof sec === 'string') ? sec : (sec.endereco || sec.texto || '');
+        var alvoClone = Object.assign({}, alvo, { 
+          _isSecundarioClone: true, 
+          latPrincipal: priLat,
+          lngPrincipal: priLng,
+          lat: secLat, 
+          lng: secLng, 
+          _secundarioEnd: sEndText 
+        });
+        var secEl = criarPinoSVG(alvoClone);
+
+        var marcSec = new google.maps.marker.AdvancedMarkerElement({
+          position: { lat: secLat, lng: secLng },
+          map: mapaPrincipal,
+          title: "Possível Paradeiro (" + alvo.nome + ")",
+          content: secEl,
+          gmpClickable: true
         });
 
-        if (!jaExisteMarcador) {
-          var alvoClone = Object.assign({}, alvo, { _isSecundarioClone: true });
-          var secEl = criarPinoSVG(alvoClone);
+        marcSec.addEventListener("gmp-click", function () {
+          mapaPrincipal.panTo({ lat: secLat, lng: secLng });
+          window.abrirCardMobile(alvoClone);
+        });
 
-          var marcSec = new google.maps.marker.AdvancedMarkerElement({
-            position: { lat: secLat, lng: secLng },
-            map: mapaPrincipal,
-            title: "Possível Paradeiro (" + alvo.nome + ")",
-            content: secEl,
-            gmpClickable: true
+        markers.push(marcSec);
+
+        if (!isNaN(priLat) && priLat !== 0 && !isNaN(priLng) && priLng !== 0) {
+          var polylineAuto = new google.maps.Polyline({
+            path: [
+              { lat: priLat, lng: priLng },
+              { lat: secLat, lng: secLng }
+            ],
+            geodesic: true,
+            strokeColor: '#f59e0b',
+            strokeOpacity: 0.85,
+            strokeWeight: 2.5,
+            map: mapaPrincipal
           });
-
-          marcSec.addEventListener("gmp-click", function () {
-            mapaPrincipal.panTo({ lat: secLat, lng: secLng });
-            window.abrirCardMobile(alvo);
-          });
-
-          markers.push(marcSec);
-
-          if (!isNaN(priLat) && !isNaN(priLng)) {
-            var polylineAuto = new google.maps.Polyline({
-              path: [
-                { lat: priLat, lng: priLng },
-                { lat: secLat, lng: secLng }
-              ],
-              geodesic: true,
-              strokeColor: '#f59e0b',
-              strokeOpacity: 0.85,
-              strokeWeight: 2.5,
-              map: mapaPrincipal
-            });
-            polylines.push(polylineAuto);
-          }
+          polylines.push(polylineAuto);
         }
       });
 
@@ -1459,7 +1600,7 @@
     const key = alvo.mandado;
 
     if (secundariosVisiveis[key]) {
-      // Remover
+      // Remover teia e marcadores secundários temporários
       secundariosVisiveis[key].markers.forEach(function (m) { m.map = null; });
       secundariosVisiveis[key].polylines.forEach(function (p) { p.setMap(null); });
       delete secundariosVisiveis[key];
@@ -1467,34 +1608,78 @@
       return;
     }
 
-    // Criar secundários
+    // Criar teia de aranha ligando o endereço principal a todos os secundários
     try {
       const rawSecCriar = alvo.geodataSecundarios || alvo.secundarios || [];
-      const lista = Array.isArray(rawSecCriar) ? rawSecCriar : (typeof rawSecCriar === 'string' ? (function() { try { return JSON.parse(rawSecCriar); } catch(e) { return []; } })() : []);
-      if (lista.length === 0) return;
+      const listaSec = Array.isArray(rawSecCriar) ? rawSecCriar : (typeof rawSecCriar === 'string' ? (function() { try { return JSON.parse(rawSecCriar); } catch(e) { return []; } })() : []);
+      if (listaSec.length === 0) return;
 
       const markers = [];
       const polylines = [];
-      const priLat = Number(alvo.lat);
-      const priLng = Number(alvo.lng);
 
-      lista.forEach(function (sec) {
-        var secLat = Number(sec.lat);
-        var secLng = Number(sec.lng);
-        if (isNaN(secLat) || isNaN(secLng) || sec.lat === null || sec.lng === null || sec.lat === undefined || sec.lng === undefined) return;
+      // Coordenadas fiéis do Endereço Principal
+      let priLat = Number(alvo.latPrincipal);
+      if (isNaN(priLat) || priLat === 0) priLat = (!alvo._isSecundarioClone ? Number(alvo.lat || 0) : 0);
+      let priLng = Number(alvo.lngPrincipal);
+      if (isNaN(priLng) || priLng === 0) priLng = (!alvo._isSecundarioClone ? Number(alvo.lng || 0) : 0);
 
-        // Verificar se já existe um pino (marcador secundário clone) nesta mesma coordenada
-        var jaExisteMarcador = listaMarcadores.some(function (m) {
-          if (!m.position) return false;
-          var mLat = Number(typeof m.position.lat === 'function' ? m.position.lat() : m.position.lat);
-          var mLng = Number(typeof m.position.lng === 'function' ? m.position.lng() : m.position.lng);
-          return Math.abs(mLat - secLat) < 0.0001 && Math.abs(mLng - secLng) < 0.0001;
+      // Função utilitária para checar se já existe pino ativo no mapa naquela coordenada exata
+      const jaExistePinoNoMapa = function(latCheck, lngCheck) {
+        if (typeof listaMarcadores !== 'undefined' && Array.isArray(listaMarcadores)) {
+          let achou = listaMarcadores.some(function(m) {
+            if (!m || !m.position) return false;
+            let mLat = Number(typeof m.position.lat === 'function' ? m.position.lat() : m.position.lat);
+            let mLng = Number(typeof m.position.lng === 'function' ? m.position.lng() : m.position.lng);
+            return Math.abs(mLat - latCheck) < 0.0001 && Math.abs(mLng - lngCheck) < 0.0001;
+          });
+          if (achou) return true;
+        }
+        return false;
+      };
+
+      // 1. Se o Endereço Principal for válido e NÃO estiver no mapa, cria pino do Principal temporariamente para a teia
+      if (!isNaN(priLat) && priLat !== 0 && !isNaN(priLng) && priLng !== 0) {
+        if (!jaExistePinoNoMapa(priLat, priLng)) {
+          var alvoPriObj = Object.assign({}, alvo, { 
+            _isSecundarioClone: false, 
+            lat: priLat, 
+            lng: priLng 
+          });
+          var priEl = criarPinoSVG(alvoPriObj);
+          const marcPriTemp = new google.maps.marker.AdvancedMarkerElement({
+            position: { lat: priLat, lng: priLng },
+            map: mapaPrincipal,
+            title: "Endereço Principal (" + alvo.nome + ")",
+            content: priEl,
+            gmpClickable: true
+          });
+          marcPriTemp.addEventListener("gmp-click", function () {
+            mapaPrincipal.panTo({ lat: priLat, lng: priLng });
+            window.abrirCardMobile(alvoPriObj);
+          });
+          markers.push(marcPriTemp);
+        }
+      }
+
+      // 2. Iterar por todos os endereços secundários
+      listaSec.forEach(function (sec) {
+        var secLat = Number(sec.lat || sec.latitude || 0);
+        var secLng = Number(sec.lng || sec.longitude || 0);
+        if (isNaN(secLat) || isNaN(secLng) || secLat === 0 || secLng === 0) return;
+
+        var sEndTextToggle = (typeof sec === 'string') ? sec : (sec.endereco || sec.texto || '');
+        var alvoCloneToggle = Object.assign({}, alvo, { 
+          _isSecundarioClone: true, 
+          latPrincipal: priLat,
+          lngPrincipal: priLng,
+          lat: secLat, 
+          lng: secLng, 
+          _secundarioEnd: sEndTextToggle 
         });
 
-        if (!jaExisteMarcador) {
-          var alvoClone = Object.assign({}, alvo, { _isSecundarioClone: true });
-          var secEl = criarPinoSVG(alvoClone);
-
+        // Se NÃO existir pino para essa coordenada no mapa, criar pino secundário temporário
+        if (!jaExistePinoNoMapa(secLat, secLng)) {
+          var secEl = criarPinoSVG(alvoCloneToggle);
           const marcSec = new google.maps.marker.AdvancedMarkerElement({
             position: { lat: secLat, lng: secLng },
             map: mapaPrincipal,
@@ -1505,31 +1690,32 @@
 
           marcSec.addEventListener("gmp-click", function () {
             mapaPrincipal.panTo({ lat: secLat, lng: secLng });
-            window.abrirCardMobile(alvo);
+            window.abrirCardMobile(alvoCloneToggle);
           });
 
           markers.push(marcSec);
+        }
 
-          if (!isNaN(priLat) && !isNaN(priLng)) {
-            const polyline = new google.maps.Polyline({
-              path: [
-                { lat: priLat, lng: priLng },
-                { lat: secLat, lng: secLng }
-              ],
-              geodesic: true,
-              strokeColor: '#f59e0b',
-              strokeOpacity: 0.85,
-              strokeWeight: 2.5,
-              map: mapaPrincipal
-            });
-            polylines.push(polyline);
-          }
+        // Desenhar a TEIA DE ARANHA (Polyline amarela) da coordenada Principal para a Secundária
+        if (!isNaN(priLat) && priLat !== 0 && !isNaN(priLng) && priLng !== 0) {
+          const polyline = new google.maps.Polyline({
+            path: [
+              { lat: priLat, lng: priLng },
+              { lat: secLat, lng: secLng }
+            ],
+            geodesic: true,
+            strokeColor: '#f59e0b',
+            strokeOpacity: 0.85,
+            strokeWeight: 2.5,
+            map: mapaPrincipal
+          });
+          polylines.push(polyline);
         }
       });
 
       secundariosVisiveis[key] = { markers: markers, polylines: polylines };
       atualizarClustererGlobal();
-    } catch (e) { console.error("Erro ao toggle secundários:", e); }
+    } catch (e) { console.error("Erro ao toggle secundários (teia):", e); }
   }
 
   /* ================================================================
@@ -1546,20 +1732,37 @@
   }
 
   function iniciarGeolocalizacao() {
+    const lblStatus = document.getElementById("txt-status-carregamento");
+    if (lblStatus) lblStatus.innerText = "Localizando patrulheiro via GPS...";
+
     if (!navigator.geolocation) {
       console.warn('[Sentinela] Navegador não suporta geolocalização. Mapa funcionará sem GPS.');
       _gpsResolvido = true;
       window._cpiAutoSelecionado = true;
+      if (lblStatus) lblStatus.innerText = "Carregando os endereços dos procurados...";
       _tentarExibirSemGPS();
       return;
     }
 
+    // Timeout de segurança: Se o GPS demorar mais de 6s para responder (ex: usuário demorou para aceitar a permissão), prossegue sem travar a tela
+    let gpsTimeoutTimer = setTimeout(function () {
+      if (!_gpsResolvido) {
+        console.warn('[Sentinela] Timeout no GPS atingido. Prosseguindo sem GPS...');
+        _gpsResolvido = true;
+        window._cpiAutoSelecionado = true;
+        if (lblStatus) lblStatus.innerText = "GPS Indisponível • Exibindo Mapa Geral...";
+        _tentarExibirSemGPS();
+      }
+    }, 6000);
+
     navigator.geolocation.getCurrentPosition(
       function (pos) {
+        clearTimeout(gpsTimeoutTimer);
         _gpsResolvido = true;
         posicaoPatrulheiro = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         mapaPrincipal.setCenter(posicaoPatrulheiro);
-        console.log('[Sentinela] GPS obtido com sucesso');
+        console.log('[Sentinela] GPS obtido com sucesso:', posicaoPatrulheiro);
+        if (lblStatus) lblStatus.innerText = "GPS Localizado • Processando Área e Procurados...";
 
         if (!window.marcadorPatrulheiro) {
           window.marcadorPatrulheiro = new google.maps.marker.AdvancedMarkerElement({
@@ -1570,16 +1773,22 @@
           });
         }
 
-        // Identificar área após polígonos carregarem
-        setTimeout(function () { atualizarBadgeAreaGPS(); }, 3000);
+        // Se os polígonos já estiverem carregados na memória, aplica o filtro de área imediatamente
+        if (poligonosCarregados) {
+          atualizarBadgeAreaGPS();
+        } else {
+          console.log('[Sentinela-GPS] GPS obtido. Aguardando download de polígonos para aplicar área...');
+        }
       },
       function (error) {
+        clearTimeout(gpsTimeoutTimer);
         _gpsResolvido = true;
-        console.warn('[Sentinela] GPS indisponível (mapa continua funcionando): ', error.message || error);
+        console.warn('[Sentinela] GPS indisponível ou recusado pelo usuário: ', error.message || error);
         window._cpiAutoSelecionado = true;
+        if (lblStatus) lblStatus.innerText = "GPS Não Autorizado • Exibindo Mapa Geral...";
         _tentarExibirSemGPS();
       },
-      { enableHighAccuracy: true, timeout: 7000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
     );
 
     // Watch contínuo para atualizar a posição da viatura/celular
@@ -1589,7 +1798,6 @@
         if (window.marcadorPatrulheiro) {
           window.marcadorPatrulheiro.position = posicaoPatrulheiro;
         } else {
-          // Cria o pino caso o getCurrentPosition inicial tenha falhado no tempo mas o watchPosition funcione depois
           window.marcadorPatrulheiro = new google.maps.marker.AdvancedMarkerElement({
             position: posicaoPatrulheiro,
             map: mapaPrincipal,
@@ -1619,6 +1827,7 @@
       return;
     }
     _semGpsJaExibiu = true;
+    _areaGpsAplicada = true;
     console.log('[Sentinela v2.4] Exibindo mapa sem GPS - filtro TODOS');
 
     // Forçar exibição e resize imediatamente para evitar tela cinza
@@ -1633,6 +1842,7 @@
     if (typeof aplicarFiltrosDePoligono === 'function') aplicarFiltrosDePoligono('TODOS', 'TODOS', 'TODOS', 'TODOS');
 
     _autoFitMapaNoPinos();
+    fecharTelaDeCarregamento();
   }
 
   function _autoFitMapaNoPinos() {
@@ -1721,7 +1931,7 @@
    * Identifica em qual polígono o patrulheiro está e atualiza o badge
    */
   function atualizarBadgeAreaGPS() {
-    if (!posicaoPatrulheiro || !poligonosCarregados) return;
+    if (!posicaoPatrulheiro || !poligonosCarregados || !_dadosCarregados || !_tabelaLeisCarregada) return;
 
     var lat = posicaoPatrulheiro.lat;
     var lng = posicaoPatrulheiro.lng;
@@ -1772,9 +1982,11 @@
             montarFiltrosBatalhao(false);
             if (typeof popularTiposMandadoSelect === 'function') popularTiposMandadoSelect();
             filtrarNoMapa();
+            
             // Pintar o polígono do CPI no mapa
+            const cpiTarget = areaEncontrada.cpi;
             aplicarFiltrosDePoligono(
-              areaEncontrada.cpi,
+              cpiTarget,
               document.getElementById('filtroBatalhao') ? document.getElementById('filtroBatalhao').value : 'TODOS',
               document.getElementById('filtroCIA') ? document.getElementById('filtroCIA').value : 'TODOS',
               document.getElementById('filtroDP') ? document.getElementById('filtroDP').value : 'TODOS'
@@ -1784,6 +1996,10 @@
         break;
       }
     }
+
+    // Sinaliza que a área do GPS foi 100% calculada, aplicada e desenhada no mapa
+    _areaGpsAplicada = true;
+    fecharTelaDeCarregamento();
 
     // Buscar dados completos do polígono (batalhao, cia, delegacia) via dados carregados
     var badge = badgeAreaGPSNode || document.getElementById('badgeAreaGPS');
@@ -1994,12 +2210,14 @@
         filtrarNoMapa();
       }
 
-      // Se não tem GPS, auto-centralizar mapa nos pinos
-      if (_gpsResolvido && !posicaoPatrulheiro) {
-        _autoFitMapaNoPinos();
+      // Se a posição do patrulheiro já estiver disponível, calcula a área e aplica o filtro antes de fechar a tela
+      if (posicaoPatrulheiro && !_areaGpsAplicada) {
+        atualizarBadgeAreaGPS();
+      } else if (_gpsResolvido && !posicaoPatrulheiro && !_areaGpsAplicada) {
+        _tentarExibirSemGPS();
+      } else {
+        fecharTelaDeCarregamento();
       }
-
-      fecharTelaDeCarregamento();
       console.log('[Sentinela v2.4] Polígonos carregados e filtros aplicados');
     });
   }
@@ -2248,17 +2466,21 @@
           corBase = p.cor || '#3388ff';
         }
 
-        p.polygon.setOptions({
-          fillColor: corBase,
-          strokeColor: corBase,
-          fillOpacity: 0.25,
-          strokeOpacity: 0.9,
-          strokeWeight: 2
-        });
-
-        p.polygon.setMap(mapaPrincipal);
+        if (p._corAtual !== corBase || p.polygon.getMap() !== mapaPrincipal) {
+          p._corAtual = corBase;
+          p.polygon.setOptions({
+            fillColor: corBase,
+            strokeColor: corBase,
+            fillOpacity: 0.25,
+            strokeOpacity: 0.9,
+            strokeWeight: 2
+          });
+          p.polygon.setMap(mapaPrincipal);
+        }
       } else {
-        p.polygon.setMap(null);
+        if (p.polygon.getMap() !== null) {
+          p.polygon.setMap(null);
+        }
       }
     });
   }
