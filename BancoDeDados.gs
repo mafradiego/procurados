@@ -284,6 +284,15 @@ function cadastrarMandadoWebAppPreview(dados) {
     const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
     const novaLinha = new Array(headers.length).fill("");
     
+    // Indice resiliente para Foto / Foto URL
+    let idxFotoCol = col['Foto URL'];
+    if (idxFotoCol === undefined) idxFotoCol = col['Foto'];
+    if (idxFotoCol === undefined) {
+      for (let k in col) {
+        if (k.toLowerCase().includes('foto')) { idxFotoCol = col[k]; break; }
+      }
+    }
+
     novaLinha[col['Data de Lancamento']] = dataAtual;
     novaLinha[col['Data de Conferencia']] = "";
     novaLinha[col['Mandado']] = dados.mandado;
@@ -296,7 +305,9 @@ function cadastrarMandadoWebAppPreview(dados) {
     novaLinha[col['Sexo']] = dados.sexo;
     novaLinha[col['Cor']] = dados.cor;
     novaLinha[col['Filiacao']] = dados.filiacao;
-    novaLinha[col['Foto URL']] = urlFotoSalva;
+    if (idxFotoCol !== undefined) {
+      novaLinha[idxFotoCol] = urlFotoSalva;
+    }
     novaLinha[col['Batalhao']] = "A DEFINIR (GEO)";
     novaLinha[col['Endereco Principal']] = dados.enderecoPrincipal;
     novaLinha[col['Outros Enderecos']] = textoSecundarios;
@@ -436,6 +447,17 @@ function cadastrarMandadosEmLote(listaDados) {
         }
       }
 
+      // PROCESSAMENTO DE FOTO EM LOTE
+      let urlFotoSalva = "N/A";
+      let fotoInput = dados.fotoBase64 || dados.fotoUrl || dados.foto || "";
+      if (fotoInput && fotoInput !== "" && fotoInput !== "N/A") {
+        if (!fotoInput.startsWith("http")) {
+          urlFotoSalva = processarEDespacharFotoNoDrive(dados.mandado, fotoInput, dados.nome);
+        } else {
+          urlFotoSalva = fotoInput;
+        }
+      }
+
       const linhaArray = [
         dataAtual,                // A — Data de Lançamento
         "",                       // B — Data de Conferência
@@ -449,7 +471,7 @@ function cadastrarMandadosEmLote(listaDados) {
         dados.sexo,               // J — Sexo
         dados.cor,                // K — Cor
         dados.filiacao,           // L — Filiação
-        "N/A",                    // M — Foto URL (lote não envia foto via crop)
+        urlFotoSalva,             // M — Foto URL (agora suporta crop de IA/Regex)
         areaInfo.batalhao || "A DEFINIR (GEO)", // N — Batalhão (Sempre puxa do GeoJSON ou fallback)
         dados.enderecoPrincipal,  // O — Endereço Principal
         textoSecundarios,         // P — Outros Endereços
@@ -1054,10 +1076,11 @@ function processarEDespacharFotoNoDrive(idMandado, base64Completo, nomeProcurado
     if (base64Completo.includes(",")) {
       base64Limpo = base64Completo.split(",")[1];
     }
-    base64Limpo = (base64Limpo || "").trim();
+    // Remove qualquer espaço ou quebra de linha que possa quebrar o decode
+    base64Limpo = (base64Limpo || "").trim().replace(/\s/g, '');
     if (!base64Limpo || base64Limpo.length < 100) {
       console.error("[FOTO] base64 muito curto ou vazio. Tamanho: " + (base64Limpo || "").length);
-      return "N/A";
+      return "ERRO: Base64 muito curto";
     }
 
     const numClean = String(idMandado || "SemNum").trim().replace(/[^a-zA-Z0-9_\-.]/g, "_");
@@ -1105,29 +1128,26 @@ function processarEDespacharFotoNoDrive(idMandado, base64Completo, nomeProcurado
         }
       } catch (errNome) {
         console.error("[FOTO] Falha ao buscar/criar pasta por nome: " + errNome.message);
-        throw errNome;
+        throw new Error("Falha ao acessar pastas do Drive: " + errNome.message);
       }
     }
 
     const arquivo = pasta.createFile(blob);
 
-    // Tenta definir compartilhamento público (pode falhar em Workspaces com política restritiva)
+    // Tenta definir compartilhamento público
     try {
       arquivo.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-      console.log("[FOTO] Compartilhamento público definido com sucesso.");
     } catch (errShare) {
-      console.warn("[FOTO] setSharing bloqueado pela política da organização (" + errShare.message + "). Prosseguindo com permissão padrão.");
+      console.warn("[FOTO] setSharing bloqueado (" + errShare.message + ").");
     }
 
     const fileId = arquivo.getId();
-    // URL direta via lh3 (funciona quando o drive é acessível pela conta do usuário)
     const url = "https://drive.google.com/thumbnail?id=" + fileId + "&sz=w400";
-    console.log("[FOTO] Arquivo salvo com sucesso. ID: " + fileId + " URL: " + url + " (pasta via " + origemPasta + ")");
     return url;
 
   } catch (e) {
-    console.error("[FOTO] ERRO CRITICO ao salvar foto no Drive: " + e.message + " | Stack: " + e.stack);
-    return "N/A"; // Sempre retorna N/A em erro para não corromper o banco com strings de erro
+    console.error("[FOTO] ERRO CRITICO ao salvar foto no Drive: " + e.message);
+    return "ERRO: " + e.message; 
   }
 }
 
@@ -1157,6 +1177,94 @@ function testarSalvarFotoDrive() {
   } else {
     Logger.log("❌ FALHOU! Resultado: " + resultado);
   }
+}
+
+/**
+ * Vincula fotos extraídas de PDFs em lote aos mandados já cadastrados no sistema.
+ */
+function vincularFotosLotePdfDrive(listaFotos) {
+  if (!Array.isArray(listaFotos) || listaFotos.length === 0) {
+    return { sucesso: false, mensagem: "Nenhuma foto fornecida." };
+  }
+
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Mandados");
+  if (!sheet) return { sucesso: false, mensagem: "Aba Mandados não encontrada." };
+
+  const data = sheet.getDataRange().getValues();
+  if (data.length < 2) return { sucesso: false, mensagem: "Planilha sem dados." };
+
+  const headers = data[0].map(function(h) { return String(h || "").trim(); });
+  const idxMandado = headers.indexOf('Mandado');
+  const idxNome = headers.indexOf('Nome');
+  
+  let idxFoto = headers.indexOf('Foto URL');
+  if (idxFoto === -1) idxFoto = headers.indexOf('Foto');
+  if (idxFoto === -1) {
+    for (let k = 0; k < headers.length; k++) {
+      if (String(headers[k] || "").trim().toLowerCase().includes('foto')) {
+        idxFoto = k;
+        break;
+      }
+    }
+  }
+
+  if (idxMandado === -1 || idxFoto === -1) {
+    return { sucesso: false, mensagem: "Coluna Mandado ou Foto não localizada na planilha." };
+  }
+
+  let vinculadas = 0;
+  let naoEncontradas = 0;
+  let resultados = [];
+
+  for (let f = 0; f < listaFotos.length; f++) {
+    const item = listaFotos[f];
+    const numMandadoClean = String(item.mandado || "").trim();
+    const base64 = item.fotoBase64;
+    
+    if (!numMandadoClean || !base64 || base64.length < 100) continue;
+
+    let linhaEncontrada = -1;
+    let nomePessoa = item.nome || "";
+
+    for (let r = 1; r < data.length; r++) {
+      const mandadoRow = String(data[r][idxMandado] || "").trim();
+      if (mandadoRow === numMandadoClean) {
+        linhaEncontrada = r + 1;
+        if (!nomePessoa && idxNome !== -1) {
+          nomePessoa = String(data[r][idxNome] || "").trim();
+        }
+        break;
+      }
+    }
+
+    if (linhaEncontrada !== -1) {
+      const urlDrive = processarEDespacharFotoNoDrive(numMandadoClean, base64, nomePessoa);
+      if (urlDrive && urlDrive !== "N/A") {
+        sheet.getRange(linhaEncontrada, idxFoto + 1).setValue(urlDrive);
+        
+        try {
+          if (typeof atualizarMandadoNoFirebase === 'function') {
+            atualizarMandadoNoFirebase(numMandadoClean, { fotoUrl: urlDrive });
+          }
+        } catch (errFb) { console.warn("[VINCULAR FOTO] Erro ao sincronizar com Firebase:", errFb.message); }
+
+        vinculadas++;
+        resultados.push({ mandado: numMandadoClean, fotoUrl: urlDrive, sucesso: true });
+      }
+    } else {
+      naoEncontradas++;
+      resultados.push({ mandado: numMandadoClean, sucesso: false, motivo: "Mandado não cadastrado" });
+    }
+  }
+
+  SpreadsheetApp.flush();
+
+  return {
+    sucesso: true,
+    mensagem: `Fotos vinculadas: ${vinculadas}. Mandados não localizados: ${naoEncontradas}.`,
+    resultados: resultados,
+    vinculadas: vinculadas
+  };
 }
 
 /**
