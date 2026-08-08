@@ -718,13 +718,16 @@ DIRETRIZES GERAIS E CRÍTICAS:
 2. QUEBRAS DE LINHA: O texto do PDF contém quebras de linha incorretas. Você DEVE unir frases cortadas em um texto contínuo e lógico.
 
 MAPEAMENTO DE CAMPOS:
-- 'mandado': Capture o número completo no formato (ex: NNNNNNN-NN.NNNN.N.NN.NNNN.NN.NNNN-NN).
+- 'mandado': Capture o "N° do Documento" ou "N° do Mandado". OBRIGATORIAMENTE capture o número que aparece NO TOPO do texto (abaixo de MANDADO DE PRISÃO/RECAPTURA). JAMAIS capture numerações de tabelas do final (ex: "Mandado de Prisão ou Internação Alcançado").
 - 'titulo' (dentro de extras): Extraia apenas a classificação principal (ex: "MANDADO DE PRISÃO", "MANDADO DE INTERNAÇÃO"), omitindo continuações longas como 'DEFINITIVA DECORRENTE DE CONDENAÇÃO'.
 - 'emissao' (dentro de extras): A data de inclusão no BNMP. Retorne APENAS A DATA no formato DD/MM/AAAA. Ignore o nome da cidade. Pode aparecer no final do texto como "Documento gerado em: DD/MM/AAAA", ou no topo como "Cidade - UF, DD de Mes de YYYY".
 - 'infoProcessuais': Formate a string EXATAMENTE com este molde, separando por " | ":
   "Nº do processo: [Nº] | Órgão Judicial: [Órgão] | Espécie de prisão: [Espécie] | Lei: [Lei Principal] | Artigo: [Artigo Principal] | Parágrafo: [Parágrafo] | Inciso: [Inciso] | Pena restante: [Pena] | Regime Prisional: [Regime] | Motivo: [Resumo] | Crime tentado: [Tentado ou N/A] | Violência Doméstica: [Sim/Não/N/A]"
 
 MÚLTIPLAS TIPIFICAÇÕES E COMPLEMENTO (CRÍTICO):
+- SE HOUVER MAIS DE UM ARTIGO OU MAIS DE UM PARÁGRAFO PARA A MESMA LEI (ex: "Artigo: 33, 40" / "Art. 33 e 40" ou "Parágrafo: 1º e 3º" / "1º, 3º"), você DEVE CRIAR UMA TIPIFICAÇÃO SEPARADA PARA CADA ARTIGO E CADA PARÁGRAFO na string 'infoProcessuais'.
+  Exemplo para Artigos 33 e 40: "Lei: 11343 | Artigo: 33 | Parágrafo: - | Inciso: - | Lei: 11343 | Artigo: 40 | Parágrafo: - | Inciso: -"
+  Exemplo para Parágrafos 1º e 3º: "Lei: 2848 | Artigo: 158 | Parágrafo: § 1º | Inciso: - | Lei: 2848 | Artigo: 158 | Parágrafo: § 3º | Inciso: -"
 - Se o documento possuir campo "Complemento", você DEVE lê-lo com atenção. Se ele contiver incisos (ex: I, II, a, b) referentes ao artigo principal, PREENCHA o campo 'Inciso' na string 'infoProcessuais'.
 - Além disso, SEMPRE anexe o texto do complemento na string 'infoProcessuais' assim: " | Complemento: [Texto do Complemento]"
 - Se houver MAIS DE UMA Lei, Artigo, Parágrafo ou Inciso (múltiplos crimes no complemento), você DEVE adicionar os crimes subsequentes NO FINAL da string 'infoProcessuais', usando EXATAMENTE o formato:
