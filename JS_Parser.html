@@ -56,6 +56,77 @@
     });
   }
 
+  /* ================================================================
+     MÓDULO DE PRÉ-CHECAGEM RIGOROSA DE DUPLICIDADE (0 consumo de IA)
+     ================================================================ */
+  function extrairNumeroMandadoBruto(textoBruto) {
+    if (!textoBruto || typeof textoBruto !== 'string') return null;
+
+    // 1. Procurar rótulo N°/Nº/N.º do Mandado/Documento/Processo
+    const regexRotulo = /(?:N[°ºo\.]*\s*do\s*(?:Mandado|Documento|Processo)|Mandado\s*N[°ºo\.]*|Documento\s*N[°ºo\.]*|Mandado\s*:)\s*:?\s*([\d]{5,}[-\.\d]+)/i;
+    const matchRotulo = textoBruto.match(regexRotulo);
+    if (matchRotulo) {
+      let mStr = matchRotulo[1].trim().replace(/[^\d\.\-]/g, '');
+      if (mStr.length >= 7 && mStr.includes('-')) return mStr;
+    }
+
+    // 2. Procurar padrão CNJ completo de Mandado de Prisão BNMP: 7 dígitos - 2 dígitos . 4 dígitos ano . tribunal . foro ...
+    const regexCNJ = /\b(\d{6,7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}(?:\.\d{2}\.\d{4}-\d{2})?)\b/;
+    const matchCNJ = textoBruto.match(regexCNJ);
+    if (matchCNJ) {
+      return matchCNJ[1].trim();
+    }
+
+    // 3. Procurar qualquer número com hífen característico de mandado
+    const regexGenerico = /\b(\d{5,15}-\d{2}(?:[\.\-]\d+)*)\b/;
+    const matchGen = textoBruto.match(regexGenerico);
+    if (matchGen) {
+      return matchGen[1].trim();
+    }
+
+    return null;
+  }
+
+  function verificarMandadoJaExisteNoSistema(mandadoStr) {
+    if (!mandadoStr) return null;
+
+    const limpaDigitos = function(s) {
+      return (s || '').toString().replace(/\D/g, '');
+    };
+
+    const targetDigitos = limpaDigitos(mandadoStr);
+    const targetExact = mandadoStr.trim().toUpperCase();
+
+    if (!targetDigitos && !targetExact) return null;
+
+    const listaBase = (typeof dadosMandados !== 'undefined' && Array.isArray(dadosMandados)) ? dadosMandados : [];
+    const listaFila = (typeof filaImportacao !== 'undefined' && Array.isArray(filaImportacao)) ? filaImportacao : [];
+
+    // Verificação na Base Principal (banco de dados)
+    const naBase = listaBase.find(function(d) {
+      if (!d || !d.mandado) return false;
+      var mExist = d.mandado.trim().toUpperCase();
+      if (mExist === targetExact) return true;
+      var dExist = limpaDigitos(d.mandado);
+      if (targetDigitos.length >= 7 && dExist.length >= 7 && dExist === targetDigitos) return true;
+      return false;
+    });
+    if (naBase) return { local: 'Banco de Dados', alvo: naBase };
+
+    // Verificação na Fila de Revisão de Importação
+    const naFila = listaFila.find(function(d) {
+      if (!d || !d.mandado) return false;
+      var mExist = d.mandado.trim().toUpperCase();
+      if (mExist === targetExact) return true;
+      var dExist = limpaDigitos(d.mandado);
+      if (targetDigitos.length >= 7 && dExist.length >= 7 && dExist === targetDigitos) return true;
+      return false;
+    });
+    if (naFila) return { local: 'Fila de Revisão', alvo: naFila };
+
+    return null;
+  }
+
   /* Função reutilizável de extração de dados a partir de texto bruto de PDF via Regex */
   function extrairDadosDeTextoPDF(textoBruto) {
     const texto = textoBruto;
@@ -71,7 +142,7 @@
       return res.replace(/^\|/, '').replace(/\|$/, '').trim() || "N/A";
     };
 
-    let mandado = extrairCurto('N° do (?:Mandado|Documento)\\s*:');
+    let mandado = extrairCurto('N[°ºo\\.]*\\s*do\\s*(?:Mandado|Documento)\\s*:?');
     var matchMandado = mandado.match(/[\d]{5,}-[\d\.\-]+/); 
     if (matchMandado) mandado = matchMandado[0];
 
@@ -322,10 +393,34 @@
 
     // --- CONSOLIDAÇÃO GLOBAL DAS TIPIFICAÇÕES ---
     // Recolher a principal, as extras e as do complemento
+    var todasTipifBruto = [];
+    if (isValid(lei) || isValid(artigo)) todasTipifBruto.push({ lei: lei, artigo: artigo, paragrafo: paragrafo, inciso: inciso });
+    tipificacoes.forEach(function(t) { todasTipifBruto.push(t); });
+    tipificacoesComplemento.forEach(function(t) { todasTipifBruto.push(t); });
+
+    // Desmembrar artigos e parágrafos múltiplos em tipificações penais separadas
     var todasTipif = [];
-    if (isValid(lei) || isValid(artigo)) todasTipif.push({ lei: lei, artigo: artigo, paragrafo: paragrafo, inciso: inciso });
-    tipificacoes.forEach(function(t) { todasTipif.push(t); });
-    tipificacoesComplemento.forEach(function(t) { todasTipif.push(t); });
+    todasTipifBruto.forEach(function(t) {
+      if (!t) return;
+      var leiVal = t.lei;
+      var artVal = t.artigo;
+      var parVal = t.paragrafo;
+      var incVal = t.inciso;
+
+      var arts = (typeof extrairArtigosDesmembrados === 'function' && isValid(artVal)) ? extrairArtigosDesmembrados(artVal) : (isValid(artVal) ? [artVal] : []);
+      if (arts.length === 0 && isValid(artVal)) arts = [artVal];
+
+      arts.forEach(function(artSingle) {
+        var pars = (typeof extrairParagrafosDesmembrados === 'function' && isValid(parVal)) ? extrairParagrafosDesmembrados(parVal) : (isValid(parVal) ? [parVal] : []);
+        if (pars.length > 1) {
+          pars.forEach(function(parSingle) {
+            todasTipif.push({ lei: leiVal, artigo: artSingle, paragrafo: parSingle, inciso: incVal });
+          });
+        } else {
+          todasTipif.push({ lei: leiVal, artigo: artSingle, paragrafo: parVal, inciso: incVal });
+        }
+      });
+    });
 
     var mapTipif = {};
     var ordemTipif = [];
@@ -401,6 +496,16 @@
     console.log("[DEBUG FRONTEND] processarSuperBloco iniciado.");
     const texto = document.getElementById('textoPdfBruto').value;
     if(texto.length < 50) return chamarAlertaTatico("FALTA INFORMAÇÃO", "Cole o texto do PDF oficial antes de extrair.", "OK");
+
+    // ── PRÉ-VERIFICAÇÃO DE DUPLICIDADE RIGOROSA (Poupa tempo e 100% da API Gemini) ──
+    const mandadoPreCheck = extrairNumeroMandadoBruto(texto);
+    if (mandadoPreCheck) {
+      const duplicado = verificarMandadoJaExisteNoSistema(mandadoPreCheck);
+      if (duplicado) {
+        console.warn("[PRÉ-CHECK SUPERBLOCO] Evitou chamada da IA (Duplicado):", mandadoPreCheck, "Local:", duplicado.local);
+        return chamarAlertaTatico("⚠️ DUPLICIDADE DETECTADA", "Este mandado já consta cadastrado no sistema ou na fila de revisão.\n\nMandado: " + mandadoPreCheck + "\nAlvo: " + (duplicado.alvo.nome || 'Já Cadastrado') + "\nLocal: " + duplicado.local + "\n\nNenhuma chamada à IA Gemini foi realizada.", "OK");
+      }
+    }
     
     const overlay = document.getElementById('loadingOverlayIA');
     const overlayTitulo = document.getElementById('overlayIATitulo');
@@ -426,22 +531,6 @@
     document.getElementById('textoPdfBruto').disabled = true;
 
     try {
-      // ── PRÉ-VERIFICAÇÃO DE DUPLICIDADE (Poupa tempo e limite da API) ──
-      const mNumero = texto.match(/N° do (?:Mandado|Documento)\s*:?\s*([\d]{5,}-[\d\.\-]+)/i);
-      if (mNumero) {
-        const mandadoPreCheck = mNumero[1].trim();
-        const existente = dadosMandados.find(function(d) { return d.mandado === mandadoPreCheck; }) || filaImportacao.find(function(d) { return d.mandado === mandadoPreCheck; });
-        if (existente) {
-          if (overlay) overlay.style.display = 'none';
-          if (painelProgressoInd) painelProgressoInd.style.display = 'none';
-          if (wrapperFicha) wrapperFicha.style.display = 'flex';
-          if (btn) { btn.style.display = 'block'; btn.disabled = false; }
-          document.getElementById('textoPdfBruto').disabled = false;
-          console.warn("[DEBUG FRONTEND] Pré-check evitou chamada da IA (Duplicado):", mandadoPreCheck);
-          return chamarAlertaTatico("⚠️ DUPLICIDADE", "Mandado já cadastrado ou na fila.\n\nAlvo: " + existente.nome + "\nStatus: " + existente.status, "OK");
-        }
-      }
-
       const resposta = await analisarDocumentoComGeminiPromessa(texto);
       
       if (overlay) overlay.style.display = 'none';
@@ -464,10 +553,10 @@
       console.log("[DEBUG FRONTEND] Dados estruturados recebidos com sucesso:", dadosTemporarios);
 
       if (dadosTemporarios.mandado && dadosTemporarios.mandado !== "N/A") {
-        const existente = dadosMandados.find(function(d) { return d.mandado === dadosTemporarios.mandado; }) || filaImportacao.find(function(d) { return d.mandado === dadosTemporarios.mandado; });
-        if (existente) {
-          console.warn("[DEBUG FRONTEND] Mandado duplicado detectado:", dadosTemporarios.mandado);
-          return chamarAlertaTatico("⚠️ DUPLICIDADE", "Mandado já cadastrado ou na fila.\n\nAlvo: " + existente.nome + "\nStatus: " + existente.status, "OK");
+        const dupPos = verificarMandadoJaExisteNoSistema(dadosTemporarios.mandado);
+        if (dupPos) {
+          console.warn("[DEBUG FRONTEND] Mandado duplicado detectado pós-IA:", dadosTemporarios.mandado);
+          return chamarAlertaTatico("⚠️ DUPLICIDADE DETECTADA", "Mandado já cadastrado ou na fila.\n\nAlvo: " + (dupPos.alvo.nome || 'Desconhecido') + "\nLocal: " + dupPos.local, "OK");
         }
       }
 
@@ -476,9 +565,8 @@
         dadosTemporarios.fotoBase64 = fotoBase64Temporaria;
       }
       
-      // Adicionar os endereços secundários como string para poder editar e ler no mesmo formato
       ajustarSePrisaoCivil(dadosTemporarios);
-      var txtSec = dadosTemporarios.secundarios.map(function(s){return s.endereco;}).join(' || ');
+      var txtSec = (dadosTemporarios.secundarios || []).map(function(s){return s.endereco;}).join(' || ');
       dadosTemporarios.secundariosText = txtSec;
 
       filaImportacao.push(dadosTemporarios);
@@ -505,11 +593,59 @@
   }
 
   /* ================================================================
-     MÓDULO 9: PROCESSAMENTO EM LOTE DE PDFs (Vai para a fila)
+     MÓDULO 9: PROCESSAMENTO EM LOTE DE PDFs (Pré-checagem + Fila)
      ================================================================ */
   async function iniciarProcessamentoLotePdf(textosPdfs, useIA = true) {
-    const total = textosPdfs.length;
-    console.log("[DEBUG FRONTEND] processarLotePdf iniciado. Total no lote:", total);
+    const totalInicial = textosPdfs.length;
+    console.log("[DEBUG FRONTEND] processarLotePdf iniciado. Total inicial no lote:", totalInicial);
+
+    // ── PRÉ-VERIFICAÇÃO DE DUPLICIDADE GLOBAL ANTES DE ENVIAR A QUALQUER PROCESSAMENTO ──
+    const textosFiltradosParaProcessar = [];
+    const listaDuplicados = [];
+
+    for (let i = 0; i < textosPdfs.length; i++) {
+      const itemOuTexto = textosPdfs[i];
+      const textoBruto = (typeof itemOuTexto === 'object' && itemOuTexto.texto) ? itemOuTexto.texto : itemOuTexto;
+      const fotoBase64Item = (typeof itemOuTexto === 'object' && itemOuTexto.fotoBase64) ? itemOuTexto.fotoBase64 : null;
+      const mandadoExtraido = extrairNumeroMandadoBruto(textoBruto);
+
+      let duplicado = null;
+      if (mandadoExtraido) {
+        duplicado = verificarMandadoJaExisteNoSistema(mandadoExtraido);
+      }
+
+      if (duplicado) {
+        console.warn("[PRÉ-CHECK LOTE] Mandado ignorado antes do processamento (" + (useIA ? "IA" : "Regex") + "):", mandadoExtraido, "Local:", duplicado.local);
+        listaDuplicados.push({
+          index: i + 1,
+          mandado: mandadoExtraido,
+          nome: duplicado.alvo.nome || 'Alvo já cadastrado',
+          local: duplicado.local
+        });
+      } else {
+        textosFiltradosParaProcessar.push({
+          indexOriginal: i + 1,
+          mandadoEstimado: mandadoExtraido,
+          texto: textoBruto,
+          fotoBase64: fotoBase64Item
+        });
+      }
+    }
+
+    // Se TODOS os PDFs selecionados forem duplicados: 0 chamadas à IA / Regex!
+    if (textosFiltradosParaProcessar.length === 0) {
+      let detalheDuplicados = listaDuplicados.map(d => `• Doc ${d.index}: Mandado ${d.mandado} (${d.nome}) [${d.local}]`).join('\n');
+      console.warn("[PRÉ-CHECK LOTE] Todos os PDFs selecionados já constam no sistema. Nenhuma chamada realizada.");
+      return chamarAlertaTatico("⚠️ NENHUM MANDADO NOVO", "Todos os " + totalInicial + " PDFs selecionados já foram importados anteriormente ou constam na fila de revisão.\n\n" + (useIA ? "Nenhuma chamada à IA Gemini foi realizada.\n\n" : "") + detalheDuplicados, "OK");
+    }
+
+    // Se ALGUNS PDFs forem duplicados, avisa o usuário e processa apenas os novos
+    if (listaDuplicados.length > 0) {
+      console.info("[PRÉ-CHECK LOTE] Duplicados ignorados:", listaDuplicados.length, "Novos a processar:", textosFiltradosParaProcessar.length);
+      chamarAlertaTatico("ℹ️ DUPLICIDADES IGNORADAS", listaDuplicados.length + " de " + totalInicial + " PDFs já constam no sistema e foram ignorados.\n\nProcessando apenas os " + textosFiltradosParaProcessar.length + " PDF(s) novo(s)...", "OK");
+    }
+
+    const total = textosFiltradosParaProcessar.length;
     let adicionados = 0;
     let concluidos = 0;
 
@@ -521,7 +657,7 @@
 
     if (overlay) {
       overlayTitulo.innerText = useIA ? "Analisando Lote com IA" : "Processando Lote (Regex)";
-      overlaySub.innerHTML = "Analisando: <strong>0</strong> de <strong>" + total + "</strong> arquivos...";
+      overlaySub.innerHTML = "Analisando: <strong>0</strong> de <strong>" + total + "</strong> arquivos novos...";
       overlayBarra.style.width = "0%";
       overlayPercent.innerText = "0%";
       overlay.style.display = 'flex';
@@ -529,64 +665,53 @@
 
     function atualizarProgressoUI() {
       const pct = Math.round((concluidos / total) * 100);
-      if (overlaySub) overlaySub.innerHTML = "Analisando: <strong>" + concluidos + "</strong> de <strong>" + total + "</strong> arquivos...";
+      if (overlaySub) overlaySub.innerHTML = "Analisando: <strong>" + concluidos + "</strong> de <strong>" + total + "</strong> arquivos novos...";
       if (overlayBarra) overlayBarra.style.width = pct + "%";
       if (overlayPercent) overlayPercent.innerText = pct + "%";
     }
 
     const indicesParaProcessar = [...Array(total).keys()];
     let mensagensErroLote = [];
-    const limiteConcorrencia = useIA ? 1 : 10; // 1 worker para IA (rate limit: 13/min)
+    const limiteConcorrencia = useIA ? 1 : 10;
 
     async function worker() {
       while (indicesParaProcessar.length > 0) {
         const idx = indicesParaProcessar.shift();
-        const textoBruto = textosPdfs[idx];
+        const itemInfo = textosFiltradosParaProcessar[idx];
+        const textoBruto = itemInfo.texto;
 
         try {
-          // ── PRÉ-VERIFICAÇÃO DE DUPLICIDADE ──
-          let pularParaProximo = false;
-          const mNumero = textoBruto.match(/N° do (?:Mandado|Documento)\s*:?\s*([\d]{5,}-[\d\.\-]+)/i);
-          if (mNumero) {
-            const mandadoPreCheck = mNumero[1].trim();
-            const existente = dadosMandados.find(function(d) { return d.mandado === mandadoPreCheck; }) || filaImportacao.find(function(d) { return d.mandado === mandadoPreCheck; });
-            if (existente) {
-              mensagensErroLote.push(`- Doc ${idx + 1}: Duplicado (Mandado ${mandadoPreCheck})`);
-              pularParaProximo = true;
-            }
+          let resposta;
+          if (useIA) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            resposta = await analisarDocumentoComGeminiPromessa(textoBruto);
+          } else {
+            resposta = extrairDadosDeTextoPDF(textoBruto);
           }
 
-          if (!pularParaProximo) {
-            let resposta;
-            if (useIA) {
-              // Rate limit: 500ms delay + tempo API. Retry no backend protege contra sobrecarga.
-              await new Promise(resolve => setTimeout(resolve, 500));
-              resposta = await analisarDocumentoComGeminiPromessa(textoBruto);
-            } else {
-              resposta = extrairDadosDeTextoPDF(textoBruto);
-            }
-
-            if (resposta.sucesso) {
-              let dados = resposta.dados;
-              if (dados.mandado && dados.mandado !== "N/A") {
-                const existentePos = dadosMandados.find(function(d) { return d.mandado === dados.mandado; }) || filaImportacao.find(function(d) { return d.mandado === dados.mandado; });
-                if (existentePos) {
-                  mensagensErroLote.push(`- Doc ${idx + 1}: Duplicado (Mandado ${dados.mandado})`);
-                  continue;
-                }
+          if (resposta.sucesso) {
+            let dados = resposta.dados;
+            if (dados.mandado && dados.mandado !== "N/A") {
+              const dupPos = verificarMandadoJaExisteNoSistema(dados.mandado);
+              if (dupPos) {
+                mensagensErroLote.push(`- Doc ${itemInfo.indexOriginal}: Duplicado (Mandado ${dados.mandado})`);
+                continue;
               }
-              dados.tipoImportacao = dados.tipoImportacao || (useIA ? "GEMINI" : "REGEX");
-              ajustarSePrisaoCivil(dados);
-              var txtSec = dados.secundarios.map(function(s){return s.endereco;}).join(' || ');
-              dados.secundariosText = txtSec;
-              filaImportacao.push(dados);
-              adicionados++;
-            } else {
-              mensagensErroLote.push(`- Doc ${idx + 1}: ${resposta.mensagem}`);
             }
+            if (itemInfo.fotoBase64 && (!dados.fotoBase64 || dados.fotoBase64 === "" || dados.fotoBase64 === "N/A")) {
+              dados.fotoBase64 = itemInfo.fotoBase64;
+            }
+            dados.tipoImportacao = dados.tipoImportacao || (useIA ? "GEMINI" : "REGEX");
+            ajustarSePrisaoCivil(dados);
+            var txtSec = (dados.secundarios || []).map(function(s){return s.endereco;}).join(' || ');
+            dados.secundariosText = txtSec;
+            filaImportacao.push(dados);
+            adicionados++;
+          } else {
+            mensagensErroLote.push(`- Doc ${itemInfo.indexOriginal}: ${resposta.mensagem}`);
           }
         } catch (erro) {
-          mensagensErroLote.push(`- Doc ${idx + 1}: Falha técnica.`);
+          mensagensErroLote.push(`- Doc ${itemInfo.indexOriginal}: Falha técnica.`);
         } finally {
           concluidos++;
           atualizarProgressoUI();
@@ -603,7 +728,7 @@
       document.getElementById('view-revisao-importacao').style.display = 'flex';
       renderizarTabelaFilaRevisao();
     }
-    if (mensagensErroLote.length > 0) chamarAlertaTatico("RESULTADO", `Sucesso: ${adicionados}. Falhas: ${mensagensErroLote.length}`, "OK");
+    if (mensagensErroLote.length > 0) chamarAlertaTatico("RESULTADO DO LOTE", `Sucesso: ${adicionados}. Ignorados/Erros: ${mensagensErroLote.length}`, "OK");
   }
 
 
@@ -716,52 +841,276 @@
       iniciarProcessamentoLotePdf(textosArray, useIA);
     }
     
-    if (inputPdfUploadCustom) {
-      inputPdfUploadCustom.addEventListener('change', async function(e) {
+  async function extrairFotoDePaginaPdf(page) {
+    try {
+      const scale = 1.5;
+      const viewport = page.getViewport({ scale: scale });
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+
+      // Coordenadas milimétricas do "Zoom" na face (recorte bem fechado) para eliminar 100% de textos na borda
+      const cropX = Math.floor(canvas.width * 0.055);
+      const cropY = Math.floor(canvas.height * 0.202); // Meio-termo exato (0.195 deixava teto branco, 0.210 cortava a cabeça)
+      const cropWidth = Math.floor(canvas.width * 0.115); 
+      const cropHeight = Math.floor(canvas.height * 0.133); // Ajuste fino para encaixar o rosto e o queixo perfeitamente
+
+      const imgData = ctx.getImageData(cropX, cropY, cropWidth, cropHeight);
+      const pixels = imgData.data;
+
+      let minLuma = 255;
+      let maxLuma = 0;
+      let pixelsComCor = 0;
+      let totalAmostras = 0;
+
+      for (let i = 0; i < pixels.length; i += 16) {
+        const r = pixels[i];
+        const g = pixels[i + 1];
+        const b = pixels[i + 2];
+
+        // Luminância
+        const luma = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (luma < minLuma) minLuma = luma;
+        if (luma > maxLuma) maxLuma = luma;
+
+        // Saturação de cor (fotos humanas possuem variação entre R, G e B nos tons de pele/roupa/fundo)
+        const maxVal = Math.max(r, g, b);
+        const minVal = Math.min(r, g, b);
+        if ((maxVal - minVal) > 14) {
+          pixelsComCor++;
+        }
+        totalAmostras++;
+      }
+
+      // 1. Se a variação de brilho no recorte for mínima, a caixa está em branco
+      if ((maxLuma - minLuma) <= 30) {
+        console.log("[FOTO PDF] PDF sem foto (área biométrica totalmente em branco).");
+        return null;
+      }
+
+      // 2. Se menos de 4% dos pixels tiverem qualquer tom colorido, é o ícone geométrico cinza padrão do BNMP
+      const percentualCor = (pixelsComCor / totalAmostras) * 100;
+      if (percentualCor < 4.0) {
+        console.log("[FOTO PDF] Ícone geométrico placeholder cinza do BNMP detectado (" + percentualCor.toFixed(1) + "% cor). Desconsiderando.");
+        return null;
+      }
+
+      // É UMA FOTO REAL DE PESSOA!
+      const canvasFoto = document.createElement('canvas');
+      canvasFoto.width = cropWidth;
+      canvasFoto.height = cropHeight;
+      const ctxFoto = canvasFoto.getContext('2d');
+      ctxFoto.drawImage(canvas, cropX, cropY, cropWidth, cropHeight, 0, 0, cropWidth, cropHeight);
+      const dataUrl = canvasFoto.toDataURL('image/jpeg', 0.85);
+      console.log("[FOTO PDF] Foto real de pessoa recortada com sucesso! (" + percentualCor.toFixed(1) + "% cor, tam: " + dataUrl.length + ")");
+      return dataUrl;
+    } catch (e) {
+      console.warn("[FOTO PDF] Erro ao extrair foto da página:", e);
+      return null;
+    }
+  }
+
+  if (inputPdfUploadCustom) {
+    inputPdfUploadCustom.addEventListener('change', async function(e) {
+      const files = e.target.files;
+      if (!files || files.length === 0) return;
+
+      loadingMsg.style.display = 'block';
+      textArea.disabled = true;
+
+      // Mostrar overlay de progresso durante a leitura dos PDFs
+      const overlay = document.getElementById('loadingOverlayIA');
+      const overlayTitulo = document.getElementById('overlayIATitulo');
+      const overlaySub = document.getElementById('overlayIASub');
+      const overlayBarra = document.getElementById('overlayIABarra');
+      const overlayPercent = document.getElementById('overlayIAPercent');
+
+      if (overlay && files.length > 5) {
+        overlayTitulo.innerText = "Lendo PDFs";
+        overlaySub.innerHTML = "Extraindo texto: <strong>0</strong> de <strong>" + files.length + "</strong> arquivos...";
+        overlayBarra.style.width = "0%";
+        overlayPercent.innerText = "0%";
+        overlay.style.display = 'flex';
+      }
+
+      try {
+        var textosLote = [];
+        const LOTE_RESPIRO = 10; // A cada 10 PDFs, libera a main thread do navegador
+
+        for (var f = 0; f < files.length; f++) {
+          const file = files[f];
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+          var fullText = '';
+          var fotoBase64 = null;
+
+          for (var i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+
+            var lastY, text = '';
+            for (var item of content.items) {
+              if (lastY == item.transform[5] || !lastY) {
+                text += item.str;
+              } else {
+                text += '\n' + item.str;
+              }
+              lastY = item.transform[5];
+            }
+            fullText += text + '\n';
+
+            // Na página 1, tentar extrair a foto se houver
+            if (i === 1 && !fotoBase64) {
+              try {
+                fotoBase64 = await extrairFotoDePaginaPdf(page);
+              } catch (errFoto) {
+                console.warn("[FOTO PDF] Falha na extração de foto da pág 1:", errFoto.message);
+              }
+            }
+          }
+          textosLote.push({
+            texto: fullText.replace(/\s{2,}/g, ' '),
+            fotoBase64: fotoBase64
+          });
+
+          // Atualizar progresso visual da leitura
+          if (overlay && files.length > 5) {
+            var pctLeitura = Math.round(((f + 1) / files.length) * 100);
+            overlaySub.innerHTML = "Extraindo texto: <strong>" + (f + 1) + "</strong> de <strong>" + files.length + "</strong> arquivos...";
+            overlayBarra.style.width = pctLeitura + "%";
+            overlayPercent.innerText = pctLeitura + "%";
+          }
+
+          // PAUSA DE RENDERIZAÇÃO: A cada LOTE_RESPIRO PDFs, libera o navegador
+          // para redesenhar a tela, atualizar a barra e liberar memória RAM
+          if ((f + 1) % LOTE_RESPIRO === 0 && f < files.length - 1) {
+            await new Promise(function(resolve) { setTimeout(resolve, 80); });
+          }
+        }
+
+        // Esconder overlay de leitura antes de iniciar o processamento
+        if (overlay && files.length > 5) {
+          overlay.style.display = 'none';
+        }
+
+        setTimeout(function() { aplicarConfigsEProcessar(textosLote); }, 500);
+
+      } catch (erro) {
+        if (overlay) overlay.style.display = 'none';
+        if (typeof chamarAlertaTatico === 'function') {
+          chamarAlertaTatico("ERRO AO LER PDF", "Não foi possível extrair o texto: " + erro.message, "OK");
+        } else {
+          alert("Erro ao ler PDF: " + erro.message);
+        }
+      } finally {
+        loadingMsg.style.display = 'none';
+        textArea.disabled = false;
+        inputPdfUploadCustom.value = '';
+      }
+    });
+  }
+
+    // ── BOTÃO ESPECIAL: VINCULAR FOTOS DE PDFs EXISTENTES ──
+    const inputPdfVincularFotos = document.getElementById('inputPdfVincularFotos');
+    if (inputPdfVincularFotos) {
+      inputPdfVincularFotos.addEventListener('change', async function(e) {
         const files = e.target.files;
         if (!files || files.length === 0) return;
-        
-        loadingMsg.style.display = 'block';
-        textArea.disabled = true;
-        
+
+        const overlay = document.getElementById('loadingOverlayIA');
+        const overlayTitulo = document.getElementById('overlayIATitulo');
+        const overlaySub = document.getElementById('overlayIASub');
+        const overlayBarra = document.getElementById('overlayIABarra');
+        const overlayPercent = document.getElementById('overlayIAPercent');
+
+        if (overlay) {
+          overlayTitulo.innerText = "Extraindo e Vinculando Fotos";
+          overlaySub.innerHTML = "Lendo <strong>0</strong> de <strong>" + files.length + "</strong> PDFs...";
+          overlayBarra.style.width = "0%";
+          overlayPercent.innerText = "0%";
+          overlay.style.display = 'flex';
+        }
+
         try {
-          var textosLote = [];
+          var listaFotosExtraidas = [];
           for (var f = 0; f < files.length; f++) {
             const file = files[f];
             const arrayBuffer = await file.arrayBuffer();
             const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
             var fullText = '';
+            var fotoBase64 = null;
 
             for (var i = 1; i <= pdf.numPages; i++) {
               const page = await pdf.getPage(i);
               const content = await page.getTextContent();
-
               var lastY, text = '';
               for (var item of content.items) {
-                if (lastY == item.transform[5] || !lastY) {
-                  text += item.str;
-                } else {
-                  text += '\n' + item.str;
-                }
+                if (lastY == item.transform[5] || !lastY) text += item.str;
+                else text += '\n' + item.str;
                 lastY = item.transform[5];
               }
               fullText += text + '\n';
+
+              if (i === 1 && !fotoBase64) {
+                try { fotoBase64 = await extrairFotoDePaginaPdf(page); } catch (errF) { }
+              }
             }
-            textosLote.push(fullText.replace(/\s{2,}/g, ' '));
+
+            const numMandado = extrairNumeroMandadoBruto(fullText);
+            if (numMandado && fotoBase64) {
+              listaFotosExtraidas.push({
+                mandado: numMandado,
+                fotoBase64: fotoBase64
+              });
+            }
+
+            const pct = Math.round(((f + 1) / files.length) * 100);
+            if (overlaySub) overlaySub.innerHTML = "Lendo e cortando fotos: <strong>" + (f + 1) + "</strong> de <strong>" + files.length + "</strong> PDFs...";
+            if (overlayBarra) overlayBarra.style.width = pct + "%";
+            if (overlayPercent) overlayPercent.innerText = pct + "%";
           }
 
-          setTimeout(function() { aplicarConfigsEProcessar(textosLote); }, 500);
-
-        } catch (erro) {
-          if (typeof chamarAlertaTatico === 'function') {
-            chamarAlertaTatico("ERRO AO LER PDF", "Não foi possível extrair o texto: " + erro.message, "OK");
-          } else {
-            alert("Erro ao ler PDF: " + erro.message);
+          if (listaFotosExtraidas.length === 0) {
+            if (overlay) overlay.style.display = 'none';
+            return chamarAlertaTatico("⚠️ NENHUMA FOTO ENCONTRADA", "Nenhum dos PDFs selecionados contém foto biométrica válida extraível ou o número do mandado não foi identificado.", "OK");
           }
+
+          if (overlaySub) overlaySub.innerHTML = "Enviando e vinculando <strong>" + listaFotosExtraidas.length + "</strong> fotos no Google Drive e Banco de Dados...";
+
+          google.script.run.withSuccessHandler(function(res) {
+            if (overlay) overlay.style.display = 'none';
+            if (res.sucesso) {
+              if (res.resultados && Array.isArray(res.resultados)) {
+                res.resultados.forEach(function(itemRes) {
+                  if (itemRes.sucesso && itemRes.fotoUrl) {
+                    var mObj = window.dadosMandados ? window.dadosMandados.find(function(d) { return d.mandado === itemRes.mandado; }) : null;
+                    if (mObj) {
+                      mObj.foto = itemRes.fotoUrl;
+                      mObj.fotoUrl = itemRes.fotoUrl;
+                    }
+                  }
+                });
+              }
+              if (typeof window.processarDados === 'function' && window.dadosMandados) {
+                window.processarDados(window.dadosMandados);
+              }
+              chamarAlertaTatico("📷 FOTOS VINCULADAS COM SUCESSO!", res.mensagem + "\n\nAs fotos foram salvas na pasta do Google Drive e vinculadas aos mandados correspondentes!", "OK");
+            } else {
+              chamarAlertaTatico("⚠️ FALHA AO VINCULAR", res.mensagem, "OK");
+            }
+          }).withFailureHandler(function(err) {
+            if (overlay) overlay.style.display = 'none';
+            chamarAlertaTatico("FALHA TÁTICA", "Erro no servidor ao vincular fotos: " + err.message, "OK");
+          }).vincularFotosLotePdfDrive(listaFotosExtraidas);
+
+        } catch (errGlobal) {
+          if (overlay) overlay.style.display = 'none';
+          chamarAlertaTatico("ERRO AO PROCESSAR PDFs", errGlobal.message, "OK");
         } finally {
-          loadingMsg.style.display = 'none';
-          textArea.disabled = false;
-          inputPdfUploadCustom.value = '';
+          inputPdfVincularFotos.value = '';
         }
       });
     }
