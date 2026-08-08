@@ -206,29 +206,3 @@ function obterApiKeyMaps() {
   const configs = obterConfiguracoesSimples();
   return configs["mapa_api_key"] || "";
 }
-
-
-function doPost(e) {
-  try {
-    // Recebe os dados enviados pelo Bookmarklet
-    var dados = JSON.parse(e.postData.contents);
-
-    // Converte a string Base64 em um arquivo PDF (Blob)
-    var bytes = Utilities.base64Decode(dados.pdfBase64);
-    var pdfBlob = Utilities.newBlob(bytes, "application/pdf", dados.nomeArquivo);
-
-    // ⚠️ SUBSTITUA 'suaFuncaoDeImportarPDF' pelo NOME EXATO da sua função que processa o PDF:
-    var resultado = suaFuncaoDeImportarPDF(pdfBlob);
-
-    return ContentService.createTextOutput(JSON.stringify({ 
-      sucesso: true, 
-      mensagem: "PDF processado com sucesso!" 
-    })).setMimeType(ContentService.MimeType.JSON);
-
-  } catch (erro) {
-    return ContentService.createTextOutput(JSON.stringify({ 
-      sucesso: false, 
-      erro: erro.message 
-    })).setMimeType(ContentService.MimeType.JSON);
-  }
-}
