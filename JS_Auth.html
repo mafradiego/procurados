@@ -18,7 +18,9 @@
   let lastPendingCount = -1; // Para notificar novos cadastros (-1 indica estado inicial)
   let _gpsResolvido = false; // Indica se o GPS já respondeu (sucesso ou falha)
   let _dadosCarregados = false; // Indica se os mandados já foram carregados do servidor
+  let _tabelaLeisCarregada = false; // Indica se a tabela de classificação de crimes foi carregada
   let _semGpsJaExibiu = false; // Evita chamadas duplicadas de _tentarExibirSemGPS
+  let _areaGpsAplicada = false; // Indica que a área e polígono do GPS já foram aplicados no mapa
 
   // RASTREADOR DE ATIVIDADE (Heartbeat Controlado)
   let timestampUltimaAtividade = Date.now();
@@ -342,7 +344,36 @@
   var _cachePoligono = {};
   var _ultimosFiltrosArea = '';
 
+  var _filtrarNoMapaTimer = null;
+
   function filtrarNoMapa() {
+    if (!window._sistemaPronto) {
+      _executarFiltroInterno();
+      return;
+    }
+    
+    var loadingEl = document.getElementById('tela-seguranca');
+    var txtEl = document.getElementById('txt-status-carregamento');
+    var overlay = document.getElementById('mapStatusOverlay');
+    
+    if (loadingEl && txtEl) {
+      loadingEl.style.display = 'flex';
+      loadingEl.style.opacity = '1';
+      txtEl.innerText = "Aplicando filtros e renderizando mapa...";
+    }
+    if (overlay) overlay.style.display = 'none';
+
+    if (_filtrarNoMapaTimer) clearTimeout(_filtrarNoMapaTimer);
+    _filtrarNoMapaTimer = setTimeout(function() {
+      _executarFiltroInterno();
+      if (loadingEl) {
+        loadingEl.style.opacity = '0';
+        setTimeout(function() { loadingEl.style.display = 'none'; }, 300);
+      }
+    }, 50);
+  }
+
+  function _executarFiltroInterno() {
     const termoNome = document.getElementById('filtroNome').value.toLowerCase();
     const filtroCPI = document.getElementById('filtroCPI').value;
     const filtroBPM = document.getElementById('filtroBatalhao').value;
@@ -490,17 +521,17 @@
       const normFiltroCIA = normalizarArea(filtroCIA);
       const normFiltroDP = normalizarArea(filtroDP);
 
-      let okCPI = (filtroCPI === 'TODOS' || normalizarArea(alvo.cpiArea) === normFiltroCPI || alvo.semEndereco);
-      let okBPM = (filtroBPM === 'TODOS' || normalizarArea(alvo.bpmArea) === normFiltroBPM || normalizarArea(alvo.batalhao) === normFiltroBPM || alvo.semEndereco);
-      let okCIA = (filtroCIA === 'TODOS' || normalizarArea(alvo.ciaArea) === normFiltroCIA || alvo.semEndereco);
-      let okDP = (filtroDP === 'TODOS' || normalizarArea(alvo.dpArea) === normFiltroDP || alvo.semEndereco);
+      let okCPI = (filtroCPI === 'TODOS' || normalizarArea(alvo.cpiArea) === normFiltroCPI || (alvo._geoCpi && alvo._geoCpi === normFiltroCPI) || alvo.semEndereco);
+      let okBPM = (filtroBPM === 'TODOS' || normalizarArea(alvo.bpmArea) === normFiltroBPM || normalizarArea(alvo.batalhao) === normFiltroBPM || (alvo._geoBpm && alvo._geoBpm === normFiltroBPM) || alvo.semEndereco);
+      let okCIA = (filtroCIA === 'TODOS' || normalizarArea(alvo.ciaArea) === normFiltroCIA || (alvo._geoCia && alvo._geoCia === normFiltroCIA) || alvo.semEndereco);
+      let okDP = (filtroDP === 'TODOS' || normalizarArea(alvo.dpArea) === normFiltroDP || (alvo._geoDp && alvo._geoDp === normFiltroDP) || alvo.semEndereco);
       
       let temGooglePoligonos = (typeof google !== 'undefined' && google.maps && google.maps.geometry && google.maps.geometry.poly && window.poligonosInstancias && window.poligonosInstancias.length > 0);
       let filtroAtivo = (filtroCPI !== 'TODOS' || filtroBPM !== 'TODOS' || filtroCIA !== 'TODOS' || filtroDP !== 'TODOS');
 
-      // Checagem geométrica para o endereço PRINCIPAL (apenas se o check textual preliminar NÃO passou)
+      // Checagem geométrica para o endereço PRINCIPAL (apenas se a pré-indexação / check textual NÃO passou)
       let textMatchPrincipal = (okCPI && okBPM && okCIA && okDP);
-      if (!textMatchPrincipal && filtroAtivo && temGooglePoligonos && alvo.lat && alvo.lng && !alvo.semEndereco) {
+      if (!textMatchPrincipal && filtroAtivo && temGooglePoligonos && alvo.lat && alvo.lng && !alvo.semEndereco && !window._geografiaIndexada) {
         var chavePonto = alvo.lat + ',' + alvo.lng;
         let principalDentroDoPoligono = false;
         
@@ -564,10 +595,10 @@
           for (let i = 0; i < listaSec.length; i++) {
             let sec = listaSec[i];
             
-            let aCPI = normalizarArea(sec.cpi || '');
-            let aBPM = normalizarArea(sec.batalhao || '');
-            let aCIA = normalizarArea(sec.cia || '');
-            let aDP = normalizarArea(sec.delegacia || sec.dpArea || '');
+            let aCPI = normalizarArea(sec.cpi || sec._geoCpi || '');
+            let aBPM = normalizarArea(sec.batalhao || sec._geoBpm || '');
+            let aCIA = normalizarArea(sec.cia || sec._geoCia || '');
+            let aDP = normalizarArea(sec.delegacia || sec.dpArea || sec._geoDp || '');
 
              let secOkCPI = true;
              let secOkBPM = true;
@@ -648,6 +679,8 @@
                  var clone = Object.assign({}, alvo);
                  clone._crimeFiltradoForcado = crimeForcado;
                  clone._isSecundarioClone = true;
+                 clone.latPrincipal = alvo.latPrincipal || alvo.lat;
+                 clone.lngPrincipal = alvo.lngPrincipal || alvo.lng;
                  clone._secundarioEnd = sec.endereco;
                  clone.lat = Number(sec.lat);
                  clone.lng = Number(sec.lng);
