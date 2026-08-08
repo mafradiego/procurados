@@ -68,16 +68,7 @@
       return '<span class="tooltip-trigger">?<span class="tooltip-balloon">' + t + '</span></span>';
     };
 
-    // Distância KM (Haversine)
-    let htmlDistancia = '';
-    if (posicaoPatrulheiro) {
-      const km = calcularHaversine(posicaoPatrulheiro.lat, posicaoPatrulheiro.lng, alvo.lat, alvo.lng);
-      htmlDistancia = '<div class="km-badge"><span class="material-symbols-outlined" style="font-size:16px;">near_me</span> ' + km.toFixed(1) + ' km' + tooltip('distancia') + '</div>';
-    }
-
-    // Secundários com numeração
-    let htmlSecundarios = "";
-    // Construir htmlArea para cada endereço secundário (reutilizável)
+    // ── CONSTRUÇÃO E ORDENAÇÃO DOS ENDEREÇOS MAPEADOS DO CARD ──
     const montarAreaBadge = function(areaData) {
       if (!areaData) return '';
       if (areaData.cpi === "FORA DO ESTADO") {
@@ -122,41 +113,143 @@
       h += '</div>';
       return h;
     };
+
+    let todosEnderecosList = [];
+
+    // 1. Endereço Principal
+    let pLat = Number(alvo.latPrincipal);
+    if (isNaN(pLat) || pLat === 0) pLat = (!alvo._isSecundarioClone ? Number(alvo.lat || 0) : 0);
+    let pLng = Number(alvo.lngPrincipal);
+    if (isNaN(pLng) || pLng === 0) pLng = (!alvo._isSecundarioClone ? Number(alvo.lng || 0) : 0);
+
+    let pKm = 999999;
+    if (posicaoPatrulheiro && !isNaN(pLat) && pLat !== 0 && !isNaN(pLng) && pLng !== 0) {
+      pKm = calcularHaversine(posicaoPatrulheiro.lat, posicaoPatrulheiro.lng, pLat, pLng);
+    }
+
+    todosEnderecosList.push({
+      isPrincipal: true,
+      isClicked: !alvo._isSecundarioClone,
+      rotulo: "Endereço Principal",
+      endereco: alvo.enderecoPrincipal || "Não informado",
+      lat: pLat,
+      lng: pLng,
+      km: pKm,
+      areaData: { cpi: alvo.cpiArea || alvo.cpi, batalhao: alvo.batalhao || alvo.bpmArea, cia: alvo.ciaArea, lat: pLat, lng: pLng }
+    });
+
+    // 2. Endereços Secundários
     try {
       let rawSecCard = alvo.geodataSecundarios || alvo.secundarios || [];
-      let listaSec = [];
-      if (Array.isArray(rawSecCard)) {
-        listaSec = rawSecCard;
-      } else if (typeof rawSecCard === 'string') {
-        try { listaSec = JSON.parse(rawSecCard); } catch (eSecParse) { listaSec = []; }
-      }
-      if (listaSec.length > 0) {
-        listaSec.forEach(function(sec, idx) {
-          let sObj = (typeof sec === 'string') ? { endereco: sec } : (sec || {});
-          let sEnd = sObj.endereco || sObj.texto || (typeof sec === 'string' ? sec : 'Endereço secundário sem texto');
-          let sLat = Number(sObj.lat || sObj.latitude || 0);
-          let sLng = Number(sObj.lng || sObj.longitude || 0);
+      let listaSec = Array.isArray(rawSecCard) ? rawSecCard : (typeof rawSecCard === 'string' ? (function() { try { return JSON.parse(rawSecCard); } catch (e) { return []; } })() : []);
+      
+      const normEndStr = function(str) {
+        if (!str) return "";
+        return String(str).toUpperCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^\w\s]/gi, '').replace(/\s+/g, ' ').trim();
+      };
 
-          let kmSec = '';
-          if (posicaoPatrulheiro && !isNaN(sLat) && sLat !== 0 && !isNaN(sLng) && sLng !== 0) {
-            const d = calcularHaversine(posicaoPatrulheiro.lat, posicaoPatrulheiro.lng, sLat, sLng);
-            kmSec = '<div class="km-badge" style="font-size:10px;padding:4px 8px;margin-bottom:6px;"><span class="material-symbols-outlined" style="font-size:14px;">near_me</span> ' + d.toFixed(1) + ' km</div>';
-          }
-          // Área do endereço secundário
-          let areaSec = montarAreaBadge(sObj);
-          let btnRotaSec = (!isNaN(sLat) && sLat !== 0 && !isNaN(sLng) && sLng !== 0) ?
-            '<button class="btn-rota-sec" onclick="abrirGpsNativo(' + sLat + ', ' + sLng + ')"><span class="material-symbols-outlined" style="font-size:16px;">explore</span> ROTA</button>' +
-            '<button class="btn-rota-sec" style="width:auto;padding:8px;background:#FBBC04;" onclick="abrirStreetView(' + sLat + ', ' + sLng + ')" title="Street View"><svg width="16" height="16" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M12.56 14.33c-.34.27-.56.7-.56 1.17V21h7c1.1 0 2-.9 2-2v-5.98c-.94-.33-1.95-.52-3-.52-2.03 0-3.93.7-5.44 1.83zM12 6c1.93 0 3.5-1.57 3.5-3.5S13.93-1 12-1 8.5.57 8.5 2.5 10.07 6 12 6zm-1.44 8.33C9.07 12.93 7.14 12.23 5 12.23c-1.05 0-2.06.19-3 .52V19c0 1.1.9 2 2 2h7v-5.5c0-.47-.22-.9-.56-1.17l-.88-.67zM12 8c-1.66 0-3 1.34-3 3 0 .35.07.69.18 1.01L12 14.34l2.82-2.33c.11-.32.18-.66.18-1.01 0-1.66-1.34-3-3-3z"/></svg></button>' : '';
+      let endsVistosSet = new Set();
+      if (alvo.enderecoPrincipal) endsVistosSet.add(normEndStr(alvo.enderecoPrincipal));
 
-          htmlSecundarios += '<div class="endereco-sec-item">' + kmSec +
-            '<div class="endereco-texto"><strong>Outro Endereço ' + (idx + 1) + ':</strong>' + sEnd + btnCopiar(sEnd) + '</div>' +
-            areaSec +
-            '<div style="display:flex;gap:6px;margin-top:6px;">' + btnRotaSec + '</div></div>';
+      let secCont = 1;
+      listaSec.forEach(function(sec) {
+        let sObj = (typeof sec === 'string') ? { endereco: sec } : (sec || {});
+        let sEnd = sObj.endereco || sObj.texto || (typeof sec === 'string' ? sec : 'Endereço secundário');
+        let sEndNorm = normEndStr(sEnd);
+
+        let sLat = Number(sObj.lat || sObj.latitude || 0);
+        let sLng = Number(sObj.lng || sObj.longitude || 0);
+
+        let foiClicado = false;
+        if (alvo._isSecundarioClone) {
+          if (alvo._secundarioEnd && normEndStr(alvo._secundarioEnd) === sEndNorm) foiClicado = true;
+          else if (!isNaN(sLat) && sLat !== 0 && sLat === Number(alvo.lat) && sLng === Number(alvo.lng)) foiClicado = true;
+        }
+
+        // Se o endereço for idêntico a um já exibido no card e NÃO for o clicado, ignorar duplicata
+        if (sEndNorm && endsVistosSet.has(sEndNorm) && !foiClicado) return;
+        if (sEndNorm) endsVistosSet.add(sEndNorm);
+
+        let sKm = 999999;
+        if (posicaoPatrulheiro && !isNaN(sLat) && sLat !== 0 && !isNaN(sLng) && sLng !== 0) {
+          sKm = calcularHaversine(posicaoPatrulheiro.lat, posicaoPatrulheiro.lng, sLat, sLng);
+        }
+
+        todosEnderecosList.push({
+          isPrincipal: false,
+          isClicked: foiClicado,
+          rotulo: 'Outro Endereço ' + secCont,
+          endereco: sEnd,
+          lat: sLat,
+          lng: sLng,
+          km: sKm,
+          areaData: sObj
         });
-      } else {
-        htmlSecundarios = '<div style="color:var(--text-muted);font-size:11px;text-align:center;padding:10px;">Nenhum endereço adicional.</div>';
+        secCont++;
+      });
+    } catch(e) { console.error("Erro ao ler endereços secundários no card:", e); }
+
+    // Ordenar endereços:
+    // 1º: O pino que foi clicado no mapa/lista (isClicked === true)
+    // 2º em diante: Ordenados por KM de distância (do mais próximo ao mais distante). Se empate, Principal primeiro.
+    todosEnderecosList.sort(function(a, b) {
+      if (a.isClicked && !b.isClicked) return -1;
+      if (!a.isClicked && b.isClicked) return 1;
+      if (a.km !== b.km) return a.km - b.km;
+      if (a.isPrincipal && !b.isPrincipal) return -1;
+      if (!a.isPrincipal && b.isPrincipal) return 1;
+      return 0;
+    });
+
+    // Renderizar a lista unificada e destacada de endereços
+    let htmlListaEnderecosCompleta = "";
+    todosEnderecosList.forEach(function(item) {
+      let isValCoord = !isNaN(item.lat) && item.lat !== 0 && !isNaN(item.lng) && item.lng !== 0;
+      
+      let kmBadgeHtml = '';
+      if (item.km < 999999) {
+        kmBadgeHtml = '<div class="km-badge" style="font-size:10px;padding:3px 8px;margin-left:auto;display:inline-flex;align-items:center;gap:3px;"><span class="material-symbols-outlined" style="font-size:13px;">near_me</span> ' + item.km.toFixed(1) + ' km</div>';
       }
-    } catch (e) { htmlSecundarios = "Erro ao ler endereços."; }
+
+      let areaHtml = montarAreaBadge(item.areaData);
+
+      let btnRotaHtml = isValCoord ?
+        '<button class="btn-rota" style="background:' + (item.isClicked ? '#f59e0b' : (item.isPrincipal ? '#ef4444' : '#3b82f6')) + ';color:#fff;border:none;padding:7px 12px;border-radius:6px;font-weight:800;display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;" onclick="abrirGpsNativo(' + item.lat + ', ' + item.lng + ')"><span class="material-symbols-outlined" style="font-size:15px;">directions_car</span> ROTA</button>' +
+        '<button class="btn-rota" style="background:#FBBC04;color:#1a1a1a;border:none;padding:7px 12px;border-radius:6px;font-weight:800;display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;" onclick="abrirStreetView(' + item.lat + ', ' + item.lng + ')" title="Street View"><svg width="15" height="15" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M12.56 14.33c-.34.27-.56.7-.56 1.17V21h7c1.1 0 2-.9 2-2v-5.98c-.94-.33-1.95-.52-3-.52-2.03 0-3.93.7-5.44 1.83zM12 6c1.93 0 3.5-1.57 3.5-3.5S13.93-1 12-1 8.5.57 8.5 2.5 10.07 6 12 6zm-1.44 8.33C9.07 12.93 7.14 12.23 5 12.23c-1.05 0-2.06.19-3 .52V19c0 1.1.9 2 2 2h7v-5.5c0-.47-.22-.9-.56-1.17l-.88-.67zM12 8c-1.66 0-3 1.34-3 3 0 .35.07.69.18 1.01L12 14.34l2.82-2.33c.11-.32.18-.66.18-1.01 0-1.66-1.34-3-3-3z"/></svg> STREET</button>' +
+        '<button class="btn-rota" style="background:#10b981;color:#fff;border:none;padding:7px 12px;border-radius:6px;font-weight:800;display:inline-flex;align-items:center;gap:4px;cursor:pointer;font-size:11px;" onclick="focarPinoPorCoordenadas(' + item.lat + ', ' + item.lng + ', \'' + (alvo.mandado || '').replace(/'/g, "\\'") + '\')"><span class="material-symbols-outlined" style="font-size:15px;">my_location</span> VER NO MAPA</button>' : '';
+
+      // Estilização tática dos cards:
+      // 1. Pino Clicado: borda amarela de alerta com brilho e tag de evidência
+      // 2. Endereço Principal: borda vermelha completa de destaque com tag clara
+      // 3. Outros secundários: borda sutil
+      let cardStyle = '';
+      let badgeTag = '';
+
+      if (item.isClicked && !item.isPrincipal) {
+        cardStyle = 'background: linear-gradient(135deg, rgba(245, 158, 11, 0.16), rgba(245, 158, 11, 0.05)); border: 2px solid #f59e0b; border-radius: 12px; padding: 12px; box-shadow: 0 4px 15px rgba(245, 158, 11, 0.25); margin-bottom: 10px; position:relative;';
+        badgeTag = '<span style="background:#f59e0b;color:#1a1a1a;font-size:9px;font-weight:900;padding:3px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:0.5px;display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:13px;">location_searching</span> PINO CLICADO NO MAPA</span>';
+      } else if (item.isPrincipal) {
+        let borderCol = '#ef4444';
+        let bgGradient = item.isClicked ? 
+          'linear-gradient(135deg, rgba(239, 68, 68, 0.22), rgba(239, 68, 68, 0.08))' : 
+          'linear-gradient(135deg, rgba(239, 68, 68, 0.15), rgba(239, 68, 68, 0.05))';
+        cardStyle = 'background: ' + bgGradient + '; border: 2px solid ' + borderCol + '; border-radius: 12px; padding: 12px; box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3); margin-bottom: 10px; position:relative;';
+        badgeTag = '<span style="background:#ef4444;color:#ffffff;font-size:9px;font-weight:900;padding:3px 8px;border-radius:99px;text-transform:uppercase;letter-spacing:0.5px;display:inline-flex;align-items:center;gap:4px;"><span class="material-symbols-outlined" style="font-size:13px;">home_pin</span> ENDEREÇO PRINCIPAL' + (item.isClicked ? ' (CLICADO)' : '') + '</span>';
+      } else {
+        cardStyle = 'background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 10px; padding: 10px; margin-bottom: 8px;';
+        badgeTag = '<span style="background:rgba(255, 255, 255, 0.1);color:var(--text-secondary);font-size:9px;font-weight:800;padding:2px 6px;border-radius:4px;text-transform:uppercase;">' + item.rotulo + '</span>';
+      }
+
+      htmlListaEnderecosCompleta += '<div style="' + cardStyle + '">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+          badgeTag +
+          kmBadgeHtml +
+        '</div>' +
+        '<div class="endereco-texto" style="font-size:12px;line-height:1.4;margin-bottom:6px;"><strong>' + (item.isPrincipal ? 'Endereço Principal:' : item.rotulo + ':') + '</strong> ' + item.endereco + btnCopiar(item.endereco) + '</div>' +
+        areaHtml +
+        '<div style="display:flex;gap:6px;margin-top:8px;">' + btnRotaHtml + '</div>' +
+      '</div>';
+    });
 
     // Validade formatada
     let strValidade = alvo.validade || "";
@@ -206,26 +299,42 @@
     let especie = extP(infoRaw, 'Espécie(?: de| da) (?:prisão|Internação):');
     if (especie === "N/A") especie = extP(infoRaw, 'Espécie de prisão:');
 
-    // Parse multiple laws
-    let blocosLeis = [];
-    let splitLeis = infoRaw.split(/(?=Lei:)/gi);
-    if (splitLeis.length > 1) {
+    // Parse multiple laws and multiple articles/paragraphs (desmembrados em listaCrimes)
+    let crInfoGlobal = classificarCrime(infoRaw);
+    let listaCrimes = (crInfoGlobal && crInfoGlobal.todosCrimes && crInfoGlobal.todosCrimes.length > 0)
+      ? crInfoGlobal.todosCrimes
+      : [];
+
+    // Se por algum motivo todosCrimes não veio, criar fallback a partir de splitLeis
+    if (listaCrimes.length === 0) {
+      let splitLeis = infoRaw.split(/(?=Lei:)/gi);
       splitLeis.forEach(b => {
-        if (b.trim().toLowerCase().startsWith('lei:')) blocosLeis.push(b);
+        if (b.trim().toLowerCase().startsWith('lei:')) {
+          let cSub = classificarCrime(b);
+          listaCrimes.push({
+            lei: extP(b, 'Lei:'),
+            artigo: extP(b, 'Artigo:'),
+            paragrafo: extP(b, 'Parágrafo:'),
+            inciso: extP(b, 'Inciso:'),
+            nome: cSub.nome,
+            cor: cSub.cor,
+            tipificacaoCompleta: cSub.tipificacaoCompleta,
+            leiNome: cSub.leiNome,
+            naoClassificado: cSub.naoClassificado
+          });
+        }
       });
-    } else {
-      blocosLeis.push(infoRaw); // Fallback
     }
 
     let htmlTipificacoes = '';
     let badgesHtml = '';
     
-    blocosLeis.forEach((bloco, idx) => {
-      let espExtr = extP(bloco, 'Espécie de prisão:');
-      let lei = extP(bloco, 'Lei:');
-      let artigo = extP(bloco, 'Artigo:');
-      let paragrafo = extP(bloco, 'Parágrafo:');
-      let inciso = extP(bloco, 'Inciso:');
+    listaCrimes.forEach((cItem, idx) => {
+      let lei = cItem.lei || extP(infoRaw, 'Lei:');
+      let artigo = cItem.artigo || extP(infoRaw, 'Artigo:');
+      let paragrafo = cItem.paragrafo || extP(infoRaw, 'Parágrafo:');
+      let inciso = cItem.inciso || extP(infoRaw, 'Inciso:');
+      let espExtr = extP(infoRaw, 'Espécie de prisão:');
 
       // Se for Prisão Civil / Pensão Alimentícia (CPC 13105 / Art. 528)
       let isPensaoCivil = (artigo === '528') || 
@@ -257,11 +366,12 @@
           inciso = mIncisoEmbutido[2].trim();
         }
       }
-      if (lei === "N/A") lei = "-"; if (artigo === "N/A") artigo = "-"; if (paragrafo === "N/A") paragrafo = "-"; if (inciso === "N/A") inciso = "-";
+      if (lei === "N/A" || !lei) lei = "-";
+      if (artigo === "N/A" || !artigo) artigo = "-";
+      if (paragrafo === "N/A" || !paragrafo) paragrafo = "-";
+      if (inciso === "N/A" || !inciso) inciso = "-";
       
-      let crInfo = classificarCrime(bloco);
-      
-      badgesHtml += '<div class="crime-badge" style="background:' + crInfo.cor + ';color:white;margin:0;">' + crInfo.nome + '</div>';
+      badgesHtml += '<div class="crime-badge" style="background:' + (cItem.cor || '#6b7280') + ';color:white;margin:0;">' + (cItem.nome || 'CRIME') + '</div>';
 
       let stylizedTipificacao = (function(leiNum, artNum, parNum, incNum, crInfo) {
           let hasPar = (parNum && parNum !== '-' && parNum !== 'N/A');
@@ -364,11 +474,11 @@
           }
           
           return boxMainHtml;
-      })(lei, artigo, paragrafo, inciso, crInfo);
+      })(lei, artigo, paragrafo, inciso, cItem);
 
-      htmlTipificacoes += '<div class="proc-tipificacao-box" style="border-left-color:' + crInfo.cor + '; margin-top:8px; padding-bottom:12px;">' +
+      htmlTipificacoes += '<div class="proc-tipificacao-box" style="border-left-color:' + (cItem.cor || '#6b7280') + '; margin-top:8px; padding-bottom:12px;">' +
         '<div style="text-align:center; margin-bottom: 12px;">' +
-        '<strong><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px;color:' + crInfo.cor + ';">gavel</span> TIPIFICAÇÃO PENAL' + (blocosLeis.length > 1 ? ' ' + (idx+1) : '') + '</strong>' +
+        '<strong><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:4px;color:' + (cItem.cor || '#6b7280') + ';">gavel</span> TIPIFICAÇÃO PENAL' + (listaCrimes.length > 1 ? ' ' + (idx+1) : '') + '</strong>' +
         '<br><span style="font-size:11px;color:var(--text-muted);">Lei: ' + lei + ' | Art: ' + artigo + ' | Par: ' + paragrafo + ' | Inc: ' + inciso + '</span>' +
         '</div>' +
         stylizedTipificacao +
@@ -552,16 +662,7 @@
           '<div class="bloco-enderecos">' +
             '<div class="enderecos-wrapper-box">' +
               '<div class="enderecos-box-title"><span class="material-symbols-outlined" style="color:var(--danger);">location_on</span> ENDEREÇOS MAPEADOS ' + tooltip('enderecos') + '</div>' +
-              htmlDistancia +
-              '<div class="endereco-main-item">' +
-              '<div class="endereco-texto"><strong>Endereço Principal:</strong>' + alvo.enderecoPrincipal + btnCopiar(alvo.enderecoPrincipal) + '</div>' +
-                htmlArea +
-                '<div style="display:flex;gap:6px;">' +
-                  '<button class="btn-rota" onclick="abrirGpsNativo(' + alvo.lat + ', ' + alvo.lng + ')"><span class="material-symbols-outlined" style="font-size:16px;">directions_car</span> ROTA</button>' +
-                  '<button class="btn-rota" style="width:auto;padding:8px 12px;background:#FBBC04;color:#1a1a1a;display:inline-flex;align-items:center;gap:4px;font-weight:700;" onclick="abrirStreetView(' + alvo.lat + ', ' + alvo.lng + ')" title="Street View"><svg width="16" height="16" viewBox="0 0 24 24" fill="#1a1a1a"><path d="M12.56 14.33c-.34.27-.56.7-.56 1.17V21h7c1.1 0 2-.9 2-2v-5.98c-.94-.33-1.95-.52-3-.52-2.03 0-3.93.7-5.44 1.83zM12 6c1.93 0 3.5-1.57 3.5-3.5S13.93-1 12-1 8.5.57 8.5 2.5 10.07 6 12 6zm-1.44 8.33C9.07 12.93 7.14 12.23 5 12.23c-1.05 0-2.06.19-3 .52V19c0 1.1.9 2 2 2h7v-5.5c0-.47-.22-.9-.56-1.17l-.88-.67zM12 8c-1.66 0-3 1.34-3 3 0 .35.07.69.18 1.01L12 14.34l2.82-2.33c.11-.32.18-.66.18-1.01 0-1.66-1.34-3-3-3z"/></svg> STREET</button>' +
-                '</div>' +
-              '</div>' +
-              '<div class="outros-enderecos" style="display:flex;flex-direction:column;gap:8px;">' + htmlSecundarios + '</div>' +
+              '<div class="lista-enderecos-ordenada" style="display:flex;flex-direction:column;gap:6px;margin-top:8px;">' + htmlListaEnderecosCompleta + '</div>' +
             '</div>' +
           '</div>' +
         '</div>' +
@@ -783,6 +884,66 @@
     return melhorMatch;
   }
 
+  function extrairArtigosDesmembrados(artigoStr) {
+    if (!artigoStr || typeof artigoStr !== 'string') return [];
+    var str = artigoStr.replace(/\barts?\b\.?/gi, '').replace(/\bartigos?\b\.?/gi, '').trim();
+    if (!str || str === 'N/A' || str === '-') return [];
+
+    var partes = str.split(/[,;/]|\s+\be(?:\/ou)?\b\s+/i);
+    var artigos = [];
+
+    partes.forEach(function(p) {
+      var token = p.trim();
+      if (!token) return;
+
+      if (/^(caput|par[aá]grafo|inciso|al[ií]nea|§|c\/c|comb|ambos|do|da|cp|cpm)$/i.test(token)) return;
+      if (/^[IVXLCDM]{1,5}$/i.test(token)) return;
+
+      var matchArt = token.match(/\b(\d+[A-Za-z-]*)\b/);
+      if (matchArt) {
+        var artNum = matchArt[1].trim();
+        if (!/^[IVXLCDM]{1,5}$/i.test(artNum)) {
+          if (artigos.indexOf(artNum) === -1) {
+            artigos.push(artNum);
+          }
+        }
+      }
+    });
+
+    return artigos;
+  }
+  window.extrairArtigosDesmembrados = extrairArtigosDesmembrados;
+
+  function extrairParagrafosDesmembrados(paragrafoStr) {
+    if (!paragrafoStr || typeof paragrafoStr !== 'string') return [];
+    var str = paragrafoStr.replace(/par[aá]grafos?\b\.?/gi, '').trim();
+    if (!str || str === 'N/A' || str === '-') return [];
+
+    var partes = str.split(/[,;/]|\s+\be(?:\/ou)?\b\s+/i);
+    var paragrafos = [];
+
+    partes.forEach(function(p) {
+      var token = p.trim();
+      if (!token || token === '-' || token === 'N/A') return;
+
+      if (/caput/i.test(token)) {
+        if (paragrafos.indexOf("caput") === -1) paragrafos.push("caput");
+        return;
+      }
+
+      var matchPar = token.match(/§?\s*(\d+)[ºª°]?/);
+      if (matchPar) {
+        var parNum = '§ ' + matchPar[1].trim() + 'º';
+        if (paragrafos.indexOf(parNum) === -1) {
+          paragrafos.push(parNum);
+        }
+      }
+    });
+
+    return paragrafos;
+  }
+  window.extrairParagrafosDesmembrados = extrairParagrafosDesmembrados;
+
   function classificarCrime(infoProc) {
     if (!infoProc) return { nome: 'Outros', cor: '#6b7280', pinoTexto: 'CRIME', svgPath: gerarSvgTexto('CRIME', 0), tipificacaoCompleta: null, naoClassificado: false, totalCrimes: 0 };
 
@@ -833,6 +994,53 @@
           textoPedaço: texto
        });
     }
+
+    // 1. Expandir blocos com múltiplos artigos (ex: Artigo: 33, 40 ou Artigo: 33 e 40)
+    var blocosArtigosExpandidos = [];
+    blocos.forEach(function(blk) {
+      if (blk && blk.artExtr && blk.artExtr !== 'N/A') {
+        var artsDesm = extrairArtigosDesmembrados(blk.artExtr);
+        if (artsDesm.length > 1) {
+          artsDesm.forEach(function(artUnico) {
+            blocosArtigosExpandidos.push({
+              leiExtr: blk.leiExtr,
+              artExtr: artUnico,
+              parExtr: blk.parExtr,
+              incExtr: blk.incExtr,
+              textoPedaço: blk.textoPedaço
+            });
+          });
+        } else {
+          blocosArtigosExpandidos.push(blk);
+        }
+      } else {
+        blocosArtigosExpandidos.push(blk);
+      }
+    });
+
+    // 2. Expandir blocos com múltiplos parágrafos (ex: Parágrafo: 1º e 3º ou Parágrafo: 1º, 3º)
+    var blocosFinais = [];
+    blocosArtigosExpandidos.forEach(function(blk) {
+      if (blk && blk.parExtr && blk.parExtr !== 'N/A' && blk.parExtr !== '-') {
+        var parsDesm = extrairParagrafosDesmembrados(blk.parExtr);
+        if (parsDesm.length > 1) {
+          parsDesm.forEach(function(parUnico) {
+            blocosFinais.push({
+              leiExtr: blk.leiExtr,
+              artExtr: blk.artExtr,
+              parExtr: parUnico,
+              incExtr: blk.incExtr,
+              textoPedaço: blk.textoPedaço
+            });
+          });
+        } else {
+          blocosFinais.push(blk);
+        }
+      } else {
+        blocosFinais.push(blk);
+      }
+    });
+    blocos = blocosFinais;
 
     var blocosUnicos = [];
     var assinaturas = new Set();
