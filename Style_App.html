@@ -113,8 +113,8 @@
     }
 
     .pin-sombra-piscando {
-      animation: pulseSombraPiscando 0.9s infinite ease-in-out !important;
-      z-index: 99999 !important;
+      animation: pulseSombraPiscando 0.9s infinite ease-in-out;
+      z-index: 99999;
     }
 
     @keyframes spinFast {
@@ -2611,7 +2611,7 @@
 
     /* Pino do mapa não classificado */
     .pin-nao-classificado {
-      animation: pinPulseYellow 1.5s ease-in-out infinite !important;
+      animation: pinPulseYellow 1.5s ease-in-out infinite;
     }
     @keyframes pinPulseYellow {
       0%, 100% { filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.3)); }
@@ -3879,7 +3879,13 @@
   /* Badge filtros ativos no botão de filtro */
   #btnToggleFiltrosMobile {
     position: relative;
+    cursor: pointer;
     transition: background 0.25s, box-shadow 0.25s;
+  }
+
+  #btnToggleFiltrosMobile:hover {
+    background: rgba(169, 32, 32, 0.4) !important;
+    box-shadow: 0 0 12px rgba(169, 32, 32, 0.3) !important;
   }
 
   #badgeFiltrosAtivos {
