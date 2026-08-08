@@ -56,7 +56,7 @@
        TELA DE SEGURANÇA PREMIUM (Glassmorphism)
        ================================================================ -->
   <div id="tela-seguranca"
-    style="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:radial-gradient(circle at center, rgba(15,23,42,0.85) 0%, rgba(2,6,23,0.98) 100%);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);z-index:60000;transition:opacity 0.5s ease;">
+    style="position:fixed;top:0;left:0;right:0;bottom:0;width:100%;height:100%;background:radial-gradient(circle at center, rgba(15,23,42,0.85) 0%, rgba(2,6,23,0.98) 100%);backdrop-filter:blur(24px);-webkit-backdrop-filter:blur(24px);z-index:99999999;transition:opacity 0.5s ease;">
     <div style="width:100%;height:100%;display:flex;justify-content:center;align-items:center;padding:16px;">
       <div class="painel-seguranca-box"
         style="padding:40px;max-width:440px;width:100%;display:flex;flex-direction:column;align-items:center;background:var(--bg-surface);border:var(--glass-border);border-radius:24px;box-shadow:0 12px 48px rgba(0,0,0,0.6);backdrop-filter:var(--glass-blur);">
@@ -70,6 +70,17 @@
             <p id="txt-status-carregamento"
               style="color:var(--text-secondary);font-weight:600;font-size:13px;letter-spacing:0.5px;text-transform:uppercase;">
               Verificando credenciais...</p>
+
+            <!-- Nota Informativa e Transparência (Estilo Humano & Limpo) -->
+            <div style="margin-top:24px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.08);width:100%;text-align:left;">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+                <span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);opacity:0.7;">info</span>
+                <span style="font-size:9px;font-weight:700;letter-spacing:0.8px;text-transform:uppercase;color:var(--text-muted);opacity:0.8;">Fonte de Dados & Transparência</span>
+              </div>
+              <p style="font-size:10.5px;color:var(--text-secondary);opacity:0.75;line-height:1.5;margin:0;font-weight:400;">
+                Todas as informações constantes neste sistema foram extraídas exclusivamente dos mandados de prisão públicos cadastrados no Portal do BNMP/CNJ. Embora sensíveis, os dados são de acesso público disponibilizados à sociedade atraves do site do BNMP.
+              </p>
+            </div>
           </div>
         </div>
         <style>
@@ -385,7 +396,7 @@
     </nav>
     <div
       style="padding:16px;text-align:center;font-size:10px;font-weight:800;color:white;border-top:1px solid rgba(255,255,255,0.05);font-family:var(--font-mono);letter-spacing:1px;">
-      <span id="badgeVersaoSidebar">v5.8.5</span>
+      <span id="badgeVersaoSidebar">v5.9.32</span>
     </div>
 
     <select id="filtroBatalhao" style="display:none;" onchange="filtrarNoMapa()">
@@ -598,6 +609,7 @@
                     <option value="RECENTES_BNMP">Mais Recentes (BNMP)</option>
                     <option value="NOME">Nome (A-Z)</option>
                     <option value="DISTANCIA">Mais Próximos (GPS)</option>
+                    <option value="COM_FOTO">Mandados Com Foto</option>
                     <option value="SEM_ENDERECO" id="optSemEnderecoLista" style="display:none;">Sem Endereço (Admin)
                     </option>
                   </select>
@@ -1929,7 +1941,7 @@
         <!-- Zona de Upload CSV -->
         <div id="dropzone-csv" class="dropzone-conferencia" onclick="document.getElementById('input-file-csv').click()"
           style="border:2px dashed #334155;background:#1e293b;padding:40px 20px;border-radius:20px;text-align:center;cursor:pointer;transition:all 0.3s ease;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
-          <input type="file" id="input-file-csv" accept=".csv" style="display:none;"
+          <input type="file" id="input-file-csv" accept=".csv" multiple style="display:none;"
             onchange="lidarComSelecaoArquivo(event)">
           <span class="material-symbols-outlined" style="font-size:48px;color:#6366f1;transition:all 0.3s ease;"
             id="icon-upload-csv">cloud_upload</span>
@@ -2487,11 +2499,20 @@
                     <input type="file" id="inputPdfUploadCustom" accept="application/pdf" multiple
                       style="display:none;" />
                     <label for="inputPdfUploadCustom" class="neu-btn neu-btn-accent"
-                      style="flex:1; cursor:pointer; padding:12px; text-align:center; font-size:11px; font-weight:900; border-radius:12px; display:flex; justify-content:center; align-items:center; gap:6px;">
+                      style="flex:1; min-width:180px; cursor:pointer; padding:12px; text-align:center; font-size:11px; font-weight:900; border-radius:12px; display:flex; justify-content:center; align-items:center; gap:6px;">
                       <span class="material-symbols-outlined" style="font-size:18px;">upload_file</span> SELECIONAR PDFs
                     </label>
+
+                    <input type="file" id="inputPdfVincularFotos" accept="application/pdf" multiple
+                      style="display:none;" />
+                    <label for="inputPdfVincularFotos" class="neu-btn"
+                      style="flex:1; min-width:180px; cursor:pointer; padding:12px; text-align:center; font-size:11px; font-weight:900; border-radius:12px; display:flex; justify-content:center; align-items:center; gap:6px; background:rgba(16,185,129,0.15); border:1px solid #10b981; color:#10b981;"
+                      title="Extrai fotos dos PDFs e vincula diretamente aos mandados que já existem no sistema.">
+                      <span class="material-symbols-outlined" style="font-size:18px;">add_a_photo</span> VINCULAR FOTOS (PDFs EXISTENTES)
+                    </label>
+
                     <button class="neu-btn"
-                      style="flex:1; padding:12px; font-size:11px; font-weight:800; border-radius:12px; display:flex; justify-content:center; align-items:center; gap:6px;"
+                      style="flex:1; min-width:180px; padding:12px; font-size:11px; font-weight:800; border-radius:12px; display:flex; justify-content:center; align-items:center; gap:6px;"
                       onclick="window.processarTextoColadoCustom()">
                       <span class="material-symbols-outlined" style="font-size:18px;">content_paste</span> PROCESSAR
                       TEXTO COLADO
