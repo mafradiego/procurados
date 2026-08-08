@@ -996,11 +996,27 @@
       }
 
       // AdvancedMarkerElement (DOM Content)
-      let elContent = m.content || m.element;
-      if (elContent && elContent.classList) {
-        elContent.classList.add('pin-bounce-anim');
+      let elContent = m.content || m.element || m._element;
+      if (elContent) {
+        let targets = [];
+        if (elContent.classList) targets.push(elContent);
+        if (elContent.querySelector) {
+          let innerPin = elContent.querySelector('.pin-marker') || elContent.querySelector('svg');
+          if (innerPin && innerPin.classList) targets.push(innerPin);
+        }
+
+        targets.forEach(t => {
+          t.classList.add('pin-bounce-anim');
+          t.style.setProperty('animation', 'pin-bounce-keyframe 0.8s ease infinite', 'important');
+        });
+
         setTimeout(function () {
-          try { elContent.classList.remove('pin-bounce-anim'); } catch (e) { }
+          targets.forEach(t => {
+            try { 
+              t.classList.remove('pin-bounce-anim'); 
+              t.style.removeProperty('animation');
+            } catch (e) { }
+          });
         }, 3200);
       }
     } catch (e) {
@@ -1089,6 +1105,68 @@
   }
   window.focarPinoPorMandado = focarNoMapa;
   window.focarNoMapa = focarNoMapa;
+
+  function focarPinoPorCoordenadas(lat, lng, mandadoRef) {
+    let latVal = Number(lat);
+    let lngVal = Number(lng);
+    if (isNaN(latVal) || latVal === 0 || isNaN(lngVal) || lngVal === 0) {
+      if (typeof chamarAlertaTatico === 'function') chamarAlertaTatico('MAPA', 'Coordenadas inválidas para este endereço.', 'OK');
+      return;
+    }
+
+    // 1. Fechar modals de card
+    if (typeof fecharMobileCardModal === 'function') fecharMobileCardModal();
+    if (typeof fecharCardModal === 'function') fecharCardModal();
+
+    // 2. Alternar para a visão do Mapa
+    if (typeof alternarVisaoTatica === 'function') {
+      alternarVisaoTatica('mapa');
+    } else if (typeof alternarVisaoGlobal === 'function') {
+      alternarVisaoGlobal('mapa');
+    }
+
+    // 3. Centralizar o mapa nas coordenadas exatas e aplicar zoom aproximado
+    if (typeof mapaPrincipal !== 'undefined' && mapaPrincipal) {
+      mapaPrincipal.panTo({ lat: latVal, lng: lngVal });
+      mapaPrincipal.setZoom(17);
+    }
+
+    // 4. Localizar o marcador (principal ou secundário) e aplicar a animação de bounce simples
+    setTimeout(function () {
+      let targetMarker = null;
+
+      // Buscar na lista de marcadores principais
+      if (typeof listaMarcadores !== 'undefined' && Array.isArray(listaMarcadores)) {
+        targetMarker = listaMarcadores.find(m => {
+          if (!m || !m.position) return false;
+          let mLat = Number(typeof m.position.lat === 'function' ? m.position.lat() : m.position.lat);
+          let mLng = Number(typeof m.position.lng === 'function' ? m.position.lng() : m.position.lng);
+          return Math.abs(mLat - latVal) < 0.0001 && Math.abs(mLng - lngVal) < 0.0001;
+        });
+      }
+
+      // Se não encontrou no principal, buscar na teia de marcadores secundários visíveis
+      if (!targetMarker && typeof secundariosVisiveis !== 'undefined' && secundariosVisiveis) {
+        for (let k in secundariosVisiveis) {
+          let secGroup = secundariosVisiveis[k];
+          if (secGroup && Array.isArray(secGroup.markers)) {
+            let foundSec = secGroup.markers.find(m => {
+              if (!m || !m.position) return false;
+              let mLat = Number(typeof m.position.lat === 'function' ? m.position.lat() : m.position.lat);
+              let mLng = Number(typeof m.position.lng === 'function' ? m.position.lng() : m.position.lng);
+              return Math.abs(mLat - latVal) < 0.0001 && Math.abs(mLng - lngVal) < 0.0001;
+            });
+            if (foundSec) { targetMarker = foundSec; break; }
+          }
+        }
+      }
+
+      if (targetMarker && typeof aplicarBounceNoMarcador === 'function') {
+        aplicarBounceNoMarcador(targetMarker);
+      }
+    }, 250);
+  }
+  window.focarPinoPorCoordenadas = focarPinoPorCoordenadas;
 
   function classificarGravidade(d) {
     var txt = ((d.infoProcessuais || '') + ' ' + (d.titulo || '')).toLowerCase();
@@ -1532,7 +1610,7 @@
                 <!-- LEFT COLUMN: FOTO + NOME DO PROCURADO + DOCS (CPF/RG) + DATAS -->
                 <div class="acc-col-left" style="display:flex; gap:14px; align-items:center; min-width:320px; flex-shrink:0;">
                   <div class="acc-photo-col" style="flex-shrink:0;">
-                    <img src="${foto}" style="width:105px; height:135px; border-radius:8px; object-fit:cover; border:2px solid ${classCrime.cor};" onerror="this.src=SILHUETA_SEM_FOTO" />
+                    <img src="${foto}" style="width:105px; height:135px; border-radius:8px; object-fit:cover; object-position:top center; border:2px solid ${classCrime.cor};" onerror="this.src=SILHUETA_SEM_FOTO" />
                   </div>
                   
                   <div style="display:flex; flex-direction:column; gap:6px; font-size:12px; color:#f8fafc; flex:1; min-width:0;">
@@ -1928,6 +2006,18 @@
         let semB = b.semEndereco ? 1 : 0;
         if (semA !== semB) return semB - semA;
         return b.idLinha - a.idLinha;
+      });
+    } else if (ordemVal === 'COM_FOTO') {
+      filtrados.sort(function (a, b) {
+        let capA = a.status === 'Capturado' ? 1 : 0;
+        let capB = b.status === 'Capturado' ? 1 : 0;
+        if (capA !== capB) return capA - capB;
+        
+        let hasFotoA = (a.fotoUrl && a.fotoUrl !== "N/A" && a.fotoUrl.startsWith("http")) ? 1 : 0;
+        let hasFotoB = (b.fotoUrl && b.fotoUrl !== "N/A" && b.fotoUrl.startsWith("http")) ? 1 : 0;
+        
+        if (hasFotoA !== hasFotoB) return hasFotoB - hasFotoA;
+        return b.idLinha - a.idLinha; // Desempate por mais recentes no sistema
       });
     } else {
       // RECENTES (padrão) — ordenar pela Data de Lançamento no sistema (mais recente primeiro)
@@ -2726,9 +2816,9 @@
 
     if (overlay) {
       overlayTitulo.innerText = "Importando Alvo(s)";
-      overlaySub.innerHTML = "Gravando mandados de prisão na planilha do banco de dados...";
-      overlayBarra.style.width = "75%";
-      overlayPercent.innerText = "75%";
+      overlaySub.innerHTML = "Geocodificando endereços...";
+      overlayBarra.style.width = "0%";
+      overlayPercent.innerText = "0%";
       overlay.style.display = 'flex';
     }
 
@@ -2741,8 +2831,17 @@
       geocoder = new google.maps.Geocoder();
     }
 
+    // ── FASE 1: GEOCODIFICAÇÃO DE TODOS OS ENDEREÇOS ──
     for (var i = 0; i < loteFiltrado.length; i++) {
       var item = loteFiltrado[i];
+
+      // Atualizar progresso de geocodificação
+      if (overlay) {
+        var pctGeo = Math.round(((i + 1) / loteFiltrado.length) * 50); // Geocodificação = 0% a 50%
+        overlaySub.innerHTML = "Geocodificando: <strong>" + (i + 1) + "</strong> de <strong>" + loteFiltrado.length + "</strong> endereços...";
+        overlayBarra.style.width = pctGeo + "%";
+        overlayPercent.innerText = pctGeo + "%";
+      }
 
       // v4.9.85: Validação de cidade/UF antes de geocodificar
       var _cidadesCache = window._cidadesValidasFront || [];
@@ -2919,34 +3018,100 @@
       item.secundarios = secArray;
     }
 
-    google.script.run
-      .withSuccessHandler(function (res) {
-        if (overlay) overlay.style.display = 'none';
-        btn.disabled = false;
-        if (res.sucesso) {
-          document.getElementById('view-revisao-importacao').style.display = 'none';
-          var fab = document.getElementById('btnAdminNovo');
-          var isAdmin = document.getElementById('sidebarPerfilEl') && document.getElementById('sidebarPerfilEl').textContent === 'Admin';
-          if (fab && isAdmin) fab.style.display = 'flex';
-          chamarAlertaTatico("SUCESSO", res.mensagem, "OK");
-          filaImportacao = [];
-          sincronizarBD();
-          google.script.run.withSuccessHandler(function(hLogs) {
-            window.geocodificacaoConsumoLogs = hLogs || [];
-            if (typeof carregarStatsGeocodificacao === 'function') carregarStatsGeocodificacao();
-          }).obterHistoricoConsumo();
+    // ── FASE 2: SALVAMENTO EM SUB-LOTES ──
+    const TAMANHO_SUBLOTE = 50;
+    var totalSalvos = 0;
+    var totalErros = 0;
+    var mensagemFinalErros = [];
+
+    // Fatiar o lote geocodificado em pacotes de TAMANHO_SUBLOTE
+    var subLotes = [];
+    for (var sl = 0; sl < loteFiltrado.length; sl += TAMANHO_SUBLOTE) {
+      subLotes.push(loteFiltrado.slice(sl, sl + TAMANHO_SUBLOTE));
+    }
+
+    console.log("[SUB-LOTE] Total de mandados: " + loteFiltrado.length + ". Dividido em " + subLotes.length + " sub-lote(s) de até " + TAMANHO_SUBLOTE + ".");
+
+    for (var slIdx = 0; slIdx < subLotes.length; slIdx++) {
+      var subLoteAtual = subLotes[slIdx];
+      var numSubLote = slIdx + 1;
+
+      // Atualizar progresso visual
+      if (overlay) {
+        var pctSave = Math.round(50 + ((slIdx / subLotes.length) * 50)); // Salvamento = 50% a 100%
+        overlaySub.innerHTML = "Salvando pacote <strong>" + numSubLote + "</strong> de <strong>" + subLotes.length + "</strong> (" + subLoteAtual.length + " mandados)...";
+        overlayBarra.style.width = pctSave + "%";
+        overlayPercent.innerText = pctSave + "%";
+      }
+      btn.innerText = 'SALVANDO PACOTE ' + numSubLote + '/' + subLotes.length + '...';
+
+      try {
+        var resSublote = await new Promise(function(resolve, reject) {
+          google.script.run
+            .withSuccessHandler(function(res) { resolve(res); })
+            .withFailureHandler(function(err) { reject(err); })
+            .cadastrarMandadosEmLote(subLoteAtual);
+        });
+
+        if (resSublote && resSublote.sucesso) {
+          totalSalvos += subLoteAtual.length;
+          console.log("[SUB-LOTE] Pacote " + numSubLote + "/" + subLotes.length + " salvo com sucesso. (" + subLoteAtual.length + " mandados)");
         } else {
-          chamarAlertaTatico("ERRO", res.mensagem, "OK");
-          btn.innerText = 'CONFIRMAR IMPORTAÇÃO (' + filaImportacao.length + ')';
+          totalErros += subLoteAtual.length;
+          var msgErr = (resSublote && resSublote.mensagem) ? resSublote.mensagem : "Erro desconhecido";
+          mensagemFinalErros.push("Pacote " + numSubLote + ": " + msgErr);
+          console.error("[SUB-LOTE] Pacote " + numSubLote + " falhou: " + msgErr);
         }
-      })
-      .withFailureHandler(function (err) {
-        if (overlay) overlay.style.display = 'none';
-        btn.disabled = false;
-        chamarAlertaTatico("ERRO FATAL", err.message, "OK");
-        btn.innerText = 'CONFIRMAR IMPORTAÇÃO (' + filaImportacao.length + ')';
-      })
-      .cadastrarMandadosEmLote(loteFiltrado);
+      } catch (errSublote) {
+        totalErros += subLoteAtual.length;
+        mensagemFinalErros.push("Pacote " + numSubLote + ": " + errSublote.message);
+        console.error("[SUB-LOTE] Exceção no pacote " + numSubLote + ":", errSublote.message);
+      }
+
+      // Pausa entre sub-lotes para não sobrecarregar o servidor
+      if (slIdx < subLotes.length - 1) {
+        await new Promise(function(resolve) { setTimeout(resolve, 500); });
+      }
+    }
+
+    // ── FASE 3: RESULTADO FINAL ──
+    if (overlay) {
+      overlayBarra.style.width = "100%";
+      overlayPercent.innerText = "100%";
+      overlaySub.innerHTML = "Importação concluída!";
+    }
+
+    // Pausa breve antes de fechar para o usuário ver 100%
+    await new Promise(function(resolve) { setTimeout(resolve, 800); });
+
+    if (overlay) overlay.style.display = 'none';
+    btn.disabled = false;
+
+    if (totalSalvos > 0) {
+      document.getElementById('view-revisao-importacao').style.display = 'none';
+      var fab = document.getElementById('btnAdminNovo');
+      var isAdmin = document.getElementById('sidebarPerfilEl') && document.getElementById('sidebarPerfilEl').textContent === 'Admin';
+      if (fab && isAdmin) fab.style.display = 'flex';
+
+      var msgFinal = "✅ " + totalSalvos + " mandado(s) salvo(s) com sucesso!";
+      if (totalErros > 0) {
+        msgFinal += "\n\n⚠️ " + totalErros + " mandado(s) com falha:\n" + mensagemFinalErros.join("\n");
+      }
+      chamarAlertaTatico("RESULTADO DA IMPORTAÇÃO", msgFinal, "OK");
+      filaImportacao = [];
+      sincronizarBD();
+      google.script.run.withSuccessHandler(function(hLogs) {
+        window.geocodificacaoConsumoLogs = hLogs || [];
+        if (typeof carregarStatsGeocodificacao === 'function') carregarStatsGeocodificacao();
+      }).obterHistoricoConsumo();
+    } else {
+      var msgErro = "❌ Nenhum mandado foi salvo.";
+      if (mensagemFinalErros.length > 0) {
+        msgErro += "\n\n" + mensagemFinalErros.join("\n");
+      }
+      chamarAlertaTatico("ERRO NA IMPORTAÇÃO", msgErro, "OK");
+      btn.innerText = 'CONFIRMAR IMPORTAÇÃO (' + filaImportacao.length + ')';
+    }
   }
 
   // ========== EXCLUIR MANDADO ==========
@@ -5562,6 +5727,8 @@
               delete d._isSecundarioClone;
               var clone = Object.assign({}, d);
               clone._isSecundarioClone = true;
+              clone.latPrincipal = d.latPrincipal || d.lat;
+              clone.lngPrincipal = d.lngPrincipal || d.lng;
               clone._secundarioEnd = sec.endereco;
               clone.lat = sec.lat;
               clone.lng = sec.lng;
