@@ -116,7 +116,7 @@
       const dt = e.dataTransfer;
       const files = dt.files;
       if (files && files.length > 0) {
-        processarArquivoCSV(files[0]);
+        processarMultiplosCSVs(files);
       }
     }, false);
   }
@@ -127,63 +127,79 @@
   function lidarComSelecaoArquivo(event) {
     const files = event.target.files;
     if (files && files.length > 0) {
-      processarArquivoCSV(files[0]);
+      processarMultiplosCSVs(files);
     }
   }
 
   /**
-   * Lê o arquivo carregado e executa a lógica de conferência
+   * Lê múltiplos arquivos carregados e executa a lógica de conferência
    */
-  function processarArquivoCSV(file) {
-    if (!file) {
-      console.warn('[Conferência] Nenhum arquivo passado para processarArquivoCSV');
-      return;
-    }
-    console.log('[Conferência] Iniciando processarArquivoCSV para o arquivo:', file.name, 'tamanho:', file.size, 'tipo:', file.type);
+  function processarMultiplosCSVs(files) {
+    if (!files || files.length === 0) return;
     
-    if (!file.name.endsWith('.csv')) {
-      console.warn('[Conferência] Arquivo inválido (não termina com .csv):', file.name);
+    let textosLidos = [];
+    let lidos = 0;
+    let arquivosValidos = [];
+    let tamanhoTotal = 0;
+
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].name.endsWith('.csv')) {
+        arquivosValidos.push(files[i]);
+        tamanhoTotal += files[i].size;
+      }
+    }
+
+    if (arquivosValidos.length === 0) {
       return chamarAlertaTatico("FORMATO INVÁLIDO", "O sistema aceita apenas arquivos com a extensão .csv.", "OK");
     }
 
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const texto = e.target.result;
-      console.log('[Conferência] FileReader carregado com sucesso. Tamanho do texto lido:', texto ? texto.length : 0, 'caracteres.');
-      
-      // Atualizar área de upload
-      const info = document.getElementById('info-arquivo-carregado');
-      const textoPrincipal = document.getElementById('texto-principal-upload');
-      const iconUpload = document.getElementById('icon-upload-csv');
-      
-      console.log('[Conferência] Atualizando elementos visuais da dropzone...');
-      if (info) {
-        info.innerText = `📄 ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
-        info.style.display = 'inline-block';
+    arquivosValidos.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        textosLidos.push(e.target.result);
+        lidos++;
+        if (lidos === arquivosValidos.length) {
+          concluirLeituraMultiplos(textosLidos, arquivosValidos, tamanhoTotal);
+        }
+      };
+      reader.onerror = function() {
+        lidos++;
+        console.error('[Conferência] Erro ao ler arquivo', file.name);
+        if (lidos === arquivosValidos.length) concluirLeituraMultiplos(textosLidos, arquivosValidos, tamanhoTotal);
       }
-      if (textoPrincipal) {
-        textoPrincipal.innerText = "ARQUIVO CARREGADO COM SUCESSO";
-      }
-      if (iconUpload) {
-        iconUpload.innerText = "task_alt";
-        iconUpload.style.color = "var(--success)";
-      }
+      reader.readAsText(file, "UTF-8");
+    });
+  }
 
-      const btnReset = document.getElementById('btn-reset-conferencia');
-      if (btnReset) btnReset.style.display = 'inline-flex';
+  function concluirLeituraMultiplos(textos, arquivos, tamanhoTotal) {
+    if (textos.length === 0) {
+      return chamarAlertaTatico("ERRO DE LEITURA", "Houve um erro ao tentar ler os arquivos CSV.", "OK");
+    }
 
-      // Cruzar os dados do CSV com a base local
-      console.log('[Conferência] Chamando cruzamentoConferencia...');
-      cruzamentoConferencia(texto);
-    };
+    // Unir todos os CSVs em um texto gigante (cruzamentoConferencia ignorará cabeçalhos redundantes com base em regex de dígitos)
+    const textoConsolidado = textos.join('\n');
 
-    reader.onerror = function(err) {
-      console.error('[Conferência] Erro na leitura do FileReader:', err);
-      chamarAlertaTatico("ERRO DE LEITURA", "Houve um erro ao tentar ler o arquivo CSV.", "OK");
-    };
+    const info = document.getElementById('info-arquivo-carregado');
+    const textoPrincipal = document.getElementById('texto-principal-upload');
+    const iconUpload = document.getElementById('icon-upload-csv');
+    
+    if (info) {
+      let nomeExibicao = arquivos.length === 1 ? arquivos[0].name : `${arquivos.length} relatórios CSV unidos`;
+      info.innerText = `📄 ${nomeExibicao} (${(tamanhoTotal / 1024).toFixed(1)} KB)`;
+      info.style.display = 'inline-block';
+    }
+    if (textoPrincipal) {
+      textoPrincipal.innerText = "ARQUIVOS CARREGADOS COM SUCESSO";
+    }
+    if (iconUpload) {
+      iconUpload.innerText = "library_add_check";
+      iconUpload.style.color = "var(--success)";
+    }
 
-    console.log('[Conferência] Disparando readAsText no arquivo...');
-    reader.readAsText(file, "UTF-8");
+    const btnReset = document.getElementById('btn-reset-conferencia');
+    if (btnReset) btnReset.style.display = 'inline-flex';
+
+    cruzamentoConferencia(textoConsolidado);
   }
 
   /**
